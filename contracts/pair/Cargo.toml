@@ -9,7 +9,7 @@ doctest = false
 
 [dependencies]
 soroban-sdk = { workspace = true }
-soroban-token-sdk = { workspace = true }
+coralswap-flash-receiver-interface = { path = "../flash_receiver_interface" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
