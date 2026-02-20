@@ -1,5 +1,8 @@
 #![no_std]
 
+#[cfg(test)]
+extern crate std;
+
 mod dynamic_fee;
 mod errors;
 mod events;
@@ -9,9 +12,6 @@ mod math;
 mod oracle;
 mod reentrancy;
 mod storage;
-
-#[cfg(test)]
-extern crate std; // soroban-sdk testutils require std; pair is no_std so we must opt-in explicitly.
 
 #[cfg(test)]
 mod test;
