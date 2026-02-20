@@ -16,10 +16,17 @@ mod storage;
 #[cfg(test)]
 mod test;
 
-use soroban_sdk::{contract, contractimpl, Address, Bytes, Env};
+use soroban_sdk::{contract, contractclient, contractimpl, token::TokenClient, Address, Bytes, Env};
 use errors::PairError;
 use events::PairEvents;
-use storage::{get_fee_state, get_pair_storage, set_fee_state, set_pair_storage};
+use math::MINIMUM_LIQUIDITY;
+use storage::{get_fee_state, get_pair_state, set_fee_state, set_pair_state};
+
+#[contractclient(name = "LpTokenClient")]
+pub trait LpTokenInterface {
+    fn mint(env: Env, to: Address, amount: i128);
+    fn total_supply(env: Env) -> i128;
+}
 
 #[contract]
 pub struct Pair;
@@ -35,7 +42,7 @@ impl Pair {
         token_b: Address,
         lp_token: Address,
     ) -> Result<(), PairError> {
-        if env.storage().instance().has(&storage::StorageKey::Pair) {
+        if get_pair_state(&env).is_some() {
             return Err(PairError::AlreadyInitialized);
         }
         let state = storage::PairStorage {
@@ -50,20 +57,101 @@ impl Pair {
             price_b_cumulative: 0,
             k_last: 0,
         };
-        set_pair_storage(&env, &state);
+        set_pair_state(&env, &state);
         Ok(())
     }
 
-    // ── Liquidity ─────────────────────────────────────────────────────────────
-
     pub fn mint(env: Env, to: Address) -> Result<i128, PairError> {
-        let _ = (env, to);
-        todo!()
+        to.require_auth();
+
+        let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+        let contract = env.current_contract_address();
+
+        let balance_a = TokenClient::new(&env, &state.token_a).balance(&contract);
+        let balance_b = TokenClient::new(&env, &state.token_b).balance(&contract);
+        let amount_a = balance_a - state.reserve_a;
+        let amount_b = balance_b - state.reserve_b;
+
+        let lp_client = LpTokenClient::new(&env, &state.lp_token);
+        let total_supply = lp_client.total_supply();
+
+        let liquidity;
+        if total_supply == 0 {
+            liquidity = math::sqrt(
+                amount_a.checked_mul(amount_b).ok_or(PairError::Overflow)?,
+            ) - MINIMUM_LIQUIDITY;
+            if liquidity <= 0 {
+                return Err(PairError::InsufficientLiquidityMinted);
+            }
+            lp_client.mint(&contract, &MINIMUM_LIQUIDITY);
+        } else {
+            let liquidity_a = amount_a
+                .checked_mul(total_supply)
+                .ok_or(PairError::Overflow)?
+                / state.reserve_a;
+            let liquidity_b = amount_b
+                .checked_mul(total_supply)
+                .ok_or(PairError::Overflow)?
+                / state.reserve_b;
+            liquidity = liquidity_a.min(liquidity_b);
+        }
+
+        if liquidity <= 0 {
+            return Err(PairError::InsufficientLiquidityMinted);
+        }
+
+        lp_client.mint(&to, &liquidity);
+
+        state.reserve_a = balance_a;
+        state.reserve_b = balance_b;
+        state.k_last = balance_a
+            .checked_mul(balance_b)
+            .ok_or(PairError::Overflow)?;
+        set_pair_state(&env, &state);
+
+        PairEvents::mint(&env, &to, amount_a, amount_b);
+
+        Ok(liquidity)
     }
 
     pub fn burn(env: Env, to: Address) -> Result<(i128, i128), PairError> {
-        let _ = (env, to);
-        todo!()
+        to.require_auth();
+
+        let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+        let contract = env.current_contract_address();
+
+        let lp_balance = TokenClient::new(&env, &state.lp_token).balance(&contract);
+        let total_supply = LpTokenClient::new(&env, &state.lp_token).total_supply();
+
+        let amount_a = lp_balance
+            .checked_mul(state.reserve_a)
+            .ok_or(PairError::Overflow)?
+            / total_supply;
+        let amount_b = lp_balance
+            .checked_mul(state.reserve_b)
+            .ok_or(PairError::Overflow)?
+            / total_supply;
+
+        if amount_a <= 0 || amount_b <= 0 {
+            return Err(PairError::InsufficientLiquidityBurned);
+        }
+
+        TokenClient::new(&env, &state.lp_token).burn(&contract, &lp_balance);
+
+        TokenClient::new(&env, &state.token_a).transfer(&contract, &to, &amount_a);
+        TokenClient::new(&env, &state.token_b).transfer(&contract, &to, &amount_b);
+
+        state.reserve_a -= amount_a;
+        state.reserve_b -= amount_b;
+        state.k_last = state
+            .reserve_a
+            .checked_mul(state.reserve_b)
+            .ok_or(PairError::Overflow)?;
+        set_pair_state(&env, &state);
+
+        PairEvents::burn(&env, &to, amount_a, amount_b, &to);
+
+        Ok((amount_a, amount_b))
     }
 
     // ── Swap ──────────────────────────────────────────────────────────────────
@@ -106,8 +194,8 @@ impl Pair {
         }
 
         // ── 3. Load state ─────────────────────────────────────────────────────
-        let mut pair = get_pair_storage(env)?;
-        let mut fee_state = get_fee_state(env);
+        let mut pair = get_pair_state(env).ok_or(PairError::NotInitialized)?;
+        let mut fee_state = get_fee_state(env).ok_or(PairError::NotInitialized)?;
 
         // ── 4. Check output vs reserves ───────────────────────────────────────
         if amount_a_out >= pair.reserve_a || amount_b_out >= pair.reserve_b {
@@ -124,18 +212,18 @@ impl Pair {
         let contract_address = env.current_contract_address();
 
         if amount_a_out > 0 {
-            token::Client::new(env, &pair.token_a)
+            TokenClient::new(env, &pair.token_a)
                 .transfer(&contract_address, to, &amount_a_out);
         }
         if amount_b_out > 0 {
-            token::Client::new(env, &pair.token_b)
+            TokenClient::new(env, &pair.token_b)
                 .transfer(&contract_address, to, &amount_b_out);
         }
 
         // ── 8. Read actual balances post-transfer ─────────────────────────────
-        let balance_a = token::Client::new(env, &pair.token_a)
+        let balance_a = TokenClient::new(env, &pair.token_a)
             .balance(&contract_address);
-        let balance_b = token::Client::new(env, &pair.token_b)
+        let balance_b = TokenClient::new(env, &pair.token_b)
             .balance(&contract_address);
 
         // ── 9. Compute effective amounts in ───────────────────────────────────
@@ -217,7 +305,7 @@ impl Pair {
         pair.block_timestamp_last = env.ledger().timestamp();
 
         // ── 14. Persist state ─────────────────────────────────────────────────
-        set_pair_storage(env, &pair);
+        set_pair_state(env, &pair);
         set_fee_state(env, &fee_state);
 
         // ── 15. Emit swap event ───────────────────────────────────────────────
@@ -249,6 +337,25 @@ impl Pair {
         flash_loan::execute_flash_loan(&env, &receiver, amount_a, amount_b, &data)
     }
 
+    pub fn get_reserves(env: Env) -> (i128, i128, u64) {
+        let state = get_pair_state(&env).ok_or(PairError::NotInitialized).unwrap();
+        (state.reserve_a, state.reserve_b, state.block_timestamp_last)
+    }
+
+    pub fn get_current_fee_bps(env: Env) -> u32 {
+        get_fee_state(&env)
+            .map(|fs| dynamic_fee::compute_fee_bps(&fs))
+            .unwrap_or(30)
+    }
+
+    pub fn sync(env: Env) -> Result<(), PairError> {
+        let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+        let contract = env.current_contract_address();
+        let balance_a = TokenClient::new(&env, &state.token_a).balance(&contract);
+        let balance_b = TokenClient::new(&env, &state.token_b).balance(&contract);
+        state.reserve_a = balance_a;
+        state.reserve_b = balance_b;
+        set_pair_state(&env, &state);
         PairEvents::sync(&env, balance_a, balance_b);
         Ok(())
     }

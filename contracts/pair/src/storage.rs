@@ -66,6 +66,10 @@ pub fn get_fee_state(env: &Env) -> Option<FeeState> {
     env.storage().instance().get(&DataKey::FeeState)
 }
 
+pub fn set_fee_state(env: &Env, state: &FeeState) {
+    env.storage().instance().set(&DataKey::FeeState, state);
+}
+
 // ---------------------------------------------------------------------------
 // Reentrancy helpers
 // ---------------------------------------------------------------------------
