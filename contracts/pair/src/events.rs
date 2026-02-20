@@ -1,4 +1,4 @@
-use soroban_sdk::{symbol_short, Address, Env};
+use soroban_sdk::{symbol_short, Address, Env, Symbol};
 
 pub struct PairEvents;
 
@@ -40,6 +40,10 @@ impl PairEvents {
         );
     }
 
+    /// Emits a `flash_loan` event after a successful flash loan.
+    ///
+    /// Topics: `("pair", "flash_loan")`
+    /// Data:   `(receiver, amount_a, amount_b, fee_a, fee_b)`
     pub fn flash_loan(
         env: &Env,
         receiver: &Address,
@@ -49,8 +53,9 @@ impl PairEvents {
         fee_b: i128,
     ) {
         env.events().publish(
-            (symbol_short!("flash"), receiver),
-            (amount_a, amount_b, fee_a, fee_b),
+            // "pair" ≤ 9 chars → compile-time constant; "flash_loan" = 10 chars → runtime symbol
+            (symbol_short!("pair"), Symbol::new(env, "flash_loan")),
+            (receiver.clone(), amount_a, amount_b, fee_a, fee_b),
         );
     }
 }

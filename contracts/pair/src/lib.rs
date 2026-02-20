@@ -1,20 +1,22 @@
 #![cfg_attr(not(test), no_std)]
 
+#[cfg(test)]
+extern crate std;
+
 mod dynamic_fee;
 mod errors;
 mod events;
 mod fee_decay;
 mod flash_loan;
+mod math;
+mod oracle;
 mod reentrancy;
 mod storage;
 
 #[cfg(test)]
 mod test;
 
-mod math;
-mod oracle;
-
-use soroban_sdk::{contract, contractimpl, token, Address, Bytes, Env};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, Env};
 use errors::PairError;
 use events::PairEvents;
 use storage::{get_fee_state, get_pair_storage, set_fee_state, set_pair_storage};
@@ -237,44 +239,15 @@ impl Pair {
 
     // ── Flash Loan ────────────────────────────────────────────────────────────
 
+    /// Executes a flash loan of up to `amount_a` of token_a and/or `amount_b`
+    /// of token_b to `receiver`.  The receiver must repay principal + fee
+    /// before the `on_flash_loan` callback returns.
     pub fn flash_loan(
-        env: Env,
-        receiver: Address,
-        amount_a: i128,
-        amount_b: i128,
-        data: Bytes,
+        env: Env, receiver: Address, amount_a: i128,
+        amount_b: i128, data: Bytes,
     ) -> Result<(), PairError> {
-        let _ = (env, receiver, amount_a, amount_b, data);
-        todo!()
+        flash_loan::execute_flash_loan(&env, &receiver, amount_a, amount_b, &data)
     }
-
-    // ── View functions ────────────────────────────────────────────────────────
-
-    pub fn get_reserves(env: Env) -> (i128, i128, u64) {
-        match get_pair_storage(&env) {
-            Ok(pair) => (pair.reserve_a, pair.reserve_b, pair.block_timestamp_last),
-            Err(_) => (0, 0, 0),
-        }
-    }
-
-    pub fn get_current_fee_bps(env: Env) -> u32 {
-        let fee_state = get_fee_state(&env);
-        dynamic_fee::compute_fee_bps(&fee_state)
-    }
-
-    pub fn sync(env: Env) -> Result<(), PairError> {
-        let mut pair = get_pair_storage(&env)?;
-        let contract_address = env.current_contract_address();
-
-        let balance_a = token::Client::new(&env, &pair.token_a)
-            .balance(&contract_address);
-        let balance_b = token::Client::new(&env, &pair.token_b)
-            .balance(&contract_address);
-
-        pair.reserve_a = balance_a;
-        pair.reserve_b = balance_b;
-        pair.block_timestamp_last = env.ledger().timestamp();
-        set_pair_storage(&env, &pair);
 
         PairEvents::sync(&env, balance_a, balance_b);
         Ok(())
