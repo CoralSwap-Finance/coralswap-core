@@ -113,6 +113,12 @@ impl Router {
             amounts.push_back(amount_out);
         }
 
+        // ── 6. Verify minimum output (slippage protection) ───────────────────
+        let final_amount = amounts.get(amounts.len() - 1).unwrap();
+        if final_amount < amount_out_min {
+            return Err(RouterError::InsufficientOutputAmount);
+        }
+
         // Placeholder for remaining implementation
         todo!()
     }
