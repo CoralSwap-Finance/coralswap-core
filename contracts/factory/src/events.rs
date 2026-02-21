@@ -32,4 +32,12 @@ impl FactoryEvents {
     pub fn upgrade_executed(env: &Env, new_version: u32) {
         env.events().publish((soroban_sdk::symbol_short!("upgraded"),), new_version);
     }
+
+    pub fn fee_to_set(env: &Env, new_fee_to: &Option<Address>) {
+        env.events().publish((soroban_sdk::symbol_short!("fee_to"),), new_fee_to.clone());
+    }
+
+    pub fn fee_to_setter_set(env: &Env, new_setter: &Address) {
+        env.events().publish((soroban_sdk::symbol_short!("setter"),), new_setter.clone());
+    }
 }

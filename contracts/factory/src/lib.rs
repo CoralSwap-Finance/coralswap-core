@@ -38,6 +38,7 @@ impl Factory {
         signers: Vec<Address>,
         pair_wasm_hash: BytesN<32>,
         lp_token_wasm_hash: BytesN<32>,
+        fee_to_setter: Address,
     ) -> Result<(), FactoryError> {
         if storage::has_factory_storage(&env) {
             return Err(FactoryError::AlreadyInitialized);
@@ -54,6 +55,8 @@ impl Factory {
             pair_count: 0,
             protocol_version: 1,
             paused: false,
+            fee_to: None,
+            fee_to_setter,
         };
 
         storage::set_factory_storage(&env, &storage);
@@ -147,6 +150,48 @@ impl Factory {
         storage::set_factory_storage(&env, &storage);
         events::FactoryEvents::unpaused(&env);
         Ok(())
+    }
+
+    pub fn set_fee_to(env: Env, setter: Address, fee_to: Option<Address>) -> Result<(), FactoryError> {
+        let mut storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+
+        setter.require_auth();
+
+        if setter != storage.fee_to_setter {
+            return Err(FactoryError::Unauthorized);
+        }
+
+        storage.fee_to = fee_to.clone();
+        storage::set_factory_storage(&env, &storage);
+
+        events::FactoryEvents::fee_to_set(&env, &fee_to);
+
+        Ok(())
+    }
+
+    pub fn set_fee_to_setter(env: Env, setter: Address, new_setter: Address) -> Result<(), FactoryError> {
+        let mut storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+
+        setter.require_auth();
+
+        if setter != storage.fee_to_setter {
+            return Err(FactoryError::Unauthorized);
+        }
+
+        storage.fee_to_setter = new_setter.clone();
+        storage::set_factory_storage(&env, &storage);
+
+        events::FactoryEvents::fee_to_setter_set(&env, &new_setter);
+
+        Ok(())
+    }
+
+    pub fn fee_to(env: Env) -> Option<Address> {
+        storage::get_factory_storage(&env).map(|s| s.fee_to).unwrap_or(None)
+    }
+
+    pub fn fee_to_setter(env: Env) -> Option<Address> {
+        storage::get_factory_storage(&env).map(|s| s.fee_to_setter)
     }
 
     pub fn is_paused(env: Env) -> bool {

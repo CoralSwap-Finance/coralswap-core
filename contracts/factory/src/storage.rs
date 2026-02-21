@@ -9,6 +9,8 @@ pub struct FactoryStorage {
     pub pair_count: u32,
     pub protocol_version: u32,
     pub paused: bool,
+    pub fee_to: Option<Address>,
+    pub fee_to_setter: Address,
 }
 
 #[contracttype]
