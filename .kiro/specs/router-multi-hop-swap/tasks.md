@@ -30,7 +30,7 @@
   - **Property 9: Invalid path rejection**
   - **Validates: Requirements 5.1, 5.5**
 
-- [ ] 3. Implement Factory integration for pair address retrieval
+- [x] 3. Implement Factory integration for pair address retrieval
   - Create Factory client interface
   - Implement pair address lookup for each hop in the path
   - Handle None case with PairNotFound error
@@ -45,7 +45,7 @@
   - **Property 10: Non-existent pair handling**
   - **Validates: Requirements 5.4, 8.2**
 
-- [ ] 4. Implement output amount calculation for all hops
+- [x] 4. Implement output amount calculation for all hops
   - Initialize amounts vector with amount_in
   - Loop through path pairs to calculate each hop's output
   - Query reserves and fee from each Pair contract

@@ -26,6 +26,7 @@ impl Router {
     /// Swaps an exact amount of input tokens for output tokens through multiple hops.
     ///
     /// # Arguments
+    /// * `factory` - The Factory contract address for pair lookups
     /// * `amount_in` - The exact amount of input tokens to swap
     /// * `amount_out_min` - The minimum amount of output tokens to receive (slippage protection)
     /// * `path` - Vector of token addresses representing the swap route
@@ -36,6 +37,7 @@ impl Router {
     /// Vector of amounts for each step in the path (including input and all outputs)
     pub fn swap_exact_tokens_for_tokens(
         env: Env,
+        factory: Address,
         amount_in: i128,
         amount_out_min: i128,
         path: Vec<Address>,
@@ -66,6 +68,49 @@ impl Router {
 
         if amount_out_min < 0 {
             return Err(RouterError::InsufficientOutputAmount);
+        }
+
+        // ── 4. Initialize amounts vector ──────────────────────────────────────
+        let mut amounts = Vec::new(&env);
+        amounts.push_back(amount_in);
+
+        // ── 5. Calculate output amounts for each hop ──────────────────────────
+        let factory_client = FactoryClient::new(&env, &factory);
+
+        for i in 0..(path.len() - 1) {
+            let token_in = path.get(i).unwrap();
+            let token_out = path.get(i + 1).unwrap();
+
+            // Get pair address from factory
+            let pair_addr = factory_client
+                .get_pair(&token_in, &token_out)
+                .ok_or(RouterError::PairNotFound)?;
+
+            let pair_client = PairClient::new(&env, &pair_addr);
+
+            // Get reserves and fee
+            let (reserve_a, reserve_b, _timestamp) = pair_client.get_reserves();
+            let fee_bps = pair_client.get_current_fee_bps();
+
+            // Determine which reserve is input and which is output based on token ordering
+            let (token_a, token_b) = helpers::sort_tokens(&token_in, &token_out)?;
+            let (reserve_in, reserve_out) = if token_in == token_a {
+                (reserve_a, reserve_b)
+            } else {
+                (reserve_b, reserve_a)
+            };
+
+            // Calculate output amount for this hop
+            let current_amount_in = amounts.get(i).unwrap();
+            let amount_out = helpers::get_amount_out(
+                &env,
+                current_amount_in,
+                reserve_in,
+                reserve_out,
+                fee_bps,
+            )?;
+
+            amounts.push_back(amount_out);
         }
 
         // Placeholder for remaining implementation
