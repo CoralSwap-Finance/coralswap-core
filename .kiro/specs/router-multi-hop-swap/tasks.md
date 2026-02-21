@@ -14,7 +14,7 @@
   - **Property 12: Canonical token ordering**
   - **Validates: Requirements 7.1, 7.2**
 
-- [ ] 2. Implement input validation logic
+- [x] 2. Implement input validation logic
   - Add deadline validation against current ledger timestamp
   - Add path length validation (must be >= 2)
   - Add amount_in validation (must be > 0)
