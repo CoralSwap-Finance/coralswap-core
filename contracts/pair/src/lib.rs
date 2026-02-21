@@ -348,6 +348,11 @@ impl Pair {
             .unwrap_or(30)
     }
 
+    pub fn lp_token(env: Env) -> Result<Address, PairError> {
+        let state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+        Ok(state.lp_token)
+    }
+
     pub fn sync(env: Env) -> Result<(), PairError> {
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
         let contract = env.current_contract_address();
