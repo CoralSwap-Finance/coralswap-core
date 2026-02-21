@@ -1,5 +1,22 @@
-use soroban_sdk::{Address, Env};
 use crate::errors::RouterError;
+use soroban_sdk::{contractclient, Address, Env};
+
+#[contractclient(name = "FactoryClient")]
+pub trait FactoryInterface {
+    fn get_pair(env: Env, token_a: Address, token_b: Address) -> Option<Address>;
+}
+
+#[contractclient(name = "PairClient")]
+pub trait PairInterface {
+    fn burn(env: Env, to: Address) -> (i128, i128);
+    fn lp_token(env: Env) -> Address;
+}
+
+#[contractclient(name = "TokenClient")]
+pub trait TokenInterface {
+    fn transfer(env: Env, from: Address, to: Address, amount: i128);
+    fn balance(env: Env, id: Address) -> i128;
+}
 
 /// Computes output amount for an exact input swap using constant-product formula.
 ///
@@ -13,17 +30,13 @@ use crate::errors::RouterError;
 /// * `fee_bps` - The fee in basis points (e.g., 30 = 0.3%)
 pub fn get_amount_out(
     _env: &Env,
-    amount_in: i128,
-    reserve_in: i128,
-    reserve_out: i128,
-    fee_bps: u32,
+    _amount_in: i128,
+    _reserve_in: i128,
+    _reserve_out: i128,
+    _fee_bps: u32,
 ) -> Result<i128, RouterError> {
-    if amount_in <= 0 {
-        return Err(RouterError::ZeroAmount);
-    }
-    if reserve_in <= 0 || reserve_out <= 0 {
-        return Err(RouterError::InsufficientOutputAmount);
-    }
+    todo!()
+}
 
     // Calculate: amount_in * (10000 - fee_bps)
     let amount_in_with_fee = amount_in
@@ -58,20 +71,13 @@ pub fn get_amount_out(
 ///                      ((reserve_out - amount_out) * (10000 - fee_bps)) + 1
 pub fn get_amount_in(
     _env: &Env,
-    amount_out: i128,
-    reserve_in: i128,
-    reserve_out: i128,
-    fee_bps: u32,
+    _amount_out: i128,
+    _reserve_in: i128,
+    _reserve_out: i128,
+    _fee_bps: u32,
 ) -> Result<i128, RouterError> {
-    if amount_out <= 0 {
-        return Err(RouterError::ZeroAmount);
-    }
-    if reserve_in <= 0 || reserve_out <= 0 {
-        return Err(RouterError::InsufficientOutputAmount);
-    }
-    if amount_out >= reserve_out {
-        return Err(RouterError::InsufficientOutputAmount);
-    }
+    todo!()
+}
 
     // Calculate: reserve_in * amount_out * 10000
     let numerator = reserve_in
@@ -98,16 +104,19 @@ pub fn get_amount_in(
 /// Returns tokens in the order (token_a, token_b) where token_a < token_b.
 /// This matches the ordering used by the Factory when creating pairs.
 pub fn sort_tokens(
+    _token_a: &Address,
+    _token_b: &Address,
+) -> Result<(Address, Address), RouterError> {
+    todo!()
+}
+
+/// Get the pair address from the factory contract
+pub fn get_pair_address(
+    env: &Env,
+    factory: &Address,
     token_a: &Address,
     token_b: &Address,
-) -> Result<(Address, Address), RouterError> {
-    if token_a == token_b {
-        return Err(RouterError::IdenticalTokens);
-    }
-
-    if token_a < token_b {
-        Ok((token_a.clone(), token_b.clone()))
-    } else {
-        Ok((token_b.clone(), token_a.clone()))
-    }
+) -> Result<Address, RouterError> {
+    let factory_client = FactoryClient::new(env, factory);
+    factory_client.get_pair(token_a, token_b).ok_or(RouterError::PairNotFound)
 }
