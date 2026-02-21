@@ -75,7 +75,7 @@
   - **Property 3: Slippage protection enforcement**
   - **Validates: Requirements 2.1, 2.2, 2.3**
 
-- [ ] 6. Implement initial token transfer
+- [x] 6. Implement initial token transfer
   - Get caller address using env.invoker()
   - Transfer amount_in of path[0] tokens from caller to first Pair
   - Use transfer_from with proper authorization
@@ -86,7 +86,7 @@
   - **Property 6: Initial token transfer**
   - **Validates: Requirements 4.1**
 
-- [ ] 7. Implement swap execution loop
+- [x] 7. Implement swap execution loop
   - Iterate through each hop in the path
   - Determine destination address (next Pair or final recipient)
   - Sort tokens to determine swap direction

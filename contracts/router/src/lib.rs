@@ -3,7 +3,7 @@
 mod errors;
 mod helpers;
 
-use soroban_sdk::{contract, contractimpl, contractclient, Address, Env, Vec};
+use soroban_sdk::{contract, contractimpl, contractclient, token, Address, Env, Vec};
 use errors::RouterError;
 
 #[contractclient(name = "FactoryClient")]
@@ -119,8 +119,58 @@ impl Router {
             return Err(RouterError::InsufficientOutputAmount);
         }
 
-        // Placeholder for remaining implementation
-        todo!()
+        // ── 7. Transfer input tokens to first pair ───────────────────────────
+        let first_token = path.get(0).unwrap();
+        let second_token = path.get(1).unwrap();
+        let first_pair = factory_client
+            .get_pair(&first_token, &second_token)
+            .ok_or(RouterError::PairNotFound)?;
+
+        // Transfer from caller to first pair
+        token::Client::new(&env, &first_token).transfer(
+            &env.invoker(),
+            &first_pair,
+            &amount_in,
+        );
+
+        // ── 8. Execute swaps through each pair ────────────────────────────────
+        for i in 0..(path.len() - 1) {
+            let token_in = path.get(i).unwrap();
+            let token_out = path.get(i + 1).unwrap();
+
+            // Get pair address
+            let pair_addr = factory_client
+                .get_pair(&token_in, &token_out)
+                .ok_or(RouterError::PairNotFound)?;
+
+            // Determine destination for this hop
+            let destination = if i < path.len() - 2 {
+                // Intermediate hop: send to next pair
+                let next_token = path.get(i + 2).unwrap();
+                factory_client
+                    .get_pair(&token_out, &next_token)
+                    .ok_or(RouterError::PairNotFound)?
+            } else {
+                // Final hop: send to recipient
+                to.clone()
+            };
+
+            // Determine swap parameters based on token ordering
+            let (token_a, token_b) = helpers::sort_tokens(&token_in, &token_out)?;
+            let amount_out = amounts.get(i + 1).unwrap();
+
+            let pair_client = PairClient::new(&env, &pair_addr);
+
+            if token_in == token_a {
+                // Swapping A → B: amount_a_out = 0, amount_b_out = calculated
+                pair_client.swap(&0, &amount_out, &destination);
+            } else {
+                // Swapping B → A: amount_a_out = calculated, amount_b_out = 0
+                pair_client.swap(&amount_out, &0, &destination);
+            }
+        }
+
+        Ok(amounts)
     }
 
     pub fn swap_tokens_for_exact_tokens(
