@@ -1,4 +1,7 @@
-#![no_std]
+#![cfg_attr(not(test), no_std)]
+
+#[cfg(test)]
+extern crate std;
 
 mod errors;
 mod storage;
@@ -12,69 +15,69 @@ pub struct LpToken;
 #[contractimpl]
 impl LpToken {
     pub fn initialize(
-        env: Env,
-        admin: Address,
-        decimals: u32,
-        name: String,
-        symbol: String,
+        _env: Env,
+        _admin: Address,
+        _decimals: u32,
+        _name: String,
+        _symbol: String,
     ) -> Result<(), LpTokenError> {
         todo!()
     }
 
-    pub fn allowance(env: Env, from: Address, spender: Address) -> i128 {
+    pub fn allowance(_env: Env, _from: Address, _spender: Address) -> i128 {
         todo!()
     }
 
     pub fn approve(
-        env: Env,
-        from: Address,
-        spender: Address,
-        amount: i128,
-        expiration_ledger: u32,
+        _env: Env,
+        _from: Address,
+        _spender: Address,
+        _amount: i128,
+        _expiration_ledger: u32,
     ) -> Result<(), LpTokenError> {
         todo!()
     }
 
-    pub fn balance(env: Env, id: Address) -> i128 {
+    pub fn balance(_env: Env, _id: Address) -> i128 {
         todo!()
     }
 
     pub fn transfer(
-        env: Env,
-        from: Address,
-        to: Address,
-        amount: i128,
+        _env: Env,
+        _from: Address,
+        _to: Address,
+        _amount: i128,
     ) -> Result<(), LpTokenError> {
         todo!()
     }
 
     pub fn transfer_from(
-        env: Env,
-        spender: Address,
-        from: Address,
-        to: Address,
-        amount: i128,
+        _env: Env,
+        _spender: Address,
+        _from: Address,
+        _to: Address,
+        _amount: i128,
     ) -> Result<(), LpTokenError> {
         todo!()
     }
 
-    pub fn mint(env: Env, to: Address, amount: i128) -> Result<(), LpTokenError> {
+    pub fn mint(_env: Env, _to: Address, _amount: i128) -> Result<(), LpTokenError> {
         todo!()
     }
-    pub fn burn(env: Env, from: Address, amount: i128) -> Result<(), LpTokenError> {
+    pub fn burn(_env: Env, _from: Address, _amount: i128) -> Result<(), LpTokenError> {
         todo!()
     }
 
-    pub fn decimals(env: Env) -> u32 {
+    pub fn decimals(_env: Env) -> u32 {
         todo!()
     }
-    pub fn name(env: Env) -> String {
+    pub fn name(_env: Env) -> String {
         todo!()
     }
-    pub fn symbol(env: Env) -> String {
+    pub fn symbol(_env: Env) -> String {
         todo!()
     }
-    pub fn total_supply(env: Env) -> i128 {
+    pub fn total_supply(_env: Env) -> i128 {
         todo!()
     }
 }

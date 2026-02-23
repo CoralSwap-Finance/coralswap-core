@@ -4,8 +4,6 @@ use crate::dynamic_fee::{compute_fee_bps, decay_stale_ema, update_volatility};
 use crate::storage::FeeState;
 use soroban_sdk::{testutils::Ledger, Env};
 
-const SCALE: i128 = 100_000_000_000_000; // 1e14
-
 /// Helper to create a default FeeState for testing.
 fn default_fee_state() -> FeeState {
     FeeState {
@@ -147,11 +145,11 @@ fn test_compute_fee_bps_increases_with_volatility() {
 
     // Low volatility
     fee_state.vol_accumulator = 10_000_000_000_000;
-    let low_fee = compute_fee_bps(&fee_state);
+    let _low_fee = compute_fee_bps(&fee_state);
 
     // High volatility (10x higher)
     fee_state.vol_accumulator = 100_000_000_000_000;
-    let high_fee = compute_fee_bps(&fee_state);
+    let _high_fee = compute_fee_bps(&fee_state);
 
     // Both should hit max_fee_bps, so let's use smaller values
     fee_state.vol_accumulator = 1_000_000_000_000;

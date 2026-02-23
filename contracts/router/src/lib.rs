@@ -12,18 +12,6 @@ use helpers::{get_pair_address, PairClient};
 use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Env, Vec};
 use storage::{get_factory, set_factory};
 
-#[contractclient(name = "FactoryClient")]
-pub trait FactoryInterface {
-    fn get_pair(env: Env, token_a: Address, token_b: Address) -> Option<Address>;
-}
-
-#[contractclient(name = "PairClient")]
-pub trait PairInterface {
-    fn swap(env: Env, amount_a_out: i128, amount_b_out: i128, to: Address);
-    fn get_reserves(env: Env) -> (i128, i128, u64);
-    fn get_current_fee_bps(env: Env) -> u32;
-}
-
 #[contract]
 pub struct Router;
 
@@ -33,12 +21,12 @@ impl Router {
         set_factory(&env, &factory);
     }
     pub fn swap_exact_tokens_for_tokens(
-        env: Env,
-        amount_in: i128,
-        amount_out_min: i128,
-        path: Vec<Address>,
-        to: Address,
-        deadline: u64,
+        _env: Env,
+        _amount_in: i128,
+        _amount_out_min: i128,
+        _path: Vec<Address>,
+        _to: Address,
+        _deadline: u64,
     ) -> Result<Vec<i128>, RouterError> {
         todo!()
     }
@@ -52,12 +40,12 @@ impl Router {
     /// * `to` - The recipient address for output tokens
     /// * `deadline` - Unix timestamp after which the transaction will revert
     pub fn swap_tokens_for_exact_tokens(
-        env: Env,
-        amount_out: i128,
-        amount_in_max: i128,
-        path: Vec<Address>,
-        to: Address,
-        deadline: u64,
+        _env: Env,
+        _amount_out: i128,
+        _amount_in_max: i128,
+        _path: Vec<Address>,
+        _to: Address,
+        _deadline: u64,
     ) -> Result<Vec<i128>, RouterError> {
         todo!()
     }
@@ -74,15 +62,15 @@ impl Router {
     /// * `to` - Recipient of LP tokens
     /// * `deadline` - Unix timestamp after which the transaction will revert
     pub fn add_liquidity(
-        env: Env,
-        token_a: Address,
-        token_b: Address,
-        amount_a_desired: i128,
-        amount_b_desired: i128,
-        amount_a_min: i128,
-        amount_b_min: i128,
-        to: Address,
-        deadline: u64,
+        _env: Env,
+        _token_a: Address,
+        _token_b: Address,
+        _amount_a_desired: i128,
+        _amount_b_desired: i128,
+        _amount_a_min: i128,
+        _amount_b_min: i128,
+        _to: Address,
+        _deadline: u64,
     ) -> Result<(i128, i128, i128), RouterError> {
         todo!()
     }

@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::{Router, RouterClient, RouterError};
+use crate::{Router, RouterClient};
 use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env};
 
 #[test]

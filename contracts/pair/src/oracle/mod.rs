@@ -1,10 +1,11 @@
 use soroban_sdk::Env;
 
-/// Cumulative price oracle (TWAP support).
-/// Tracks cumulative token prices for time-weighted average price queries.
+// Cumulative price oracle (TWAP support).
+// Tracks cumulative token prices for time-weighted average price queries.
 
 /// Updated cumulative price accumulators with current reserves.
 /// Called during every swap and liquidity event.
+#[allow(dead_code)]
 pub fn update_cumulative_prices(
     _env: &Env,
     _reserve_a: i128,
@@ -19,6 +20,7 @@ pub fn update_cumulative_prices(
 }
 
 /// Consulted the cumulative price to compute TWAP over a period.
+#[allow(dead_code)]
 pub fn consult_twap(
     _price_cumulative_start: i128,
     _price_cumulative_end: i128,

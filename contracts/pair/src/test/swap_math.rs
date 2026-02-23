@@ -3,7 +3,7 @@
 use soroban_sdk::Env;
 
 use crate::errors::PairError;
-use crate::math::{mul_div, sqrt, BPS_DENOMINATOR, MINIMUM_LIQUIDITY, SCALE};
+use crate::math::{mul_div, sqrt, BPS_DENOMINATOR, SCALE};
 
 // ---------------------------------------------------------------------------
 // Swap-math helpers (mirror the expected on-chain formulas)
