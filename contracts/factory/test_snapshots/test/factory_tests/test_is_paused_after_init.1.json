@@ -244,19 +244,10 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
               },
               {
-                "symbol": "get_pair"
+                "symbol": "is_paused"
               }
             ],
-            "data": {
-              "vec": [
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
-                }
-              ]
-            }
+            "data": "void"
           }
         }
       },
@@ -274,10 +265,12 @@
                 "symbol": "fn_return"
               },
               {
-                "symbol": "get_pair"
+                "symbol": "is_paused"
               }
             ],
-            "data": "void"
+            "data": {
+              "bool": false
+            }
           }
         }
       },

@@ -40,16 +40,19 @@ impl Factory {
         lp_token_wasm_hash: BytesN<32>,
         fee_to_setter: Address,
     ) -> Result<(), FactoryError> {
+        // Double-init guard
         if storage::has_factory_storage(&env) {
             return Err(FactoryError::AlreadyInitialized);
         }
 
-        if signers.len() != 3 {
+        // Validate signers: must have between 1 and 10 (inclusive)
+        let signer_count = signers.len();
+        if !(1..=10).contains(&signer_count) {
             return Err(FactoryError::InvalidSignerCount);
         }
 
-        let storage = FactoryStorage {
-            signers: (signers.get(0).unwrap(), signers.get(1).unwrap(), signers.get(2).unwrap()),
+        let factory_storage = FactoryStorage {
+            signers,
             pair_wasm_hash,
             lp_token_wasm_hash,
             pair_count: 0,
@@ -59,7 +62,11 @@ impl Factory {
             fee_to_setter,
         };
 
-        storage::set_factory_storage(&env, &storage);
+        storage::set_factory_storage(&env, &factory_storage);
+
+        // Extend instance TTL to keep contract alive
+        storage::extend_instance_ttl(&env);
+
         Ok(())
     }
 
@@ -152,7 +159,11 @@ impl Factory {
         Ok(())
     }
 
-    pub fn set_fee_to(env: Env, setter: Address, fee_to: Option<Address>) -> Result<(), FactoryError> {
+    pub fn set_fee_to(
+        env: Env,
+        setter: Address,
+        fee_to: Option<Address>,
+    ) -> Result<(), FactoryError> {
         let mut storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
 
         setter.require_auth();
@@ -169,7 +180,11 @@ impl Factory {
         Ok(())
     }
 
-    pub fn set_fee_to_setter(env: Env, setter: Address, new_setter: Address) -> Result<(), FactoryError> {
+    pub fn set_fee_to_setter(
+        env: Env,
+        setter: Address,
+        new_setter: Address,
+    ) -> Result<(), FactoryError> {
         let mut storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
 
         setter.require_auth();

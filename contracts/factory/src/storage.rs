@@ -1,9 +1,12 @@
-use soroban_sdk::{contracttype, Address, BytesN, Env};
+use soroban_sdk::{contracttype, Address, BytesN, Env, Vec};
+
+const INSTANCE_LIFETIME_THRESHOLD: u32 = 17280; // ~1 day in 5s ledgers
+const INSTANCE_BUMP_AMOUNT: u32 = 518400; // ~30 days in 5s ledgers
 
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct FactoryStorage {
-    pub signers: (Address, Address, Address),
+    pub signers: Vec<Address>,
     pub pair_wasm_hash: BytesN<32>,
     pub lp_token_wasm_hash: BytesN<32>,
     pub pair_count: u32,
@@ -40,6 +43,11 @@ pub fn set_pair(env: &Env, token_a: Address, token_b: Address, pair: Address) {
 
 pub fn has_factory_storage(env: &Env) -> bool {
     env.storage().instance().has(&DataKey::Factory)
+}
+
+/// Extend instance storage TTL to keep contract alive.
+pub fn extend_instance_ttl(env: &Env) {
+    env.storage().instance().extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 }
 
 #[contracttype]

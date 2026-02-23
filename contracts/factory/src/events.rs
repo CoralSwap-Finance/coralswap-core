@@ -1,7 +1,9 @@
 use soroban_sdk::{Address, Env};
 
+#[allow(dead_code)]
 pub struct FactoryEvents;
 
+#[allow(dead_code)]
 impl FactoryEvents {
     pub fn pair_created(
         env: &Env,
