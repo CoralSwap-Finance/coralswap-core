@@ -20,7 +20,7 @@ pub trait TokenInterface {
 
 /// Computes output amount for an exact input swap using constant-product formula.
 ///
-/// Formula: amount_out = (amount_in * (10000 - fee_bps) * reserve_out) / 
+/// Formula: amount_out = (amount_in * (10000 - fee_bps) * reserve_out) /
 ///                       (reserve_in * 10000 + amount_in * (10000 - fee_bps))
 ///
 /// # Arguments
@@ -30,23 +30,18 @@ pub trait TokenInterface {
 /// * `fee_bps` - The fee in basis points (e.g., 30 = 0.3%)
 pub fn get_amount_out(
     _env: &Env,
-    _amount_in: i128,
-    _reserve_in: i128,
-    _reserve_out: i128,
-    _fee_bps: u32,
+    amount_in: i128,
+    reserve_in: i128,
+    reserve_out: i128,
+    fee_bps: u32,
 ) -> Result<i128, RouterError> {
-    todo!()
-}
-
     // Calculate: amount_in * (10000 - fee_bps)
-    let amount_in_with_fee = amount_in
-        .checked_mul(10000 - fee_bps as i128)
-        .ok_or(RouterError::ExcessiveInputAmount)?;
+    let amount_in_with_fee =
+        amount_in.checked_mul(10000 - fee_bps as i128).ok_or(RouterError::ExcessiveInputAmount)?;
 
     // Calculate: amount_in_with_fee * reserve_out
-    let numerator = amount_in_with_fee
-        .checked_mul(reserve_out)
-        .ok_or(RouterError::ExcessiveInputAmount)?;
+    let numerator =
+        amount_in_with_fee.checked_mul(reserve_out).ok_or(RouterError::ExcessiveInputAmount)?;
 
     // Calculate: reserve_in * 10000 + amount_in_with_fee
     let denominator = reserve_in
@@ -67,18 +62,15 @@ pub fn get_amount_out(
 
 /// Computes input amount required for an exact output swap.
 ///
-/// Formula: amount_in = (reserve_in * amount_out * 10000) / 
+/// Formula: amount_in = (reserve_in * amount_out * 10000) /
 ///                      ((reserve_out - amount_out) * (10000 - fee_bps)) + 1
 pub fn get_amount_in(
     _env: &Env,
-    _amount_out: i128,
-    _reserve_in: i128,
-    _reserve_out: i128,
-    _fee_bps: u32,
+    amount_out: i128,
+    reserve_in: i128,
+    reserve_out: i128,
+    fee_bps: u32,
 ) -> Result<i128, RouterError> {
-    todo!()
-}
-
     // Calculate: reserve_in * amount_out * 10000
     let numerator = reserve_in
         .checked_mul(amount_out)
@@ -92,9 +84,8 @@ pub fn get_amount_in(
         .ok_or(RouterError::ExcessiveInputAmount)?;
 
     // Final division with +1 to round up
-    let amount_in = (numerator / denominator)
-        .checked_add(1)
-        .ok_or(RouterError::ExcessiveInputAmount)?;
+    let amount_in =
+        (numerator / denominator).checked_add(1).ok_or(RouterError::ExcessiveInputAmount)?;
 
     Ok(amount_in)
 }
