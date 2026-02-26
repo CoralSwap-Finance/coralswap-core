@@ -102,7 +102,7 @@ fn test_partial_withdrawal() {
     let user_lp_balance = lp_token.balance(&user);
     let total_lp_supply = lp_token.total_supply();
     let (initial_reserve_a, initial_reserve_b, _) = pair_client.get_reserves();
-    
+
     let burn_amount = user_lp_balance / 2;
     lp_token.transfer(&user, &pair_address, &burn_amount);
 
@@ -127,11 +127,12 @@ fn test_partial_withdrawal() {
 
 #[test]
 fn test_burn_insufficient_liquidity_fails() {
-    let (env, pair_client, _admin, user, _token_a, _token_b, lp_token) = setup_test_with_liquidity();
+    let (env, pair_client, _admin, user, _token_a, _token_b, lp_token) =
+        setup_test_with_liquidity();
     let pair_address = pair_client.address.clone();
 
     // A very small amount of LP tokens that would result in 0 of one token
-    let dust_amount = 1; 
+    let dust_amount = 1;
     lp_token.transfer(&user, &pair_address, &dust_amount);
 
     let result = pair_client.try_burn(&user);
@@ -140,7 +141,8 @@ fn test_burn_insufficient_liquidity_fails() {
 
 #[test]
 fn test_burn_event() {
-    let (env, pair_client, _admin, user, _token_a, _token_b, lp_token) = setup_test_with_liquidity();
+    let (env, pair_client, _admin, user, _token_a, _token_b, lp_token) =
+        setup_test_with_liquidity();
     let pair_address = pair_client.address.clone();
 
     let burn_amount = lp_token.balance(&user) / 3;
@@ -151,10 +153,7 @@ fn test_burn_event() {
     let events = env.events().all();
     let last_event = events.last().unwrap();
 
-    let expected_topics = (
-        soroban_sdk::symbol_short!("burn"),
-        user.clone(),
-    ).into_val(&env);
+    let expected_topics = (soroban_sdk::symbol_short!("burn"), user.clone()).into_val(&env);
 
     let expected_data = (amount_a, amount_b, user.clone()).into_val(&env);
 
