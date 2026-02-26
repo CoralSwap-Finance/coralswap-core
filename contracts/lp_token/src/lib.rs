@@ -163,7 +163,8 @@ impl LpToken {
         env.storage().persistent().set(&balance_key, &new_balance);
 
         // Increase total supply
-        let total_supply: i128 = env.storage().instance().get(&LpTokenKey::TotalSupply).unwrap_or(0);
+        let total_supply: i128 =
+            env.storage().instance().get(&LpTokenKey::TotalSupply).unwrap_or(0);
         let new_total_supply =
             total_supply.checked_add(amount).ok_or(LpTokenError::ExceedsMaxSupply)?;
         env.storage().instance().set(&LpTokenKey::TotalSupply, &new_total_supply);

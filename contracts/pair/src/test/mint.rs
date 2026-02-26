@@ -3,27 +3,21 @@ use crate::{math::MINIMUM_LIQUIDITY, Pair, PairClient};
 use soroban_sdk::{
     testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation},
     token::Client as TokenClient,
-    Address, Env, Symbol, IntoVal,
+    Address, Env, IntoVal, Symbol,
 };
 
 // --- Contract Wasm Paths ---
-// Fixed paths to be more standard for Soroban workspace structures. 
+// Fixed paths to be more standard for Soroban workspace structures.
 // If your build folder is different, adjust these strings.
 const PAIR_WASM: &[u8] =
     include_bytes!("../../../../target/wasm32-unknown-unknown/release/coralswap_pair.wasm");
 const LP_TOKEN_WASM: &[u8] =
     include_bytes!("../../../../target/wasm32-unknown-unknown/release/coralswap_lp_token.wasm");
-const TOKEN_WASM: &[u8] = 
+const TOKEN_WASM: &[u8] =
     include_bytes!("../../../../target/wasm32-unknown-unknown/release/soroban_token_contract.wasm");
 
 /// Sets up a test environment with a Pair contract and its dependent tokens.
-fn setup_pair<'a>() -> (
-    Env,
-    PairClient<'a>,
-    Address,
-    TokenClient<'a>,
-    TokenClient<'a>,
-) {
+fn setup_pair<'a>() -> (Env, PairClient<'a>, Address, TokenClient<'a>, TokenClient<'a>) {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -40,7 +34,7 @@ fn setup_pair<'a>() -> (
     let token_a = TokenClient::new(&env, &token_a_id);
     let token_b = TokenClient::new(&env, &token_b_id);
     let admin = Address::generate(&env);
-    
+
     // Sort tokens to match Uniswap/Soroban deterministic ordering if necessary
     // For this test, we assume token_a_id < token_b_id
     token_a.initialize(&admin, &7, &"Token A".into_val(&env), &"TKNA".into_val(&env));
@@ -77,7 +71,7 @@ fn test_first_deposit() {
 
     assert_eq!(lp_token.balance(&user), expected_liquidity);
     assert_eq!(lp_token.balance(&pair_address), MINIMUM_LIQUIDITY);
-    
+
     let (res_a, res_b, _) = pair_client.get_reserves();
     assert_eq!(res_a, amount_a);
     assert_eq!(res_b, amount_b);
@@ -115,7 +109,7 @@ fn test_proportional_deposit() {
 fn test_dust_deposit_fails() {
     let (env, pair_client, admin, token_a, token_b) = setup_pair();
     let user = Address::generate(&env);
-    
+
     // Total product sqrt(10*10) = 10, which is < MINIMUM_LIQUIDITY (1000)
     token_a.mint(&admin, &user, &10);
     token_b.mint(&admin, &user, &10);
@@ -144,7 +138,7 @@ fn test_price_accumulation() {
     // Sync to trigger accumulation
     pair_client.sync();
 
-    // Since we don't have a direct getter for cumulative prices in the trait, 
+    // Since we don't have a direct getter for cumulative prices in the trait,
     // we verify that the reserves remain correct and no panic occurred.
     let (res_a, res_b, last_time) = pair_client.get_reserves();
     assert_eq!(res_a, 100);

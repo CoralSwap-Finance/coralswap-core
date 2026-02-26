@@ -38,7 +38,7 @@ fn test_mint_invalid_amount() {
     let user = Address::generate(&env);
 
     env.mock_all_auths();
-    
+
     // Test zero amount
     let result = lp_token.try_mint(&user, &0);
     assert!(result.is_err());

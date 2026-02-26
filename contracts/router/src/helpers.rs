@@ -49,14 +49,10 @@ pub fn get_amount_out(
     }
 
     let amount_in_with_fee =
-        amount_in
-            .checked_mul(10000 - fee_bps as i128)
-            .ok_or(RouterError::InsufficientLiquidity)?;
+        amount_in.checked_mul(10000 - fee_bps as i128).ok_or(RouterError::InsufficientLiquidity)?;
 
     let numerator =
-        amount_in_with_fee
-            .checked_mul(reserve_out)
-            .ok_or(RouterError::InsufficientLiquidity)?;
+        amount_in_with_fee.checked_mul(reserve_out).ok_or(RouterError::InsufficientLiquidity)?;
 
     let denominator = reserve_in
         .checked_mul(10000)
@@ -106,11 +102,7 @@ pub fn get_amount_in(
 ///
 /// Formula:
 /// amount_b = (amount_a * reserve_b) / reserve_a
-pub fn quote(
-    amount_a: i128,
-    reserve_a: i128,
-    reserve_b: i128,
-) -> Result<i128, RouterError> {
+pub fn quote(amount_a: i128, reserve_a: i128, reserve_b: i128) -> Result<i128, RouterError> {
     if amount_a <= 0 {
         return Err(RouterError::ZeroAmount);
     }
@@ -119,10 +111,8 @@ pub fn quote(
         return Err(RouterError::InsufficientLiquidity);
     }
 
-    let amount_b = amount_a
-        .checked_mul(reserve_b)
-        .ok_or(RouterError::InsufficientLiquidity)?
-        / reserve_a;
+    let amount_b =
+        amount_a.checked_mul(reserve_b).ok_or(RouterError::InsufficientLiquidity)? / reserve_a;
 
     Ok(amount_b)
 }
@@ -160,9 +150,7 @@ pub fn compute_optimal_amounts(
     }
 
     let amount_b_optimal =
-        amount_a_desired
-            .checked_mul(reserve_b)
-            .ok_or(RouterError::InsufficientLiquidity)?
+        amount_a_desired.checked_mul(reserve_b).ok_or(RouterError::InsufficientLiquidity)?
             / reserve_a;
 
     if amount_b_optimal <= amount_b_desired {
@@ -172,9 +160,7 @@ pub fn compute_optimal_amounts(
         Ok((amount_a_desired, amount_b_optimal))
     } else {
         let amount_a_optimal =
-            amount_b_desired
-                .checked_mul(reserve_a)
-                .ok_or(RouterError::InsufficientLiquidity)?
+            amount_b_desired.checked_mul(reserve_a).ok_or(RouterError::InsufficientLiquidity)?
                 / reserve_b;
 
         if amount_a_optimal < amount_a_min {
@@ -193,7 +179,5 @@ pub fn get_pair_address(
     token_b: &Address,
 ) -> Result<Address, RouterError> {
     let factory_client = FactoryClient::new(env, factory);
-    factory_client
-        .get_pair(token_a, token_b)
-        .ok_or(RouterError::PairNotFound)
+    factory_client.get_pair(token_a, token_b).ok_or(RouterError::PairNotFound)
 }
