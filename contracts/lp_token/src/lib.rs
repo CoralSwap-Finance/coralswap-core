@@ -145,14 +145,16 @@ impl LpToken {
         Ok(())
     }
 
-    /// Mint new tokens to an address
-    /// Only callable by admin (pair contract)
     pub fn mint(env: Env, to: Address, amount: i128) -> Result<(), LpTokenError> {
         // Get admin and require authorization
         let admin: Address =
             env.storage().instance().get(&LpTokenKey::Admin).ok_or(LpTokenError::NotInitialized)?;
 
         admin.require_auth();
+
+        if amount <= 0 {
+            return Err(LpTokenError::InvalidAmount);
+        }
 
         // Increase balance
         let balance_key = LpTokenKey::Balance(to.clone());
@@ -161,9 +163,9 @@ impl LpToken {
         env.storage().persistent().set(&balance_key, &new_balance);
 
         // Increase total supply
-        let total_supply: i128 =
-            env.storage().instance().get(&LpTokenKey::TotalSupply).unwrap_or(0);
-        let new_total_supply = total_supply.checked_add(amount).ok_or(LpTokenError::Overflow)?;
+        let total_supply: i128 = env.storage().instance().get(&LpTokenKey::TotalSupply).unwrap_or(0);
+        let new_total_supply =
+            total_supply.checked_add(amount).ok_or(LpTokenError::ExceedsMaxSupply)?;
         env.storage().instance().set(&LpTokenKey::TotalSupply, &new_total_supply);
 
         // Emit mint event

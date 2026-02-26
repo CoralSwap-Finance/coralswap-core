@@ -11,7 +11,4 @@ doctest = false
 soroban-sdk = { workspace = true }
 
 [dev-dependencies]
-# Note: testutils feature disabled due to known issue with soroban-sdk 21.7.6
-# The contract compiles successfully and follows SEP-41 standard
-# Integration tests can be performed using soroban CLI
-soroban-sdk = { workspace = true }
+soroban-sdk = { workspace = true, features = ["testutils"] }

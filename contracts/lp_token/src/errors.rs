@@ -10,4 +10,6 @@ pub enum LpTokenError {
     InsufficientBalance = 203,
     InsufficientAllowance = 204,
     Overflow = 205,
+    InvalidAmount = 206,
+    ExceedsMaxSupply = 207,
 }
