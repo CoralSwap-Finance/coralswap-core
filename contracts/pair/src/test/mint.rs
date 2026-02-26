@@ -1,10 +1,20 @@
 //! Unit tests for Pair::mint()
 use crate::{math::MINIMUM_LIQUIDITY, Pair, PairClient};
 use soroban_sdk::{
-    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation},
+    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation, Ledger},
     token::Client as TokenClient,
-    Address, Env, IntoVal, Symbol,
+    Address, Env, String, Symbol,
 };
+
+
+#[soroban_sdk::contractclient(name = "TestTokenClient")]
+pub trait TestTokenInterface {
+    fn initialize(env: Env, admin: Address, decimal: u32, name: String, symbol: String);
+    fn mint(env: Env, to: Address, amount: i128);
+    fn total_supply(env: Env) -> i128;
+    fn balance(env: Env, id: Address) -> i128;
+    fn transfer(env: Env, from: Address, to: Address, amount: i128);
+}
 
 // --- Contract Wasm Paths ---
 // Fixed paths to be more standard for Soroban workspace structures.
@@ -17,7 +27,7 @@ const TOKEN_WASM: &[u8] =
     include_bytes!("../../../../target/wasm32-unknown-unknown/release/soroban_token_contract.wasm");
 
 /// Sets up a test environment with a Pair contract and its dependent tokens.
-fn setup_pair<'a>() -> (Env, PairClient<'a>, Address, TokenClient<'a>, TokenClient<'a>) {
+fn setup_pair<'a>() -> (Env, PairClient<'a>, Address, TestTokenClient<'a>, TestTokenClient<'a>) {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -31,14 +41,14 @@ fn setup_pair<'a>() -> (Env, PairClient<'a>, Address, TokenClient<'a>, TokenClie
     let pair_client = PairClient::new(&env, &pair_contract_id);
 
     // Initialize tokens
-    let token_a = TokenClient::new(&env, &token_a_id);
-    let token_b = TokenClient::new(&env, &token_b_id);
+    let token_a = TestTokenClient::new(&env, &token_a_id);
+    let token_b = TestTokenClient::new(&env, &token_b_id);
     let admin = Address::generate(&env);
 
     // Sort tokens to match Uniswap/Soroban deterministic ordering if necessary
     // For this test, we assume token_a_id < token_b_id
-    token_a.initialize(&admin, &7, &"Token A".into_val(&env), &"TKNA".into_val(&env));
-    token_b.initialize(&admin, &7, &"Token B".into_val(&env), &"TKNB".into_val(&env));
+    token_a.initialize(&admin, &7, &String::from_str(&env, "Token A"), &String::from_str(&env, "TKNA"));
+    token_b.initialize(&admin, &7, &String::from_str(&env, "Token B"), &String::from_str(&env, "TKNB"));
 
     // Initialize pair
     pair_client.initialize(&factory, &token_a_id, &token_b_id, &lp_token_id);
@@ -54,11 +64,11 @@ fn test_first_deposit() {
 
     let amount_a = 1_000_000_000;
     let amount_b = 4_000_000_000;
-    token_a.mint(&admin, &user, &amount_a);
-    token_b.mint(&admin, &user, &amount_b);
+    token_a.mint(&env, &admin, amount_a);
+    token_b.mint(&env, &admin, amount_b);
 
-    token_a.transfer(&user, &pair_address, &amount_a);
-    token_b.transfer(&user, &pair_address, &amount_b);
+    token_a.transfer(&env, &user, &pair_address, amount_a);
+    token_b.transfer(&env, &user, &pair_address, amount_b);
 
     // expected = sqrt(1e9 * 4e9) - 1000 = 2e9 - 1000
     let expected_liquidity = 2_000_000_000 - MINIMUM_LIQUIDITY;
@@ -67,7 +77,7 @@ fn test_first_deposit() {
     assert_eq!(liquidity, expected_liquidity);
 
     let lp_token_address = pair_client.lp_token();
-    let lp_token = TokenClient::new(&env, &lp_token_address);
+    let lp_token = TestTokenClient::new(&env, &lp_token_address);
 
     assert_eq!(lp_token.balance(&user), expected_liquidity);
     assert_eq!(lp_token.balance(&pair_address), MINIMUM_LIQUIDITY);
@@ -85,18 +95,18 @@ fn test_proportional_deposit() {
     let pair_address = pair_client.address.clone();
 
     // User 1 Mint
-    token_a.mint(&admin, &user1, &1_000_000);
-    token_b.mint(&admin, &user1, &1_000_000);
+    token_a.mint(&env, &admin, 1_000_000);
+    token_b.mint(&env, &admin, 1_000_000);
     token_a.transfer(&user1, &pair_address, &1_000_000);
     token_b.transfer(&user1, &pair_address, &1_000_000);
     pair_client.mint(&user1);
 
-    let lp_token = TokenClient::new(&env, &pair_client.lp_token());
+    let lp_token = TestTokenClient::new(&env, &pair_client.lp_token());
     let supply_after_1 = lp_token.total_supply();
 
     // User 2 Mint (Double the reserves)
-    token_a.mint(&admin, &user2, &2_000_000);
-    token_b.mint(&admin, &user2, &2_000_000);
+    token_a.mint(&env, &admin, 2_000_000);
+    token_b.mint(&env, &admin, 2_000_000);
     token_a.transfer(&user2, &pair_address, &2_000_000);
     token_b.transfer(&user2, &pair_address, &2_000_000);
     let liquidity2 = pair_client.mint(&user2);
@@ -111,8 +121,8 @@ fn test_dust_deposit_fails() {
     let user = Address::generate(&env);
 
     // Total product sqrt(10*10) = 10, which is < MINIMUM_LIQUIDITY (1000)
-    token_a.mint(&admin, &user, &10);
-    token_b.mint(&admin, &user, &10);
+    token_a.mint(&env, &admin, 10);
+    token_b.mint(&env, &admin, 10);
     token_a.transfer(&user, &pair_client.address, &10);
     token_b.transfer(&user, &pair_client.address, &10);
 
@@ -126,8 +136,8 @@ fn test_price_accumulation() {
     let user = Address::generate(&env);
 
     // Initial reserves: 100 TokenA, 400 TokenB (Price B/A = 4)
-    token_a.mint(&admin, &user, &100);
-    token_b.mint(&admin, &user, &400);
+    token_a.mint(&env, &admin, 100);
+    token_b.mint(&env, &admin, 400);
     token_a.transfer(&user, &pair_client.address, &100);
     token_b.transfer(&user, &pair_client.address, &400);
     pair_client.mint(&user);

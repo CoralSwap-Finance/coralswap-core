@@ -1,9 +1,8 @@
-#![cfg(test)]
 
 use crate::{LpToken, LpTokenClient};
 use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
-fn setup_test(env: &Env) -> (LpTokenClient, Address) {
+fn setup_test(env: &Env) -> (LpTokenClient<'_>, Address) {
     let admin = Address::generate(env);
     let lp_token_id = env.register_contract(None, LpToken);
     let lp_token = LpTokenClient::new(env, &lp_token_id);

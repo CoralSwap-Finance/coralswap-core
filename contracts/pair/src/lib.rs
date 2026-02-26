@@ -293,4 +293,39 @@ impl Pair {
 
         Ok(())
     }
+
+    // ─────────────────────────────────────────
+    // Views & Helpers
+    // ─────────────────────────────────────────
+
+    pub fn lp_token(env: Env) -> Address {
+        get_pair_state(&env).expect("Not Initialized").lp_token
+    }
+
+    pub fn get_reserves(env: Env) -> (i128, i128, u64) {
+        let state = get_pair_state(&env).expect("Not Initialized");
+        (state.reserve_a, state.reserve_b, state.block_timestamp_last)
+    }
+
+    pub fn get_current_fee_bps(env: Env) -> u32 {
+        match get_fee_state(&env) {
+            Some(fee_state) => dynamic_fee::compute_fee_bps(&fee_state),
+            None => 30, // Fallback default
+        }
+    }
+
+    pub fn sync(env: Env) {
+        let mut state = get_pair_state(&env).expect("Not Initialized");
+        let contract = env.current_contract_address();
+
+        let balance_a = TokenClient::new(&env, &state.token_a).balance(&contract);
+        let balance_b = TokenClient::new(&env, &state.token_b).balance(&contract);
+
+        state.reserve_a = balance_a;
+        state.reserve_b = balance_b;
+        state.block_timestamp_last = env.ledger().timestamp();
+
+        set_pair_state(&env, &state);
+        PairEvents::sync(&env, balance_a, balance_b);
+    }
 }
