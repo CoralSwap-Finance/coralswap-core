@@ -14,7 +14,9 @@ mod reentrancy;
 mod storage;
 
 #[cfg(test)]
-mod test;
+pub mod test;      // Marked public for access from other test files
+#[cfg(test)]
+pub mod test_burn; // Marked public for the test runner
 
 use errors::PairError;
 use events::PairEvents;
@@ -125,6 +127,9 @@ impl Pair {
             return Err(PairError::InsufficientLiquidityMinted);
         }
 
+        // Update Oracle cumulative prices before reserves change
+        oracle::update(&env, &mut state);
+
         lp_client.mint(&to, &liquidity);
 
         state.reserve_a = balance_a;
@@ -147,29 +152,40 @@ impl Pair {
     // ─────────────────────────────────────────
 
     pub fn burn(env: Env, to: Address) -> Result<(i128, i128), PairError> {
+        reentrancy::acquire(&env)?;
+        let result = Self::burn_inner(&env, &to);
+        reentrancy::release(&env);
+        result
+    }
+
+    fn burn_inner(env: &Env, to: &Address) -> Result<(i128, i128), PairError> {
         to.require_auth();
 
-        let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+        let mut state = get_pair_state(env).ok_or(PairError::NotInitialized)?;
         let contract = env.current_contract_address();
 
-        let lp_balance =
-            TokenClient::new(&env, &state.lp_token).balance(&contract);
+        let lp_client = LpTokenClient::new(env, &state.lp_token);
+        let token_a_client = TokenClient::new(env, &state.token_a);
+        let token_b_client = TokenClient::new(env, &state.token_b);
 
-        let total_supply =
-            LpTokenClient::new(&env, &state.lp_token).total_supply();
+        let balance_a = token_a_client.balance(&contract);
+        let balance_b = token_b_client.balance(&contract);
+        
+        let lp_balance = TokenClient::new(env, &state.lp_token).balance(&contract);
+        let total_supply = lp_client.total_supply();
 
-        if total_supply == 0 {
+        if total_supply == 0 || lp_balance <= 0 {
             return Err(PairError::InsufficientLiquidityBurned);
         }
 
         let amount_a = lp_balance
-            .checked_mul(state.reserve_a)
+            .checked_mul(balance_a)
             .ok_or(PairError::Overflow)?
             .checked_div(total_supply)
             .ok_or(PairError::Overflow)?;
 
         let amount_b = lp_balance
-            .checked_mul(state.reserve_b)
+            .checked_mul(balance_b)
             .ok_or(PairError::Overflow)?
             .checked_div(total_supply)
             .ok_or(PairError::Overflow)?;
@@ -178,32 +194,26 @@ impl Pair {
             return Err(PairError::InsufficientLiquidityBurned);
         }
 
-        LpTokenClient::new(&env, &state.lp_token)
-            .burn(&contract, &lp_balance);
+        // Update Oracle cumulative prices before reserves change
+        oracle::update(env, &mut state);
 
-        TokenClient::new(&env, &state.token_a)
-            .transfer(&contract, &to, &amount_a);
+        lp_client.burn(&contract, &lp_balance);
+        token_a_client.transfer(&contract, to, &amount_a);
+        token_b_client.transfer(&contract, to, &amount_b);
 
-        TokenClient::new(&env, &state.token_b)
-            .transfer(&contract, &to, &amount_b);
+        let new_balance_a = token_a_client.balance(&contract);
+        let new_balance_b = token_b_client.balance(&contract);
 
-        state.reserve_a = state.reserve_a
-            .checked_sub(amount_a)
+        state.reserve_a = new_balance_a;
+        state.reserve_b = new_balance_b;
+        state.k_last = new_balance_a
+            .checked_mul(new_balance_b)
             .ok_or(PairError::Overflow)?;
-
-        state.reserve_b = state.reserve_b
-            .checked_sub(amount_b)
-            .ok_or(PairError::Overflow)?;
-
-        state.k_last = state.reserve_a
-            .checked_mul(state.reserve_b)
-            .ok_or(PairError::Overflow)?;
-
         state.block_timestamp_last = env.ledger().timestamp();
 
-        set_pair_state(&env, &state);
+        set_pair_state(env, &state);
 
-        PairEvents::burn(&env, &to, amount_a, amount_b, &to);
+        PairEvents::burn(env, to, lp_balance, amount_a, amount_b, to);
 
         Ok((amount_a, amount_b))
     }
@@ -244,6 +254,9 @@ impl Pair {
 
         dynamic_fee::decay_stale_ema(env, &mut fee_state);
         let fee_bps = dynamic_fee::compute_fee_bps(&fee_state);
+
+        // Update Oracle cumulative prices before reserves change
+        oracle::update(env, &mut pair);
 
         let contract_address = env.current_contract_address();
 
