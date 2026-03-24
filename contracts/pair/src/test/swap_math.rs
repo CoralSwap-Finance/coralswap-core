@@ -292,7 +292,22 @@ mod swap_math_tests {
         assert_eq!(result, None, "mul_div with zero denominator must return None");
     }
 
-    // ---- 14. sqrt: known values ----
+    // ---- 14. mul_div: large inputs near i128::MAX / 2 do not overflow ----
+    #[test]
+    fn test_mul_div_large_values_near_i128_max_half() {
+        let _env = Env::default();
+
+        let half_max = i128::MAX / 2;
+        let result = mul_div(half_max, half_max, half_max);
+
+        assert_eq!(
+            result,
+            Some(half_max),
+            "mul_div should use a wide intermediate and avoid overflow near i128 limits"
+        );
+    }
+
+    // ---- 15. sqrt: known values ----
     #[test]
     fn test_sqrt_known_values() {
         let _env = Env::default();
@@ -311,7 +326,6 @@ mod swap_math_tests {
         assert_eq!(sqrt(10), 3);
     }
 
-    // ---- 15. sqrt: negative input panics ----
     #[test]
     #[should_panic(expected = "sqrt received negative input")]
     fn test_sqrt_negative_input_panics() {
@@ -320,7 +334,7 @@ mod swap_math_tests {
         let _ = sqrt(-1);
     }
 
-    // ---- 16. Symmetry: swapping direction gives equivalent results ----
+    // ---- 17. Symmetry: swapping direction gives equivalent results ----
     #[test]
     fn test_swap_symmetry_balanced_pool() {
         let _env = Env::default();
@@ -337,7 +351,7 @@ mod swap_math_tests {
         assert_eq!(out_a_to_b, out_b_to_a, "balanced pool must produce symmetric outputs");
     }
 
-    // ---- 17. Large realistic swap: price impact sanity ----
+    // ---- 18. Large realistic swap: price impact sanity ----
     #[test]
     fn test_large_swap_price_impact() {
         let _env = Env::default();
@@ -361,7 +375,7 @@ mod swap_math_tests {
         assert!(amount_out > 0, "amount_out must be positive");
     }
 
-    // ---- 18. Tiny swap: dust amount still produces valid output ----
+    // ---- 19. Tiny swap: dust amount still produces valid output ----
     #[test]
     fn test_tiny_swap_dust_amount() {
         let _env = Env::default();
