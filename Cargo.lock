@@ -181,6 +181,7 @@ name = "coralswap-pair"
 version = "0.1.0"
 dependencies = [
  "coralswap-flash-receiver-interface",
+ "ethnum",
  "soroban-sdk",
 ]
 
