@@ -311,14 +311,13 @@ mod swap_math_tests {
         assert_eq!(sqrt(10), 3);
     }
 
-    // ---- 15. sqrt: negative input returns zero ----
+    // ---- 15. sqrt: negative input panics ----
     #[test]
-    fn test_sqrt_negative_returns_zero() {
+    #[should_panic(expected = "sqrt received negative input")]
+    fn test_sqrt_negative_input_panics() {
         let _env = Env::default();
 
-        assert_eq!(sqrt(-1), 0);
-        assert_eq!(sqrt(-100), 0);
-        assert_eq!(sqrt(i128::MIN), 0);
+        let _ = sqrt(-1);
     }
 
     // ---- 16. Symmetry: swapping direction gives equivalent results ----
