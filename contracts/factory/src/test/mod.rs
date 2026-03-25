@@ -2,12 +2,10 @@ use soroban_sdk::Env;
 
 // Compiled WASM bytecode for cross-contract deployment in tests.
 // Must build with: cargo build --target wasm32v1-none --release
-const PAIR_WASM: &[u8] = include_bytes!(
-    "../../../../target/wasm32v1-none/release/coralswap_pair.wasm"
-);
-const LP_TOKEN_WASM: &[u8] = include_bytes!(
-    "../../../../target/wasm32v1-none/release/coralswap_lp_token.wasm"
-);
+const PAIR_WASM: &[u8] =
+    include_bytes!("../../../../target/wasm32v1-none/release/coralswap_pair.wasm");
+const LP_TOKEN_WASM: &[u8] =
+    include_bytes!("../../../../target/wasm32v1-none/release/coralswap_lp_token.wasm");
 
 mod factory_tests {
     use super::*;
@@ -29,8 +27,10 @@ mod factory_tests {
         let fee_to_setter = Address::generate(&env);
 
         // Upload real WASM so deployer().deploy() produces working contracts.
-        let pair_wasm_hash = env.deployer().upload_contract_wasm(Bytes::from_slice(&env, PAIR_WASM));
-        let lp_token_wasm_hash = env.deployer().upload_contract_wasm(Bytes::from_slice(&env, LP_TOKEN_WASM));
+        let pair_wasm_hash =
+            env.deployer().upload_contract_wasm(Bytes::from_slice(&env, PAIR_WASM));
+        let lp_token_wasm_hash =
+            env.deployer().upload_contract_wasm(Bytes::from_slice(&env, LP_TOKEN_WASM));
 
         client.initialize(
             &Vec::from_array(&env, [signer_1, signer_2, signer_3]),
@@ -196,17 +196,15 @@ mod factory_tests {
     fn test_double_initialization_fails() {
         let (env, client, _, _, _, fee_to_setter) = setup_env();
 
-        let pair_wasm_hash = env.deployer().upload_contract_wasm(Bytes::from_slice(&env, PAIR_WASM));
-        let lp_token_wasm_hash = env.deployer().upload_contract_wasm(Bytes::from_slice(&env, LP_TOKEN_WASM));
+        let pair_wasm_hash =
+            env.deployer().upload_contract_wasm(Bytes::from_slice(&env, PAIR_WASM));
+        let lp_token_wasm_hash =
+            env.deployer().upload_contract_wasm(Bytes::from_slice(&env, LP_TOKEN_WASM));
 
         let result = client.try_initialize(
             &Vec::from_array(
                 &env,
-                [
-                    Address::generate(&env),
-                    Address::generate(&env),
-                    Address::generate(&env),
-                ],
+                [Address::generate(&env), Address::generate(&env), Address::generate(&env)],
             ),
             &pair_wasm_hash,
             &lp_token_wasm_hash,
@@ -314,11 +312,7 @@ mod factory_tests {
         // Pause the factory.
         client.pause(&Vec::from_array(
             &env,
-            [
-                Address::generate(&env),
-                Address::generate(&env),
-                Address::generate(&env),
-            ],
+            [Address::generate(&env), Address::generate(&env), Address::generate(&env)],
         ));
         assert!(client.is_paused());
 
@@ -334,11 +328,7 @@ mod factory_tests {
         // Pause then unpause.
         let signers = Vec::from_array(
             &env,
-            [
-                Address::generate(&env),
-                Address::generate(&env),
-                Address::generate(&env),
-            ],
+            [Address::generate(&env), Address::generate(&env), Address::generate(&env)],
         );
         client.pause(&signers);
         client.unpause(&signers);

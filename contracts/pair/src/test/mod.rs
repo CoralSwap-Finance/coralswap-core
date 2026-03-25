@@ -19,6 +19,6 @@
 
 mod events;
 mod initialize;
+mod mint;
 mod swap_math;
 mod views;
-mod mint;
