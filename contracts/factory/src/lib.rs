@@ -114,16 +114,18 @@ impl Factory {
             .with_current_contract(lp_salt)
             .deploy(factory_storage.lp_token_wasm_hash.clone());
 
-        // 3. Initialize Pair
+        // 3. Initialize Pair — propagate any error; do NOT store if this fails
         let pair_client = PairClient::new(&env, &pair_address);
-        pair_client.initialize(
-            &env.current_contract_address(),
-            &token_0,
-            &token_1,
-            &lp_token_address,
-        );
+        pair_client
+            .try_initialize(
+                &env.current_contract_address(),
+                &token_0,
+                &token_1,
+                &lp_token_address,
+            )
+            .map_err(|_| FactoryError::NotInitialized)?;
 
-        // 4. Store pair
+        // 4. Store pair — only reached when initialize() succeeded
         storage::set_pair(&env, token_0.clone(), token_1.clone(), pair_address.clone());
         storage::set_pair(&env, token_1.clone(), token_0.clone(), pair_address.clone());
 
@@ -141,18 +143,32 @@ impl Factory {
         storage::get_pair(&env, token_a, token_b)
     }
 
-    pub fn pause(env: Env, _signers: Vec<Address>) -> Result<(), FactoryError> {
+    pub fn pause(env: Env, signers: Vec<Address>) -> Result<(), FactoryError> {
         let mut storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
-        // TODO: Auth check for signers
+
+        // Find a signer in the call that matches a stored signer, then require its auth.
+        let authorized = signers
+            .iter()
+            .find(|s| storage.signers.contains(s))
+            .ok_or(FactoryError::Unauthorized)?;
+        authorized.require_auth();
+
         storage.paused = true;
         storage::set_factory_storage(&env, &storage);
         events::FactoryEvents::paused(&env);
         Ok(())
     }
 
-    pub fn unpause(env: Env, _signers: Vec<Address>) -> Result<(), FactoryError> {
+    pub fn unpause(env: Env, signers: Vec<Address>) -> Result<(), FactoryError> {
         let mut storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
-        // TODO: Auth check for signers
+
+        // Find a signer in the call that matches a stored signer, then require its auth.
+        let authorized = signers
+            .iter()
+            .find(|s| storage.signers.contains(s))
+            .ok_or(FactoryError::Unauthorized)?;
+        authorized.require_auth();
+
         storage.paused = false;
         storage::set_factory_storage(&env, &storage);
         events::FactoryEvents::unpaused(&env);

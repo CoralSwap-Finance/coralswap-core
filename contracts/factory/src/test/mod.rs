@@ -28,7 +28,7 @@ mod factory_tests {
 
     /// Helper: sets up a fresh Env, deploys the factory, initializes it with
     /// real pair / LP-token WASM hashes, and returns commonly-needed handles.
-    fn setup_env<'a>() -> (Env, FactoryClient<'a>, Address, Address, Address, Address) {
+    fn setup_env<'a>() -> (Env, FactoryClient<'a>, Address, Address, Address, Address, Vec<Address>) {
         let env = Env::default();
         env.mock_all_auths();
 
@@ -48,8 +48,10 @@ mod factory_tests {
         let lp_token_wasm_hash =
             env.deployer().upload_contract_wasm(Bytes::from_slice(&env, &lp_token_wasm));
 
+        let signers = Vec::from_array(&env, [signer_1.clone(), signer_2.clone(), signer_3.clone()]);
+
         client.initialize(
-            &Vec::from_array(&env, [signer_1, signer_2, signer_3]),
+            &signers,
             &pair_wasm_hash,
             &lp_token_wasm_hash,
             &fee_to_setter,
@@ -58,7 +60,7 @@ mod factory_tests {
         let token_a = Address::generate(&env);
         let token_b = Address::generate(&env);
 
-        (env, client, token_a, token_b, factory_address, fee_to_setter)
+        (env, client, token_a, token_b, factory_address, fee_to_setter, signers)
     }
 
     // ---------- Happy path ----------
@@ -95,7 +97,7 @@ mod factory_tests {
 
     #[test]
     fn test_initialize_double_init_fails() {
-        let (env, client, _, _, _, _) = setup_env();
+        let (env, client, _, _, _, _, _) = setup_env();
 
         let signer = Address::generate(&env);
         let fee_to_setter = Address::generate(&env);
@@ -202,7 +204,7 @@ mod factory_tests {
 
     #[test]
     fn test_is_paused_after_init() {
-        let (_env, client, _, _, _, _) = setup_env();
+        let (_env, client, _, _, _, _, _) = setup_env();
         assert!(!client.is_paused());
     }
 
@@ -210,7 +212,7 @@ mod factory_tests {
 
     #[test]
     fn test_double_initialization_fails() {
-        let (env, client, _, _, _, fee_to_setter) = setup_env();
+        let (env, client, _, _, _, fee_to_setter, _) = setup_env();
 
         let pair_wasm = load_wasm("coralswap_pair.wasm");
         let lp_token_wasm = load_wasm("coralswap_lp_token.wasm");
@@ -235,7 +237,7 @@ mod factory_tests {
 
     #[test]
     fn test_create_pair_happy_path() {
-        let (_env, client, token_a, token_b, _, _) = setup_env();
+        let (_env, client, token_a, token_b, _, _, _) = setup_env();
 
         let pair_addr = client.create_pair(&token_a, &token_b);
 
@@ -246,7 +248,7 @@ mod factory_tests {
 
     #[test]
     fn test_create_pair_reverse_order_returns_same_pair() {
-        let (_env, client, token_a, token_b, _, _) = setup_env();
+        let (_env, client, token_a, token_b, _, _, _) = setup_env();
 
         let pair_addr = client.create_pair(&token_a, &token_b);
 
@@ -257,7 +259,7 @@ mod factory_tests {
 
     #[test]
     fn test_create_pair_canonical_ordering() {
-        let (env, client, _, _, _, _) = setup_env();
+        let (env, client, _, _, _, _, _) = setup_env();
 
         let token_x = Address::generate(&env);
         let token_y = Address::generate(&env);
@@ -270,7 +272,7 @@ mod factory_tests {
 
     #[test]
     fn test_create_multiple_pairs() {
-        let (env, client, token_a, token_b, _, _) = setup_env();
+        let (env, client, token_a, token_b, _, _, _) = setup_env();
 
         let token_c = Address::generate(&env);
 
@@ -293,7 +295,7 @@ mod factory_tests {
 
     #[test]
     fn test_create_pair_identical_tokens() {
-        let (_env, client, token_a, _token_b, _, _) = setup_env();
+        let (_env, client, token_a, _token_b, _, _, _) = setup_env();
 
         let result = client.try_create_pair(&token_a, &token_a);
         assert!(result.is_err());
@@ -301,7 +303,7 @@ mod factory_tests {
 
     #[test]
     fn test_create_pair_duplicate_returns_error() {
-        let (_env, client, token_a, token_b, _, _) = setup_env();
+        let (_env, client, token_a, token_b, _, _, _) = setup_env();
 
         // First creation succeeds.
         client.create_pair(&token_a, &token_b);
@@ -313,7 +315,7 @@ mod factory_tests {
 
     #[test]
     fn test_create_pair_duplicate_reversed_order() {
-        let (_env, client, token_a, token_b, _, _) = setup_env();
+        let (_env, client, token_a, token_b, _, _, _) = setup_env();
 
         // Create (A, B).
         client.create_pair(&token_a, &token_b);
@@ -325,13 +327,10 @@ mod factory_tests {
 
     #[test]
     fn test_create_pair_while_paused() {
-        let (env, client, token_a, token_b, _, _) = setup_env();
+        let (env, client, token_a, token_b, _, _, signers) = setup_env();
 
-        // Pause the factory.
-        client.pause(&Vec::from_array(
-            &env,
-            [Address::generate(&env), Address::generate(&env), Address::generate(&env)],
-        ));
+        // Pause the factory using a stored signer.
+        client.pause(&signers);
         assert!(client.is_paused());
 
         // Creating a pair while paused must fail.
@@ -341,13 +340,9 @@ mod factory_tests {
 
     #[test]
     fn test_create_pair_after_unpause() {
-        let (env, client, token_a, token_b, _, _) = setup_env();
+        let (_env, client, token_a, token_b, _, _, signers) = setup_env();
 
-        // Pause then unpause.
-        let signers = Vec::from_array(
-            &env,
-            [Address::generate(&env), Address::generate(&env), Address::generate(&env)],
-        );
+        // Pause then unpause using stored signers.
         client.pause(&signers);
         client.unpause(&signers);
         assert!(!client.is_paused());
@@ -361,7 +356,7 @@ mod factory_tests {
 
     #[test]
     fn test_get_pair_returns_none_for_missing() {
-        let (_env, client, token_a, token_b, _, _) = setup_env();
+        let (_env, client, token_a, token_b, _, _, _) = setup_env();
         assert!(client.get_pair(&token_a, &token_b).is_none());
     }
 
@@ -369,7 +364,7 @@ mod factory_tests {
 
     #[test]
     fn test_set_fee_to() {
-        let (env, client, _, _, _, fee_to_setter) = setup_env();
+        let (env, client, _, _, _, fee_to_setter, _) = setup_env();
 
         let fee_recipient = Address::generate(&env);
         client.set_fee_to(&fee_to_setter, &Some(fee_recipient.clone()));
@@ -378,7 +373,7 @@ mod factory_tests {
 
     #[test]
     fn test_set_fee_to_unauthorized() {
-        let (env, client, _, _, _, _) = setup_env();
+        let (env, client, _, _, _, _, _) = setup_env();
 
         let rando = Address::generate(&env);
         let fee_recipient = Address::generate(&env);
@@ -388,10 +383,48 @@ mod factory_tests {
 
     #[test]
     fn test_set_fee_to_setter() {
-        let (env, client, _, _, _, fee_to_setter) = setup_env();
+        let (env, client, _, _, _, fee_to_setter, _) = setup_env();
 
         let new_setter = Address::generate(&env);
         client.set_fee_to_setter(&fee_to_setter, &new_setter);
         assert_eq!(client.fee_to_setter(), Some(new_setter));
+    }
+
+    // ── Pause / Unpause auth checks (issue #86) ─────────────────────────────
+
+    #[test]
+    fn test_pause_with_unknown_signer_fails() {
+        let (env, client, _, _, _, _) = setup_env();
+
+        // A freshly-generated address is guaranteed not to be in the stored
+        // signers list — the call must be rejected with Unauthorized.
+        let unknown = Address::generate(&env);
+        let result = client.try_pause(&Vec::from_array(&env, [unknown]));
+        assert!(result.is_err(), "unknown signer must be rejected by pause");
+    }
+
+    #[test]
+    fn test_unpause_with_unknown_signer_fails() {
+        let (env, client, _, _, _, _) = setup_env();
+
+        let unknown = Address::generate(&env);
+        let result = client.try_unpause(&Vec::from_array(&env, [unknown]));
+        assert!(result.is_err(), "unknown signer must be rejected by unpause");
+    }
+
+    #[test]
+    fn test_pause_with_empty_signers_fails() {
+        let (env, client, _, _, _, _) = setup_env();
+
+        let result = client.try_pause(&Vec::new(&env));
+        assert!(result.is_err(), "empty signers list must be rejected by pause");
+    }
+
+    #[test]
+    fn test_unpause_with_empty_signers_fails() {
+        let (env, client, _, _, _, _) = setup_env();
+
+        let result = client.try_unpause(&Vec::new(&env));
+        assert!(result.is_err(), "empty signers list must be rejected by unpause");
     }
 }

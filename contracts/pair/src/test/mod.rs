@@ -17,8 +17,12 @@
 //
 // ---------------------------------------------------------------------------
 
+mod dynamic_fee;
 mod events;
+mod flash_loan;
 mod initialize;
 mod mint;
+mod reentrancy;
 mod swap_math;
+mod sync;
 mod views;
