@@ -60,6 +60,20 @@ pub fn update_volatility(
         .checked_div(SCALE)
         .ok_or(PairError::Overflow)?;
 
+    // --- Cap accumulator to prevent unbounded growth -------------------------
+    // Compute the accumulator value that produces max_fee_bps and clamp to it.
+    // This ensures the dynamic fee can recover normally via time decay instead
+    // of being pegged at maximum indefinitely after a griefing attack.
+    if fee_state.ramp_up_multiplier > 0 {
+        let scale_to_bps = SCALE / 10_000;
+        let fee_headroom =
+            (fee_state.max_fee_bps as i128).saturating_sub(fee_state.baseline_fee_bps as i128);
+        let max_vol = fee_headroom
+            .saturating_mul(scale_to_bps)
+            / (fee_state.ramp_up_multiplier as i128);
+        fee_state.vol_accumulator = fee_state.vol_accumulator.min(max_vol);
+    }
+
     // --- Timestamp ----------------------------------------------------------
     fee_state.last_fee_update = env.ledger().timestamp();
 
@@ -302,6 +316,29 @@ mod tests {
 
         let result = update_volatility(&env, &mut state, 100, 1_000, 0);
         assert_eq!(result, Err(PairError::InvalidInput));
+    }
+
+    // ------ Accumulator cap ---------------------------------------------------
+
+    #[test]
+    fn vol_accumulator_capped_at_max_fee_level() {
+        let env = Env::default();
+        let alpha = SCALE; // 100% — instant replacement
+        let mut state = default_fee_state(alpha);
+
+        // Repeatedly feed huge price deltas to try to blow up the accumulator.
+        for _ in 0..100 {
+            update_volatility(&env, &mut state, 1_000_000, 1_000_000, 1_000_000).unwrap();
+        }
+
+        // Fee should never exceed max_fee_bps
+        let fee = compute_fee_bps(&state);
+        assert!(
+            fee <= state.max_fee_bps,
+            "fee {} must not exceed max_fee_bps {}",
+            fee,
+            state.max_fee_bps,
+        );
     }
 
     // ------ Alpha edge cases -------------------------------------------------
