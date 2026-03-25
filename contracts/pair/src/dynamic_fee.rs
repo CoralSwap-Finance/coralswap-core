@@ -30,6 +30,11 @@ pub fn update_volatility(
         return Err(PairError::InvalidInput);
     }
 
+    // EMA alpha must be in [0, SCALE] to ensure the weight split is valid.
+    if fee_state.ema_alpha < 0 || fee_state.ema_alpha > SCALE {
+        return Err(PairError::InvalidEmaAlpha);
+    }
+
     // --- Size-weighted observation ------------------------------------------
     // weight = trade_size * SCALE / total_reserve
     let weight = trade_size
@@ -305,6 +310,24 @@ mod tests {
     }
 
     // ------ Alpha edge cases -------------------------------------------------
+
+    #[test]
+    fn alpha_above_scale_returns_error() {
+        let env = Env::default();
+        let mut state = default_fee_state(SCALE + 1);
+
+        let result = update_volatility(&env, &mut state, 100, 1_000, 1_000_000);
+        assert_eq!(result, Err(PairError::InvalidEmaAlpha));
+    }
+
+    #[test]
+    fn negative_alpha_returns_error() {
+        let env = Env::default();
+        let mut state = default_fee_state(-1);
+
+        let result = update_volatility(&env, &mut state, 100, 1_000, 1_000_000);
+        assert_eq!(result, Err(PairError::InvalidEmaAlpha));
+    }
 
     #[test]
     fn alpha_zero_means_no_update() {
