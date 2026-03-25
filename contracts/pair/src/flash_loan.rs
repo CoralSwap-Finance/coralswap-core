@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use soroban_sdk::{token::TokenClient, Address, Bytes, Env};
 
 use coralswap_flash_receiver_interface::FlashReceiverClient;

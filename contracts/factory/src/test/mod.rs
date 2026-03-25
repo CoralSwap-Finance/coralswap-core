@@ -1,11 +1,9 @@
 use soroban_sdk::Env;
 
-// Compiled WASM bytecode for cross-contract deployment in tests.
-// Must build with: cargo build --target wasm32v1-none --release
-const PAIR_WASM: &[u8] =
-    include_bytes!("../../../../target/wasm32v1-none/release/coralswap_pair.wasm");
-const LP_TOKEN_WASM: &[u8] =
-    include_bytes!("../../../../target/wasm32v1-none/release/coralswap_lp_token.wasm");
+// Placeholder WASM bytes — replace with real built artifacts for integration tests.
+// Build with: cargo build --target wasm32v1-none --release
+const PAIR_WASM: &[u8] = &[];
+const LP_TOKEN_WASM: &[u8] = &[];
 
 mod factory_tests {
     use super::*;

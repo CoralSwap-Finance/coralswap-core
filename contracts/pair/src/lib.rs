@@ -16,6 +16,7 @@ mod storage;
 #[cfg(test)]
 mod test;
 
+use dynamic_fee::compute_fee_bps;
 use errors::PairError;
 use events::PairEvents;
 use math::MINIMUM_LIQUIDITY;
@@ -51,6 +52,11 @@ impl Pair {
         // 1. Double-init guard
         if get_pair_state(&env).is_some() {
             return Err(PairError::AlreadyInitialized);
+        }
+
+        // 2. Identical-token guard
+        if token_a == token_b {
+            return Err(PairError::InvalidInput);
         }
 
         let state = storage::PairStorage {
@@ -227,6 +233,54 @@ impl Pair {
         let result = Self::swap_inner(&env, amount_a_out, amount_b_out, &to);
         reentrancy::release(&env);
         result
+    }
+
+    // ─────────────────────────────────────────
+    // Views
+    // ─────────────────────────────────────────
+
+    /// Returns (reserve_a, reserve_b, block_timestamp_last).
+    pub fn get_reserves(env: Env) -> Result<(i128, i128, u64), PairError> {
+        let state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+        Ok((state.reserve_a, state.reserve_b, state.block_timestamp_last))
+    }
+
+    /// Returns the LP token address.
+    pub fn lp_token(env: Env) -> Result<Address, PairError> {
+        let state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+        Ok(state.lp_token)
+    }
+
+    /// Returns the current dynamic fee in basis points.
+    pub fn get_current_fee_bps(env: Env) -> u32 {
+        match get_fee_state(&env) {
+            Some(fs) => compute_fee_bps(&fs),
+            None => 30,
+        }
+    }
+
+    // ─────────────────────────────────────────
+    // Sync
+    // ─────────────────────────────────────────
+
+    /// Syncs reserves to actual token balances and updates the oracle timestamp.
+    pub fn sync(env: Env) -> Result<(), PairError> {
+        let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+        let contract = env.current_contract_address();
+
+        let balance_a = TokenClient::new(&env, &state.token_a).balance(&contract);
+        let balance_b = TokenClient::new(&env, &state.token_b).balance(&contract);
+
+        state.reserve_a = balance_a;
+        state.reserve_b = balance_b;
+        state.block_timestamp_last = env.ledger().timestamp();
+        state.k_last = balance_a.checked_mul(balance_b).ok_or(PairError::Overflow)?;
+
+        set_pair_state(&env, &state);
+
+        PairEvents::sync(&env, balance_a, balance_b);
+
+        Ok(())
     }
 
     fn swap_inner(

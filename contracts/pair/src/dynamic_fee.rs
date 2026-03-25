@@ -18,6 +18,7 @@ const SCALE: i128 = 100_000_000_000_000;
 /// observation = price_delta_abs * weight / SCALE
 /// new_accum   = (alpha * observation + (SCALE - alpha) * old_accum) / SCALE
 /// ```
+#[allow(dead_code)]
 pub fn update_volatility(
     env: &Env,
     fee_state: &mut FeeState,
