@@ -196,7 +196,8 @@ impl LpToken {
         // Decrease total supply
         let total_supply: i128 =
             env.storage().instance().get(&LpTokenKey::TotalSupply).unwrap_or(0);
-        let new_total_supply = total_supply - amount;
+        let new_total_supply =
+            total_supply.checked_sub(amount).ok_or(LpTokenError::InsufficientBalance)?;
         env.storage().instance().set(&LpTokenKey::TotalSupply, &new_total_supply);
 
         // Emit burn event
