@@ -41,7 +41,90 @@ impl LpToken {
         // Initialize total supply to 0
         env.storage().instance().set(&LpTokenKey::TotalSupply, &0i128);
 
+        // Initialize paused state to false
+        env.storage().instance().set(&LpTokenKey::Paused, &false);
+
         Ok(())
+    }
+
+    /// Transfer admin role to a new address
+    /// Only callable by current admin
+    pub fn admin_transfer(env: Env, new_admin: Address) -> Result<(), LpTokenError> {
+        // Get current admin and require authorization
+        let old_admin: Address = env
+            .storage()
+            .instance()
+            .get(&LpTokenKey::Admin)
+            .ok_or(LpTokenError::NotInitialized)?;
+        
+        old_admin.require_auth();
+
+        // Atomically update admin
+        env.storage().instance().set(&LpTokenKey::Admin, &new_admin);
+
+        // Emit AdminTransferred event
+        env.events().publish(
+            (soroban_sdk::symbol_short!("adm_xfer"), old_admin, new_admin),
+            (),
+        );
+
+        Ok(())
+    }
+
+    /// Pause the contract - blocks all token operations
+    /// Only callable by admin
+    pub fn pause(env: Env) -> Result<(), LpTokenError> {
+        // Get admin and require authorization
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&LpTokenKey::Admin)
+            .ok_or(LpTokenError::NotInitialized)?;
+        
+        admin.require_auth();
+
+        // Set paused state
+        env.storage().instance().set(&LpTokenKey::Paused, &true);
+
+        // Emit Paused event
+        env.events().publish(
+            (soroban_sdk::symbol_short!("paused"), admin),
+            (),
+        );
+
+        Ok(())
+    }
+
+    /// Unpause the contract - restores token operations
+    /// Only callable by admin
+    pub fn unpause(env: Env) -> Result<(), LpTokenError> {
+        // Get admin and require authorization
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&LpTokenKey::Admin)
+            .ok_or(LpTokenError::NotInitialized)?;
+        
+        admin.require_auth();
+
+        // Set paused state
+        env.storage().instance().set(&LpTokenKey::Paused, &false);
+
+        // Emit Unpaused event
+        env.events().publish(
+            (soroban_sdk::symbol_short!("unpaused"), admin),
+            (),
+        );
+
+        Ok(())
+    }
+
+    /// Check if contract is paused
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&LpTokenKey::Paused)
+            .unwrap_or(false)
     }
 
     /// Get the allowance for spender to transfer from `from`
@@ -115,6 +198,11 @@ impl LpToken {
         to: Address,
         amount: i128,
     ) -> Result<(), LpTokenError> {
+        // Check if paused
+        if Self::is_paused(env.clone()) {
+            return Err(LpTokenError::ContractPaused);
+        }
+
         // Require authorization from the `from` address
         from.require_auth();
 
@@ -133,6 +221,11 @@ impl LpToken {
         to: Address,
         amount: i128,
     ) -> Result<(), LpTokenError> {
+        // Check if paused
+        if Self::is_paused(env.clone()) {
+            return Err(LpTokenError::ContractPaused);
+        }
+
         // Require authorization from the spender
         spender.require_auth();
 
@@ -148,6 +241,11 @@ impl LpToken {
     /// Mint new tokens to an address
     /// Only callable by admin (pair contract)
     pub fn mint(env: Env, to: Address, amount: i128) -> Result<(), LpTokenError> {
+        // Check if paused
+        if Self::is_paused(env.clone()) {
+            return Err(LpTokenError::ContractPaused);
+        }
+
         // Get admin and require authorization
         let admin: Address =
             env.storage().instance().get(&LpTokenKey::Admin).ok_or(LpTokenError::NotInitialized)?;
@@ -175,6 +273,11 @@ impl LpToken {
     /// Burn tokens from an address
     /// Requires authorization from `from`
     pub fn burn(env: Env, from: Address, amount: i128) -> Result<(), LpTokenError> {
+        // Check if paused
+        if Self::is_paused(env.clone()) {
+            return Err(LpTokenError::ContractPaused);
+        }
+
         // Require authorization from the `from` address
         from.require_auth();
 

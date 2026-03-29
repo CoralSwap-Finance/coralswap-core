@@ -17,7 +17,8 @@ pub struct AllowanceEntry {
 pub enum LpTokenKey {
     Balance(Address),
     Allowance(Address, Address),
-    Admin,
     TotalSupply,
     Metadata,
+    Admin,
+    Paused,
 }
