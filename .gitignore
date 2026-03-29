@@ -12,3 +12,5 @@ Thumbs.db
 .env.local
 *.sh
 target_local/
+issue.md
+pr.md

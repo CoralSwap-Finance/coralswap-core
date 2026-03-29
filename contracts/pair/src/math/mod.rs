@@ -49,7 +49,10 @@ pub fn mul_div(a: i128, b: i128, denominator: i128) -> Option<i128> {
 
 /// Computed integer square root using Newton's method.
 pub fn sqrt(value: i128) -> i128 {
-    if value <= 0 {
+    if value < 0 {
+        panic!("sqrt received negative input");
+    }
+    if value == 0 {
         return 0;
     }
     let mut x = value;

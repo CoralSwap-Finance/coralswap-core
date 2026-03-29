@@ -49,6 +49,7 @@ impl PairEvents {
     ///
     /// "flash_loan" = 10 chars → exceeds the 9-char symbol_short! limit,
     /// so we use Symbol::new for a runtime allocation.
+    #[allow(dead_code)]
     pub fn flash_loan(
         env: &Env,
         receiver: &Address,

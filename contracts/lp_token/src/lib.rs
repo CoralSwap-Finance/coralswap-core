@@ -158,7 +158,7 @@ impl LpToken {
         let balance_key = LpTokenKey::Balance(to.clone());
         let current_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
         let new_balance = current_balance.checked_add(amount).ok_or(LpTokenError::Overflow)?;
-        env.storage().persistent().set(&balance_key, &new_balance);
+        Self::write_balance(env.storage(), &balance_key, new_balance);
 
         // Increase total supply
         let total_supply: i128 =
@@ -187,16 +187,13 @@ impl LpToken {
         }
 
         let new_balance = current_balance - amount;
-        if new_balance == 0 {
-            env.storage().persistent().remove(&balance_key);
-        } else {
-            env.storage().persistent().set(&balance_key, &new_balance);
-        }
+        Self::write_balance(env.storage(), &balance_key, new_balance);
 
         // Decrease total supply
         let total_supply: i128 =
             env.storage().instance().get(&LpTokenKey::TotalSupply).unwrap_or(0);
-        let new_total_supply = total_supply - amount;
+        let new_total_supply =
+            total_supply.checked_sub(amount).ok_or(LpTokenError::InsufficientBalance)?;
         env.storage().instance().set(&LpTokenKey::TotalSupply, &new_total_supply);
 
         // Emit burn event
@@ -206,24 +203,33 @@ impl LpToken {
     }
 
     /// Get the number of decimals
-    pub fn decimals(env: Env) -> u32 {
-        let metadata: TokenMetadata =
-            env.storage().instance().get(&LpTokenKey::Metadata).expect("Token not initialized");
-        metadata.decimals
+    pub fn decimals(env: Env) -> Result<u32, LpTokenError> {
+        let metadata: TokenMetadata = env
+            .storage()
+            .instance()
+            .get(&LpTokenKey::Metadata)
+            .ok_or(LpTokenError::NotInitialized)?;
+        Ok(metadata.decimals)
     }
 
     /// Get the token name
-    pub fn name(env: Env) -> String {
-        let metadata: TokenMetadata =
-            env.storage().instance().get(&LpTokenKey::Metadata).expect("Token not initialized");
-        metadata.name
+    pub fn name(env: Env) -> Result<String, LpTokenError> {
+        let metadata: TokenMetadata = env
+            .storage()
+            .instance()
+            .get(&LpTokenKey::Metadata)
+            .ok_or(LpTokenError::NotInitialized)?;
+        Ok(metadata.name)
     }
 
     /// Get the token symbol
-    pub fn symbol(env: Env) -> String {
-        let metadata: TokenMetadata =
-            env.storage().instance().get(&LpTokenKey::Metadata).expect("Token not initialized");
-        metadata.symbol
+    pub fn symbol(env: Env) -> Result<String, LpTokenError> {
+        let metadata: TokenMetadata = env
+            .storage()
+            .instance()
+            .get(&LpTokenKey::Metadata)
+            .ok_or(LpTokenError::NotInitialized)?;
+        Ok(metadata.symbol)
     }
 
     /// Get the total supply
@@ -257,17 +263,13 @@ impl LpToken {
         }
 
         let new_from_balance = from_balance - amount;
-        if new_from_balance == 0 {
-            env.storage().persistent().remove(&from_key);
-        } else {
-            env.storage().persistent().set(&from_key, &new_from_balance);
-        }
+        Self::write_balance(env.storage(), &from_key, new_from_balance);
 
         // Credit to receiver
         let to_key = LpTokenKey::Balance(to.clone());
         let to_balance: i128 = env.storage().persistent().get(&to_key).unwrap_or(0);
         let new_to_balance = to_balance.checked_add(amount).ok_or(LpTokenError::Overflow)?;
-        env.storage().persistent().set(&to_key, &new_to_balance);
+        Self::write_balance(env.storage(), &to_key, new_to_balance);
 
         // Emit transfer event
         env.events()
@@ -311,6 +313,14 @@ impl LpToken {
         }
 
         Ok(())
+    }
+
+    fn write_balance(storage: soroban_sdk::storage::Storage, key: &LpTokenKey, balance: i128) {
+        if balance == 0 {
+            storage.persistent().remove(key);
+        } else {
+            storage.persistent().set(key, &balance);
+        }
     }
 }
 

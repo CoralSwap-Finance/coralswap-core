@@ -1,8 +1,8 @@
 #![cfg(test)]
 
-use crate::{Pair, PairClient};
-use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, String};
+use crate::{errors::PairError, Pair, PairClient};
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
+use soroban_sdk::{testutils::Address as _, Address, Bytes, Env};
 
 // We will test `on_flash_loan` using our newly minted mockup
 // Note: We need to register the mock flash receiver contract in the test environment
@@ -13,7 +13,10 @@ mod mock_receiver {
     );
 }
 
-fn create_token_contract<'a>(e: &Env, admin: &Address) -> (Address, StellarAssetClient<'a>, TokenClient<'a>) {
+fn create_token_contract<'a>(
+    e: &Env,
+    admin: &Address,
+) -> (Address, StellarAssetClient<'a>, TokenClient<'a>) {
     let contract_id = e.register_stellar_asset_contract(admin.clone());
     (
         contract_id.clone(),
@@ -27,7 +30,7 @@ fn create_pair_contract<'a>(e: &Env) -> (Address, PairClient<'a>) {
     (contract_id.clone(), PairClient::new(e, &contract_id))
 }
 
-fn create_mock_receiver<'a>(e: &Env) -> Address {
+fn create_mock_receiver(e: &Env) -> Address {
     // Register the mock using the WASM
     e.register_contract_wasm(None, mock_receiver::WASM)
 }
@@ -51,13 +54,13 @@ impl<'a> Setup<'a> {
     fn new() -> Self {
         let env = Env::default();
         env.mock_all_auths();
-        
+
         let admin = Address::generate(&env);
         let user = Address::generate(&env);
 
         let (token_a, token_a_admin, token_a_client) = create_token_contract(&env, &admin);
         let (token_b, token_b_admin, token_b_client) = create_token_contract(&env, &admin);
-        
+
         // Ensure token_a < token_b lexicographically for standard setup
         let (token_a, token_a_admin, token_a_client, token_b, token_b_admin, token_b_client) =
             if token_a < token_b {
@@ -94,7 +97,7 @@ impl<'a> Setup<'a> {
 #[test]
 fn test_flash_loan_repay() {
     let setup = Setup::new();
-    
+
     // Add liquidity to pair
     let initial_reserve = 1_000_000;
     setup.token_a_admin.mint(&setup.pair, &initial_reserve);
@@ -102,7 +105,8 @@ fn test_flash_loan_repay() {
     setup.pair_client.sync();
 
     let loan_amount = 10_000;
-    let fee = crate::flash_loan::compute_flash_fee(loan_amount, 30); // Returns max(30, 5) base
+    // compute_flash_fee now returns Result — unwrap is safe for a normal amount.
+    let fee = crate::flash_loan::compute_flash_fee(loan_amount, 30).unwrap();
 
     // Fund the receiver with enough tokens to pay the fee!
     setup.token_a_admin.mint(&setup.receiver, &fee);
@@ -113,10 +117,10 @@ fn test_flash_loan_repay() {
     setup.pair_client.flash_loan(
         &setup.receiver,
         &loan_amount,
-        &0, 
+        &0,
         &repay_action,
     );
-    
+
     // Check invariants... reserves should have increased by fee
     let (res_a, res_b, _) = setup.pair_client.get_reserves();
     assert_eq!(res_a, initial_reserve + fee);
@@ -127,7 +131,7 @@ fn test_flash_loan_repay() {
 #[should_panic(expected = "HostError: Error(Value, InvalidInput)")]
 fn test_flash_loan_steal() {
     let setup = Setup::new();
-    
+
     let initial_reserve = 1_000_000;
     setup.token_a_admin.mint(&setup.pair, &initial_reserve);
     setup.token_b_admin.mint(&setup.pair, &initial_reserve);
@@ -139,8 +143,26 @@ fn test_flash_loan_steal() {
     setup.pair_client.flash_loan(
         &setup.receiver,
         &10_000,
-        &0, 
+        &0,
         &steal_action,
     );
 }
 
+// ---------------------------------------------------------------------------
+// Unit test: fee overflow returns FeeOverflow error, not i128::MAX
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_compute_flash_fee_overflow_returns_error() {
+    // i128::MAX * any positive bps overflows — should return FeeOverflow.
+    let result = crate::flash_loan::compute_flash_fee(i128::MAX, 30);
+    assert_eq!(result, Err(PairError::FeeOverflow), "overflow must return FeeOverflow");
+}
+
+#[test]
+fn test_compute_flash_fee_normal_amount() {
+    // Normal amount should succeed and return a positive fee.
+    let result = crate::flash_loan::compute_flash_fee(10_000, 30);
+    assert!(result.is_ok(), "normal amount must succeed");
+    assert!(result.unwrap() > 0, "fee must be positive");
+}

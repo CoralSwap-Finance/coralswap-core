@@ -19,4 +19,7 @@ pub enum PairError {
     InsufficientLiquidityMinted = 112,
     InsufficientLiquidityBurned = 113,
     InvalidInput = 114,
+    InvalidEmaAlpha = 115,
+    FeeOverflow = 116,
+    FlashCallbackFailed = 117,
 }

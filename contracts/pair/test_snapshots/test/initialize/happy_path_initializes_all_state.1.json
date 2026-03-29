@@ -5,6 +5,8 @@
   },
   "auth": [
     [],
+    [],
+    [],
     []
   ],
   "ledger": {
@@ -369,7 +371,7 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
               },
               {
-                "symbol": "get_current_fee_bps"
+                "symbol": "get_reserves"
               }
             ],
             "data": "void"
@@ -390,11 +392,27 @@
                 "symbol": "fn_return"
               },
               {
-                "symbol": "get_current_fee_bps"
+                "symbol": "get_reserves"
               }
             ],
             "data": {
-              "u32": 30
+              "vec": [
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 0
+                  }
+                },
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 0
+                  }
+                },
+                {
+                  "u64": 0
+                }
+              ]
             }
           }
         }
