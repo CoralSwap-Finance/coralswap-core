@@ -1,6 +1,4 @@
-use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, Env,
-};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
 
 #[contract]
 pub struct MockPair;
@@ -23,17 +21,9 @@ impl MockPair {
     }
 
     pub fn get_reserves(env: Env) -> (i128, i128, u64) {
-        let a: i128 = env
-            .storage()
-            .instance()
-            .get(&MPKey::ReserveA)
-            .unwrap_or(0);
+        let a: i128 = env.storage().instance().get(&MPKey::ReserveA).unwrap_or(0);
 
-        let b: i128 = env
-            .storage()
-            .instance()
-            .get(&MPKey::ReserveB)
-            .unwrap_or(0);
+        let b: i128 = env.storage().instance().get(&MPKey::ReserveB).unwrap_or(0);
 
         (a, b, 0)
     }
@@ -44,41 +34,22 @@ impl MockPair {
     }
 
     pub fn burn(env: Env, _to: Address) -> (i128, i128) {
-        let a: i128 = env
-            .storage()
-            .instance()
-            .get(&MPKey::BurnAmountA)
-            .unwrap_or(0);
+        let a: i128 = env.storage().instance().get(&MPKey::BurnAmountA).unwrap_or(0);
 
-        let b: i128 = env
-            .storage()
-            .instance()
-            .get(&MPKey::BurnAmountB)
-            .unwrap_or(0);
+        let b: i128 = env.storage().instance().get(&MPKey::BurnAmountB).unwrap_or(0);
 
         (a, b)
     }
 
     pub fn set_liquidity_to_mint(env: Env, liquidity: i128) {
-        env.storage()
-            .instance()
-            .set(&MPKey::LiquidityToMint, &liquidity);
+        env.storage().instance().set(&MPKey::LiquidityToMint, &liquidity);
     }
 
     pub fn mint(env: Env, _to: Address) -> i128 {
-        env.storage()
-            .instance()
-            .get(&MPKey::LiquidityToMint)
-            .unwrap_or(0)
+        env.storage().instance().get(&MPKey::LiquidityToMint).unwrap_or(0)
     }
 
-    pub fn swap(
-        _env: Env,
-        _amount_a_out: i128,
-        _amount_b_out: i128,
-        _to: Address,
-    ) {
-    }
+    pub fn swap(_env: Env, _amount_a_out: i128, _amount_b_out: i128, _to: Address) {}
 
     pub fn lp_token(_env: Env) -> Address {
         panic!("not needed for router unit tests")

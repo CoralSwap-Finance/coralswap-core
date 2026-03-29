@@ -14,3 +14,4 @@ ethnum = { version = "*" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+coralswap-lp-token = { path = "../lp_token" }

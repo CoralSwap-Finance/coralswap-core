@@ -5,7 +5,7 @@ use soroban_sdk::{testutils::Address as _, Address, Env};
 
 fn setup_env() -> (Env, Address, Address, Address, Address, Address) {
     let env = Env::default();
-    let contract_id = env.register(Pair, ());
+    let contract_id = env.register_contract(None, Pair);
     let factory = Address::generate(&env);
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
