@@ -190,6 +190,80 @@ mod factory_tests {
         assert!(!client.is_paused());
     }
 
+    // ── Timelock upgrade (Issue #99) ──────────────────────────────────────────
+
+    #[test]
+    fn test_propose_upgrade_stores_proposal() {
+        let (env, client, _, _, _, _) = setup_env();
+        let new_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+        let signers = Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
+        client.propose_upgrade(&signers, &new_hash);
+    }
+
+    #[test]
+    fn test_propose_upgrade_duplicate_rejected() {
+        let (env, client, _, _, _, _) = setup_env();
+        let new_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+        let signers = Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
+        client.propose_upgrade(&signers, &new_hash);
+        let result = client.try_propose_upgrade(&signers, &new_hash);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_execute_upgrade_too_early_fails() {
+        let (env, client, _, _, _, _) = setup_env();
+        let new_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+        let signers = Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
+        client.propose_upgrade(&signers, &new_hash);
+        let result = client.try_execute_upgrade();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cancel_upgrade_clears_proposal() {
+        let (env, client, _, _, _, _) = setup_env();
+        let new_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+        let signers = Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
+        client.propose_upgrade(&signers, &new_hash);
+        client.cancel_upgrade(&signers);
+        let result = client.try_execute_upgrade();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cancel_upgrade_no_proposal_fails() {
+        let (env, client, _, _, _, _) = setup_env();
+        let signers = Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
+        let result = client.try_cancel_upgrade(&signers);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_propose_upgrade_insufficient_signers_fails() {
+        let env = Env::default();
+        let factory_address = env.register_contract(None, Factory);
+        let client = FactoryClient::new(&env, &factory_address);
+        let fee_to_setter = Address::generate(&env);
+
+        let pair_wasm_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+        let lp_token_wasm_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+
+        let s1 = Address::generate(&env);
+        let s2 = Address::generate(&env);
+        let s3 = Address::generate(&env);
+        client.initialize(
+            &Vec::from_array(&env, [s1, s2, s3]),
+            &pair_wasm_hash,
+            &lp_token_wasm_hash,
+            &fee_to_setter,
+        );
+
+        let new_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+        let result = client.try_propose_upgrade(&Vec::new(&env), &new_hash);
+        assert!(result.is_err());
+    }
+
     // ---------- Existing tests (adapted) ----------
 
     #[test]
@@ -355,6 +429,80 @@ mod factory_tests {
     fn test_get_pair_returns_none_for_missing() {
         let (_env, client, token_a, token_b, _, _) = setup_env();
         assert!(client.get_pair(&token_a, &token_b).is_none());
+    }
+
+    // ── Multisig governance (Issue #98) ──────────────────────────────────────
+
+    #[test]
+    fn test_pause_authorized_signers_succeeds() {
+        let (env, client, _, _, _, _) = setup_env();
+        // setup_env initialises with 3 signers and mock_all_auths, so any
+        // address passes require_auth(). Threshold = ceil(3/2) = 2.
+        let s1 = Address::generate(&env);
+        let s2 = Address::generate(&env);
+        client.pause(&Vec::from_array(&env, [s1, s2]));
+        assert!(client.is_paused());
+    }
+
+    #[test]
+    fn test_unpause_authorized_signers_succeeds() {
+        let (env, client, _, _, _, _) = setup_env();
+        let s1 = Address::generate(&env);
+        let s2 = Address::generate(&env);
+        client.pause(&Vec::from_array(&env, [s1.clone(), s2.clone()]));
+        client.unpause(&Vec::from_array(&env, [s1, s2]));
+        assert!(!client.is_paused());
+    }
+
+    #[test]
+    fn test_pause_insufficient_signers_fails() {
+        let env = Env::default();
+        // Do NOT mock_all_auths — we want real auth enforcement.
+        let factory_address = env.register_contract(None, Factory);
+        let client = FactoryClient::new(&env, &factory_address);
+        let fee_to_setter = Address::generate(&env);
+
+        let pair_wasm_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+        let lp_token_wasm_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+
+        // 3 signers registered → threshold = 2; provide only 0 → should fail.
+        let s1 = Address::generate(&env);
+        let s2 = Address::generate(&env);
+        let s3 = Address::generate(&env);
+        client.initialize(
+            &Vec::from_array(&env, [s1, s2, s3]),
+            &pair_wasm_hash,
+            &lp_token_wasm_hash,
+            &fee_to_setter,
+        );
+
+        let result = client.try_pause(&Vec::new(&env));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unpause_insufficient_signers_fails() {
+        let env = Env::default();
+        let factory_address = env.register_contract(None, Factory);
+        let client = FactoryClient::new(&env, &factory_address);
+        let fee_to_setter = Address::generate(&env);
+
+        let pair_wasm_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+        let lp_token_wasm_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+
+        let s1 = Address::generate(&env);
+        let s2 = Address::generate(&env);
+        let s3 = Address::generate(&env);
+        client.initialize(
+            &Vec::from_array(&env, [s1, s2, s3]),
+            &pair_wasm_hash,
+            &lp_token_wasm_hash,
+            &fee_to_setter,
+        );
+
+        // Provide 0 signers → InsufficientSignatures
+        let result = client.try_unpause(&Vec::new(&env));
+        assert!(result.is_err());
     }
 
     // ── Fee management ───────────────────────────────────────────────────────
