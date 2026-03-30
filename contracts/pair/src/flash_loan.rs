@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use soroban_sdk::{token::TokenClient, Address, Bytes, Env};
 
 use coralswap_flash_receiver_interface::FlashReceiverClient;
@@ -28,16 +30,19 @@ const MAX_PAYLOAD_SIZE: u32 = 256;
 /// # Arguments
 /// * `amount`          – Loan principal in stroops (must be > 0).
 /// * `current_fee_bps` – Pool's current dynamic fee in basis points.
-pub fn compute_flash_fee(amount: i128, current_fee_bps: u32) -> i128 {
+/// Computes the flash-loan fee for `amount` stroops.
+///
+/// Returns `Err(PairError::FeeOverflow)` when the multiplication overflows
+/// (i.e., the loan amount is astronomically large).  Callers must propagate
+/// this error rather than proceeding with the loan.
+pub fn compute_flash_fee(amount: i128, current_fee_bps: u32) -> Result<i128, crate::errors::PairError> {
     let effective_bps = current_fee_bps.max(FLASH_FEE_FLOOR_BPS) as i128;
-    // Use checked_mul to guard against astronomically large loans overflowing
-    // i128; saturate to i128::MAX (fee > principal) rather than panicking.
     let fee = amount
         .checked_mul(effective_bps)
         .map(|v| v / 10_000_i128)
-        .unwrap_or(i128::MAX);
+        .ok_or(crate::errors::PairError::FeeOverflow)?;
     // At least 1 stroop to prevent zero-cost loans.
-    fee.max(1)
+    Ok(fee.max(1))
 }
 
 /// Executes a dual-token flash loan with full invariant enforcement.
@@ -103,39 +108,28 @@ pub fn execute_flash_loan(
     }
 
     // Snapshot pre-loan constant-product invariant k = reserve_a * reserve_b.
-    let pre_k = state
-        .reserve_a
-        .checked_mul(state.reserve_b)
-        .ok_or(PairError::Overflow)?;
+    let pre_k = state.reserve_a.checked_mul(state.reserve_b).ok_or(PairError::Overflow)?;
 
     // -----------------------------------------------------------------------
-    // 3. Reentrancy guard — first state write
+    // 3. Reentrancy guard — RAII, released automatically on every exit path
     // -----------------------------------------------------------------------
 
-    // Acquiring the lock writes `locked = true` to instance storage.
-    // On any subsequent Err return, Soroban rolls back ALL state (including
-    // this write), so the lock is implicitly released on every error path.
-    reentrancy::acquire(env)?;
+    // `ReentrancyGuard::acquire` writes `locked = true` to instance storage
+    // and returns a guard whose `Drop` impl unconditionally calls `release`.
+    // This guarantees the lock is cleared whether the function returns `Ok`
+    // or `Err` — including any error path below.
+    let _guard = reentrancy::ReentrancyGuard::acquire(env)?;
 
     // -----------------------------------------------------------------------
     // 4. Fee calculation
     // -----------------------------------------------------------------------
 
     // Prefer the pool's configured baseline fee if it exceeds the flash floor.
-    let pool_fee_bps = get_fee_state(env)
-        .map(|fs| fs.baseline_fee_bps)
-        .unwrap_or(FLASH_FEE_FLOOR_BPS);
+    let pool_fee_bps =
+        get_fee_state(env).map(|fs| fs.baseline_fee_bps).unwrap_or(FLASH_FEE_FLOOR_BPS);
 
-    let fee_a = if amount_a > 0 {
-        compute_flash_fee(amount_a, pool_fee_bps)
-    } else {
-        0
-    };
-    let fee_b = if amount_b > 0 {
-        compute_flash_fee(amount_b, pool_fee_bps)
-    } else {
-        0
-    };
+    let fee_a = if amount_a > 0 { compute_flash_fee(amount_a, pool_fee_bps)? } else { 0 };
+    let fee_b = if amount_b > 0 { compute_flash_fee(amount_b, pool_fee_bps)? } else { 0 };
 
     // -----------------------------------------------------------------------
     // 5. Transfer requested tokens to receiver
@@ -157,16 +151,23 @@ pub fn execute_flash_loan(
     // The receiver MUST repay `amount + fee` for each borrowed token before
     // `on_flash_loan` returns.  We pass the pair contract address as
     // `initiator` so the receiver knows the repayment destination.
-    FlashReceiverClient::new(env, receiver).on_flash_loan(
-        &contract,       // initiator = pair address (repayment destination)
-        &state.token_a,
-        &state.token_b,
-        &amount_a,
-        &amount_b,
-        &fee_a,
-        &fee_b,
-        data,
-    );
+    //
+    // `try_on_flash_loan` returns a `Result`; we propagate any error so that
+    // a callback failure halts execution before the repayment balance check.
+    // This prevents a silently-failing callback from being mistaken for a
+    // successful repayment via an out-of-band token deposit.
+    FlashReceiverClient::new(env, receiver)
+        .try_on_flash_loan(
+            &contract, // initiator = pair address (repayment destination)
+            &state.token_a,
+            &state.token_b,
+            &amount_a,
+            &amount_b,
+            &fee_a,
+            &fee_b,
+            data,
+        )
+        .map_err(|_| PairError::FlashCallbackFailed)?;
 
     // -----------------------------------------------------------------------
     // 7. Repayment verification
@@ -178,19 +179,13 @@ pub fn execute_flash_loan(
     // Each borrowed token's new balance must be >= old_reserve + fee.
     // Net effect: the pool gains exactly `fee` per token (or more).
     if amount_a > 0 {
-        let required_a = state
-            .reserve_a
-            .checked_add(fee_a)
-            .ok_or(PairError::Overflow)?;
+        let required_a = state.reserve_a.checked_add(fee_a).ok_or(PairError::Overflow)?;
         if new_balance_a < required_a {
             return Err(PairError::FlashLoanNotRepaid);
         }
     }
     if amount_b > 0 {
-        let required_b = state
-            .reserve_b
-            .checked_add(fee_b)
-            .ok_or(PairError::Overflow)?;
+        let required_b = state.reserve_b.checked_add(fee_b).ok_or(PairError::Overflow)?;
         if new_balance_b < required_b {
             return Err(PairError::FlashLoanNotRepaid);
         }
@@ -208,10 +203,7 @@ pub fn execute_flash_loan(
     // -----------------------------------------------------------------------
 
     // post_k must be >= pre_k; the fee income ensures this when repaid.
-    let post_k = state
-        .reserve_a
-        .checked_mul(state.reserve_b)
-        .ok_or(PairError::Overflow)?;
+    let post_k = state.reserve_a.checked_mul(state.reserve_b).ok_or(PairError::Overflow)?;
 
     if post_k < pre_k {
         return Err(PairError::InvalidK);
@@ -228,10 +220,8 @@ pub fn execute_flash_loan(
     PairEvents::flash_loan(env, receiver, amount_a, amount_b, fee_a, fee_b);
 
     // -----------------------------------------------------------------------
-    // 11. Release reentrancy lock
+    // 11. Reentrancy lock released automatically when `_guard` is dropped
     // -----------------------------------------------------------------------
-
-    reentrancy::release(env);
 
     Ok(())
 }

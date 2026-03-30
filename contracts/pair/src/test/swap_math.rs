@@ -3,7 +3,7 @@
 use soroban_sdk::Env;
 
 use crate::errors::PairError;
-use crate::math::{mul_div, sqrt, BPS_DENOMINATOR, MINIMUM_LIQUIDITY, SCALE};
+use crate::math::{mul_div, sqrt, BPS_DENOMINATOR, SCALE};
 
 // ---------------------------------------------------------------------------
 // Swap-math helpers (mirror the expected on-chain formulas)
@@ -29,18 +29,12 @@ fn get_amount_out(
         return Err(PairError::InsufficientLiquidity);
     }
 
-    let bps_denom = BPS_DENOMINATOR as i128;
-    let fee_factor = bps_denom
-        .checked_sub(fee_bps as i128)
-        .ok_or(PairError::Overflow)?;
+    let bps_denom = BPS_DENOMINATOR;
+    let fee_factor = bps_denom.checked_sub(fee_bps as i128).ok_or(PairError::Overflow)?;
 
-    let amount_in_with_fee = amount_in
-        .checked_mul(fee_factor)
-        .ok_or(PairError::Overflow)?;
+    let amount_in_with_fee = amount_in.checked_mul(fee_factor).ok_or(PairError::Overflow)?;
 
-    let numerator = amount_in_with_fee
-        .checked_mul(reserve_out)
-        .ok_or(PairError::Overflow)?;
+    let numerator = amount_in_with_fee.checked_mul(reserve_out).ok_or(PairError::Overflow)?;
 
     let denominator = reserve_in
         .checked_mul(bps_denom)
@@ -85,9 +79,9 @@ mod swap_math_tests {
     fn test_basic_swap_amount_out() {
         let _env = Env::default();
 
-        let reserve_in: i128 = 1_000_000_0000000; // 1 000 000 tokens (7 decimals)
-        let reserve_out: i128 = 1_000_000_0000000;
-        let amount_in: i128 = 1_000_0000000; // 1 000 tokens
+        let reserve_in: i128 = 10_000_000_000_000; // 1 000 000 tokens (7 decimals)
+        let reserve_out: i128 = 10_000_000_000_000;
+        let amount_in: i128 = 10_000_000_000; // 1 000 tokens
         let fee_bps: u32 = 30; // 0.30 %
 
         let amount_out = get_amount_out(amount_in, reserve_in, reserve_out, fee_bps)
@@ -95,10 +89,7 @@ mod swap_math_tests {
 
         // amount_out must be positive and strictly less than reserve_out
         assert!(amount_out > 0, "amount_out must be positive");
-        assert!(
-            amount_out < reserve_out,
-            "amount_out must be less than reserve_out"
-        );
+        assert!(amount_out < reserve_out, "amount_out must be less than reserve_out");
 
         // For a 0.1 % trade the output should be close to (but less than) amount_in
         // due to price impact + fees.
@@ -118,12 +109,10 @@ mod swap_math_tests {
         let amount_in: i128 = 10_000;
         let fee_bps: u32 = 30;
 
-        let out_with_fee =
-            get_amount_out(amount_in, reserve_in, reserve_out, fee_bps).unwrap();
+        let out_with_fee = get_amount_out(amount_in, reserve_in, reserve_out, fee_bps).unwrap();
 
         // Compare against zero-fee output
-        let out_no_fee =
-            get_amount_out(amount_in, reserve_in, reserve_out, 0).unwrap();
+        let out_no_fee = get_amount_out(amount_in, reserve_in, reserve_out, 0).unwrap();
 
         assert!(
             out_with_fee < out_no_fee,
@@ -175,8 +164,7 @@ mod swap_math_tests {
         let amount_in: i128 = 100_000;
         let fee_bps: u32 = 30;
 
-        let amount_out =
-            get_amount_out(amount_in, reserve_in, reserve_out, fee_bps).unwrap();
+        let amount_out = get_amount_out(amount_in, reserve_in, reserve_out, fee_bps).unwrap();
 
         let (k_before, k_after) = k_after_swap(reserve_in, reserve_out, amount_in, amount_out);
 
@@ -198,8 +186,7 @@ mod swap_math_tests {
         let amount_in: i128 = 10_000;
         let fee_bps: u32 = 0;
 
-        let amount_out =
-            get_amount_out(amount_in, reserve_in, reserve_out, fee_bps).unwrap();
+        let amount_out = get_amount_out(amount_in, reserve_in, reserve_out, fee_bps).unwrap();
 
         let (k_before, k_after) = k_after_swap(reserve_in, reserve_out, amount_in, amount_out);
 
@@ -274,11 +261,7 @@ mod swap_math_tests {
         let huge: i128 = i128::MAX / 2;
         let result = get_amount_out(huge, huge, huge, 30);
 
-        assert_eq!(
-            result,
-            Err(PairError::Overflow),
-            "near-max reserves must return Overflow"
-        );
+        assert_eq!(result, Err(PairError::Overflow), "near-max reserves must return Overflow");
     }
 
     // ---- 11. Overflow: large amount_in triggers overflow ----
@@ -287,11 +270,7 @@ mod swap_math_tests {
         let _env = Env::default();
 
         let result = get_amount_out(i128::MAX, 1_000_000, 1_000_000, 30);
-        assert_eq!(
-            result,
-            Err(PairError::Overflow),
-            "i128::MAX amount_in must return Overflow"
-        );
+        assert_eq!(result, Err(PairError::Overflow), "i128::MAX amount_in must return Overflow");
     }
 
     // ---- 12. mul_div: basic precision check ----
@@ -301,11 +280,7 @@ mod swap_math_tests {
 
         // (SCALE * 2) * (SCALE * 3) / SCALE == SCALE * 6
         let result = mul_div(SCALE * 2, SCALE * 3, SCALE);
-        assert_eq!(
-            result,
-            Some(SCALE * 6),
-            "mul_div basic multiplication failed"
-        );
+        assert_eq!(result, Some(SCALE * 6), "mul_div basic multiplication failed");
     }
 
     // ---- 13. mul_div: division by zero returns None ----
@@ -317,7 +292,22 @@ mod swap_math_tests {
         assert_eq!(result, None, "mul_div with zero denominator must return None");
     }
 
-    // ---- 14. sqrt: known values ----
+    // ---- 14. mul_div: large inputs near i128::MAX / 2 do not overflow ----
+    #[test]
+    fn test_mul_div_large_values_near_i128_max_half() {
+        let _env = Env::default();
+
+        let half_max = i128::MAX / 2;
+        let result = mul_div(half_max, half_max, half_max);
+
+        assert_eq!(
+            result,
+            Some(half_max),
+            "mul_div should use a wide intermediate and avoid overflow near i128 limits"
+        );
+    }
+
+    // ---- 15. sqrt: known values ----
     #[test]
     fn test_sqrt_known_values() {
         let _env = Env::default();
@@ -336,17 +326,16 @@ mod swap_math_tests {
         assert_eq!(sqrt(10), 3);
     }
 
-    // ---- 15. sqrt: negative input returns zero ----
+    // ---- 16. sqrt: negative input returns zero ----
     #[test]
-    fn test_sqrt_negative_returns_zero() {
+    #[should_panic(expected = "sqrt received negative input")]
+    fn test_sqrt_negative_input_panics() {
         let _env = Env::default();
 
-        assert_eq!(sqrt(-1), 0);
-        assert_eq!(sqrt(-100), 0);
-        assert_eq!(sqrt(i128::MIN), 0);
+        let _ = sqrt(-1);
     }
 
-    // ---- 16. Symmetry: swapping direction gives equivalent results ----
+    // ---- 17. Symmetry: swapping direction gives equivalent results ----
     #[test]
     fn test_swap_symmetry_balanced_pool() {
         let _env = Env::default();
@@ -360,20 +349,17 @@ mod swap_math_tests {
         let out_a_to_b = get_amount_out(amount_in, reserve, reserve, fee_bps).unwrap();
         let out_b_to_a = get_amount_out(amount_in, reserve, reserve, fee_bps).unwrap();
 
-        assert_eq!(
-            out_a_to_b, out_b_to_a,
-            "balanced pool must produce symmetric outputs"
-        );
+        assert_eq!(out_a_to_b, out_b_to_a, "balanced pool must produce symmetric outputs");
     }
 
-    // ---- 17. Large realistic swap: price impact sanity ----
+    // ---- 18. Large realistic swap: price impact sanity ----
     #[test]
     fn test_large_swap_price_impact() {
         let _env = Env::default();
 
         // Pool with 100M tokens on each side, swap 10M (10 %).
-        let reserve: i128 = 100_000_000_0000000;
-        let amount_in: i128 = 10_000_000_0000000;
+        let reserve: i128 = 1_000_000_000_000_000;
+        let amount_in: i128 = 100_000_000_000_000;
         let fee_bps: u32 = 30;
 
         let amount_out = get_amount_out(amount_in, reserve, reserve, fee_bps).unwrap();
@@ -390,7 +376,7 @@ mod swap_math_tests {
         assert!(amount_out > 0, "amount_out must be positive");
     }
 
-    // ---- 18. Tiny swap: dust amount still produces valid output ----
+    // ---- 19. Tiny swap: dust amount still produces valid output ----
     #[test]
     fn test_tiny_swap_dust_amount() {
         let _env = Env::default();

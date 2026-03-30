@@ -13,4 +13,7 @@ pub enum FactoryError {
     ProtocolPaused = 7,
     IdenticalTokens = 8,
     UpgradeTimelockNotExpired = 9,
+    Unauthorized = 10,
+    UpgradeAlreadyPending = 11,
+    NoPendingUpgrade = 12,
 }

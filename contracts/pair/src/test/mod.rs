@@ -12,9 +12,17 @@
 //                      K-invariant, overflow, symmetry, etc.
 //   events.rs        — PairEvents emission assertions for every event type
 //   dynamic_fee.rs   — unit tests for dynamic fee engine (volatility, decay)
+//   sync.rs          — tests for reserve synchronization (Pair::sync)
+//   reentrancy.rs    — tests for reentrancy guard (acquire/release)
 //
 // ---------------------------------------------------------------------------
 
 mod dynamic_fee;
 mod events;
+mod flash_loan;
+mod initialize;
+mod mint;
+mod reentrancy;
 mod swap_math;
+mod sync;
+mod views;

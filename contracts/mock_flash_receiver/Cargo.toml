@@ -1,0 +1,16 @@
+[package]
+name = "coralswap-mock-flash-receiver"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+coralswap-flash-receiver-interface = { path = "../flash_receiver_interface" }
+
+[target.wasm32-unknown-unknown]
+rustflags = [
+    "-C", "target-feature=-reference-types",
+]

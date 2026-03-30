@@ -75,10 +75,7 @@ pub fn set_fee_state(env: &Env, state: &FeeState) {
 // ---------------------------------------------------------------------------
 
 pub fn get_reentrancy_guard(env: &Env) -> ReentrancyGuard {
-    env.storage()
-        .instance()
-        .get(&DataKey::Guard)
-        .unwrap_or(ReentrancyGuard { locked: false })
+    env.storage().instance().get(&DataKey::Guard).unwrap_or(ReentrancyGuard { locked: false })
 }
 
 pub fn set_reentrancy_guard(env: &Env, guard: &ReentrancyGuard) {
