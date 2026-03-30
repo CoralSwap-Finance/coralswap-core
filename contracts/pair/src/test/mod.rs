@@ -19,7 +19,7 @@
 
 mod dynamic_fee;
 mod events;
-// mod flash_loan; // Temporarily disabled - flash_loan not yet exposed in contract
+mod flash_loan;
 mod initialize;
 mod mint;
 mod reentrancy;

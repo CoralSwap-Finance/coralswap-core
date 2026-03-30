@@ -22,4 +22,5 @@ pub enum PairError {
     InvalidEmaAlpha = 115,
     FeeOverflow = 116,
     FlashCallbackFailed = 117,
+    FlashLoanFeeTooHigh = 118,
 }
