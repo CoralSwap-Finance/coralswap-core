@@ -229,10 +229,8 @@ impl Pair {
         amount_b_out: i128,
         to: Address,
     ) -> Result<(), PairError> {
-        reentrancy::acquire(&env)?;
-        let result = Self::swap_inner(&env, amount_a_out, amount_b_out, &to);
-        reentrancy::release(&env);
-        result
+        let _guard = reentrancy::ReentrancyGuard::acquire(&env)?;
+        Self::swap_inner(&env, amount_a_out, amount_b_out, &to)
     }
 
     // ─────────────────────────────────────────
