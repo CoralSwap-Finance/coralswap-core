@@ -1,6 +1,8 @@
 use soroban_sdk::{
-    contract, contractclient, contractimpl, contracttype, testutils::Address as _, Address, Env,
-    Vec,
+    contract, contractclient, contractimpl, contracttype,
+    testutils::{Address as _, Ledger as _},
+    xdr::ToXdr,
+    Address, Bytes, BytesN, Env, Vec,
 };
 
 // ---------------------------------------------------------------------------
@@ -201,6 +203,17 @@ pub trait RouterInterface {
         to: Address,
         deadline: u64,
     ) -> (i128, i128);
+    fn commit_swap(env: Env, sender: Address, hash: BytesN<32>);
+    fn reveal_swap(
+        env: Env,
+        sender: Address,
+        token_in: Address,
+        token_out: Address,
+        amount_in: i128,
+        min_out: i128,
+        nonce: u64,
+        salt: BytesN<32>,
+    ) -> i128;
 }
 
 mod helpers_test;
@@ -494,4 +507,257 @@ fn test_swap_exact_out_invalid_path() {
         );
     }));
     assert!(result.is_err(), "too-short path must fail");
+}
+
+// ===========================================================================
+// MockToken — minimal SEP-41 token stub for commit-reveal lifecycle tests
+// ===========================================================================
+
+#[contract]
+pub struct MockToken;
+
+#[contractimpl]
+impl MockToken {
+    pub fn transfer(_env: Env, _from: Address, _to: Address, _amount: i128) {}
+    pub fn balance(_env: Env, _id: Address) -> i128 {
+        i128::MAX
+    }
+    pub fn allowance(_env: Env, _from: Address, _spender: Address) -> i128 {
+        0
+    }
+    pub fn approve(
+        _env: Env,
+        _from: Address,
+        _spender: Address,
+        _amount: i128,
+        _expiration_ledger: u32,
+    ) {
+    }
+    pub fn transfer_from(
+        _env: Env,
+        _spender: Address,
+        _from: Address,
+        _to: Address,
+        _amount: i128,
+    ) {
+    }
+    pub fn decimals(_env: Env) -> u32 {
+        7
+    }
+    pub fn name(env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&env, "Mock")
+    }
+    pub fn symbol(env: Env) -> soroban_sdk::String {
+        soroban_sdk::String::from_str(&env, "MCK")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Commit-reveal test helpers
+// ---------------------------------------------------------------------------
+
+/// Replicates the on-chain hash so tests can build valid commitments.
+fn make_commit_hash(
+    env: &Env,
+    sender: &Address,
+    token_in: &Address,
+    token_out: &Address,
+    amount_in: i128,
+    min_out: i128,
+    nonce: u64,
+    salt: &BytesN<32>,
+) -> BytesN<32> {
+    let mut data = Bytes::new(env);
+    data.append(&sender.to_xdr(env));
+    data.append(&token_in.to_xdr(env));
+    data.append(&token_out.to_xdr(env));
+    data.append(&Bytes::from_slice(env, &amount_in.to_be_bytes()));
+    data.append(&Bytes::from_slice(env, &min_out.to_be_bytes()));
+    data.append(&Bytes::from_slice(env, &nonce.to_be_bytes()));
+    let salt_bytes: Bytes = salt.clone().into();
+    data.append(&salt_bytes);
+    env.crypto().sha256(&data).into()
+}
+
+/// Deploys a router + factory + pair + two mock tokens ready for a 1-hop swap.
+fn deploy_router_with_pair(
+    env: &Env,
+) -> (Address, Address, Address, Address, Address) {
+    let (router_id, factory_id) = deploy_router(env);
+
+    let token_in_id = env.register_contract(None, MockToken);
+    let token_out_id = env.register_contract(None, MockToken);
+
+    let pair_id = setup_pair(env, &factory_id, &token_in_id, &token_out_id, 1_000_000, 1_000_000);
+
+    // Give MockPair a non-zero fee so get_best_path succeeds
+    let pair = MockPairClient::new(env, &pair_id);
+    pair.set_reserves(&1_000_000, &1_000_000);
+
+    (router_id, factory_id, token_in_id, token_out_id, pair_id)
+}
+
+// ===========================================================================
+// ===================== commit_swap / reveal_swap tests =====================
+// ===========================================================================
+
+#[test]
+fn test_commit_swap_stores_entry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (router_id, _) = deploy_router(&env);
+    let router = RouterClient::new(&env, &router_id);
+
+    let sender = Address::generate(&env);
+    let token_in = Address::generate(&env);
+    let token_out = Address::generate(&env);
+    let salt = BytesN::from_array(&env, &[7u8; 32]);
+    let nonce: u64 = 1;
+
+    let hash = make_commit_hash(&env, &sender, &token_in, &token_out, 1000, 0, nonce, &salt);
+
+    // Should store without error
+    router.commit_swap(&sender, &hash);
+}
+
+#[test]
+fn test_reveal_without_commit_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (router_id, _) = deploy_router(&env);
+    let router = RouterClient::new(&env, &router_id);
+
+    let sender = Address::generate(&env);
+    let token_in = Address::generate(&env);
+    let token_out = Address::generate(&env);
+    let salt = BytesN::from_array(&env, &[1u8; 32]);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        router.reveal_swap(&sender, &token_in, &token_out, &1000, &0, &1_u64, &salt);
+    }));
+    assert!(result.is_err(), "reveal without prior commit must fail (CommitNotFound)");
+}
+
+#[test]
+fn test_reveal_same_ledger_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (router_id, _) = deploy_router(&env);
+    let router = RouterClient::new(&env, &router_id);
+
+    let sender = Address::generate(&env);
+    let token_in = Address::generate(&env);
+    let token_out = Address::generate(&env);
+    let salt = BytesN::from_array(&env, &[2u8; 32]);
+    let nonce: u64 = 1;
+
+    let hash = make_commit_hash(&env, &sender, &token_in, &token_out, 1000, 0, nonce, &salt);
+    router.commit_swap(&sender, &hash);
+
+    // No ledger advance — same sequence number
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        router.reveal_swap(&sender, &token_in, &token_out, &1000, &0, &nonce, &salt);
+    }));
+    assert!(result.is_err(), "reveal on same ledger must fail (CommitRevealTooEarly)");
+}
+
+#[test]
+fn test_reveal_wrong_hash_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (router_id, _) = deploy_router(&env);
+    let router = RouterClient::new(&env, &router_id);
+
+    let sender = Address::generate(&env);
+    let token_in = Address::generate(&env);
+    let token_out = Address::generate(&env);
+    let salt = BytesN::from_array(&env, &[3u8; 32]);
+    let nonce: u64 = 1;
+
+    let hash = make_commit_hash(&env, &sender, &token_in, &token_out, 1000, 0, nonce, &salt);
+    router.commit_swap(&sender, &hash);
+
+    // Advance one ledger
+    env.ledger().set_sequence_number(env.ledger().sequence() + 1);
+
+    // Reveal with a different amount — hash won't match
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        router.reveal_swap(&sender, &token_in, &token_out, &9999, &0, &nonce, &salt);
+    }));
+    assert!(result.is_err(), "reveal with wrong params must fail (CommitHashMismatch)");
+}
+
+#[test]
+fn test_reveal_nonce_replay_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (router_id, _) = deploy_router(&env);
+    let router = RouterClient::new(&env, &router_id);
+
+    let sender = Address::generate(&env);
+    let nonce: u64 = 42;
+
+    // Mark nonce as already used directly via contract storage
+    env.as_contract(&router_id, || {
+        crate::storage::set_nonce_used(&env, &sender, nonce);
+    });
+
+    let token_in = Address::generate(&env);
+    let token_out = Address::generate(&env);
+    let salt = BytesN::from_array(&env, &[4u8; 32]);
+    let hash = make_commit_hash(&env, &sender, &token_in, &token_out, 1000, 0, nonce, &salt);
+    router.commit_swap(&sender, &hash);
+
+    env.ledger().set_sequence_number(env.ledger().sequence() + 1);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        router.reveal_swap(&sender, &token_in, &token_out, &1000, &0, &nonce, &salt);
+    }));
+    assert!(result.is_err(), "reused nonce must fail (NonceAlreadyUsed)");
+}
+
+#[test]
+fn test_commit_reveal_full_lifecycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (router_id, _factory_id, token_in_id, token_out_id, _pair_id) =
+        deploy_router_with_pair(&env);
+    let router = RouterClient::new(&env, &router_id);
+
+    let sender = Address::generate(&env);
+    let amount_in: i128 = 1_000;
+    let min_out: i128 = 0;
+    let nonce: u64 = 7;
+    let salt = BytesN::from_array(&env, &[0xABu8; 32]);
+
+    let hash = make_commit_hash(
+        &env, &sender, &token_in_id, &token_out_id, amount_in, min_out, nonce, &salt,
+    );
+
+    // Step 1: commit
+    router.commit_swap(&sender, &hash);
+
+    // Step 2: advance one ledger (minimum delay)
+    env.ledger().set_sequence_number(env.ledger().sequence() + 1);
+
+    // Step 3: reveal — hash validates, nonce is consumed, swap executes
+    let out = router.reveal_swap(
+        &sender, &token_in_id, &token_out_id, &amount_in, &min_out, &nonce, &salt,
+    );
+    assert!(out > 0, "revealed swap must return positive output");
+
+    // Step 4: same nonce is now rejected
+    let hash2 = make_commit_hash(
+        &env, &sender, &token_in_id, &token_out_id, amount_in, min_out, nonce, &salt,
+    );
+    router.commit_swap(&sender, &hash2);
+    env.ledger().set_sequence_number(env.ledger().sequence() + 1);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        router.reveal_swap(
+            &sender, &token_in_id, &token_out_id, &amount_in, &min_out, &nonce, &salt,
+        );
+    }));
+    assert!(result.is_err(), "replayed nonce must be rejected");
 }
