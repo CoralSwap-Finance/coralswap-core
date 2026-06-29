@@ -9,7 +9,7 @@ mod errors;
 mod storage;
 
 use errors::LpTokenError;
-use soroban_sdk::{contract, contractimpl, Address, Env, String};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, String, xdr::ToXdr};
 use storage::{AllowanceEntry, LpTokenKey, TokenMetadata};
 
 #[contract]
@@ -41,7 +41,90 @@ impl LpToken {
         // Initialize total supply to 0
         env.storage().instance().set(&LpTokenKey::TotalSupply, &0i128);
 
+        // Initialize paused state to false
+        env.storage().instance().set(&LpTokenKey::Paused, &false);
+
         Ok(())
+    }
+
+    /// Transfer admin role to a new address
+    /// Only callable by current admin
+    pub fn admin_transfer(env: Env, new_admin: Address) -> Result<(), LpTokenError> {
+        // Get current admin and require authorization
+        let old_admin: Address = env
+            .storage()
+            .instance()
+            .get(&LpTokenKey::Admin)
+            .ok_or(LpTokenError::NotInitialized)?;
+        
+        old_admin.require_auth();
+
+        // Atomically update admin
+        env.storage().instance().set(&LpTokenKey::Admin, &new_admin);
+
+        // Emit AdminTransferred event
+        env.events().publish(
+            (soroban_sdk::symbol_short!("adm_xfer"), old_admin, new_admin),
+            (),
+        );
+
+        Ok(())
+    }
+
+    /// Pause the contract - blocks all token operations
+    /// Only callable by admin
+    pub fn pause(env: Env) -> Result<(), LpTokenError> {
+        // Get admin and require authorization
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&LpTokenKey::Admin)
+            .ok_or(LpTokenError::NotInitialized)?;
+        
+        admin.require_auth();
+
+        // Set paused state
+        env.storage().instance().set(&LpTokenKey::Paused, &true);
+
+        // Emit Paused event
+        env.events().publish(
+            (soroban_sdk::symbol_short!("paused"), admin),
+            (),
+        );
+
+        Ok(())
+    }
+
+    /// Unpause the contract - restores token operations
+    /// Only callable by admin
+    pub fn unpause(env: Env) -> Result<(), LpTokenError> {
+        // Get admin and require authorization
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&LpTokenKey::Admin)
+            .ok_or(LpTokenError::NotInitialized)?;
+        
+        admin.require_auth();
+
+        // Set paused state
+        env.storage().instance().set(&LpTokenKey::Paused, &false);
+
+        // Emit Unpaused event
+        env.events().publish(
+            (soroban_sdk::symbol_short!("unpaused"), admin),
+            (),
+        );
+
+        Ok(())
+    }
+
+    /// Check if contract is paused
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&LpTokenKey::Paused)
+            .unwrap_or(false)
     }
 
     /// Get the allowance for spender to transfer from `from`
@@ -52,13 +135,82 @@ impl LpToken {
             env.storage().persistent().get::<LpTokenKey, AllowanceEntry>(&key)
         {
             // Check if allowance has expired
-            if allowance_entry.expiration_ledger < env.ledger().sequence() {
+            if allowance_entry.expiration_ledger <= env.ledger().sequence() {
                 return 0;
             }
             allowance_entry.amount
         } else {
             0
         }
+    }
+
+    /// Get the current permit nonce for an owner
+    pub fn nonce(env: Env, owner: Address) -> u64 {
+        env.storage()
+            .persistent()
+            .get::<LpTokenKey, u64>(&LpTokenKey::Nonce(owner))
+            .unwrap_or(0)
+    }
+
+    /// Approve spender via off-chain signature (SEP-41 permit)
+    pub fn permit(
+        env: Env,
+        owner: Address,
+        spender: Address,
+        amount: i128,
+        deadline: u32,
+        signature: BytesN<64>,
+    ) -> Result<(), LpTokenError> {
+        if env.ledger().sequence() > deadline {
+            return Err(LpTokenError::PermitExpired);
+        }
+
+        let nonce = Self::nonce(env.clone(), owner.clone());
+        let digest = Self::permit_digest(&env, &owner, &spender, amount, nonce, deadline);
+
+        // Verify the ed25519 signature. The SDK's ed25519_verify takes
+        // (public_key: &BytesN<32>, message: &Bytes, signature: &BytesN<64>)
+        // and panics on failure — there is no bool return value.
+        // We convert the owner address to its raw 32-byte public key and then
+        // verify; any mismatch causes the transaction to abort.
+        let pk_bytes: BytesN<32> = owner.clone().to_xdr(&env).slice(..32).try_into()
+            .map_err(|_| LpTokenError::InvalidSignature)?;
+
+        let digest_bytes: Bytes = digest.into();
+        env.crypto().ed25519_verify(&pk_bytes, &digest_bytes, &signature);
+
+        let key = LpTokenKey::Allowance(owner.clone(), spender.clone());
+        let allowance_entry = AllowanceEntry {
+            amount,
+            expiration_ledger: deadline,
+        };
+        env.storage().persistent().set(&key, &allowance_entry);
+
+        let ledgers_to_live = deadline.saturating_sub(env.ledger().sequence());
+        env.storage().persistent().extend_ttl(&key, ledgers_to_live, ledgers_to_live);
+
+        env.storage()
+            .persistent()
+            .set(&LpTokenKey::Nonce(owner.clone()), &(nonce + 1));
+
+        Ok(())
+    }
+
+    fn permit_digest(
+        env: &Env,
+        owner: &Address,
+        spender: &Address,
+        amount: i128,
+        nonce: u64,
+        deadline: u32,
+    ) -> BytesN<32> {
+        let mut data = Bytes::new(env);
+        data.append(&owner.clone().to_xdr(env));
+        data.append(&spender.clone().to_xdr(env));
+        data.append(&Bytes::from_slice(env, &amount.to_be_bytes()));
+        data.append(&Bytes::from_slice(env, &nonce.to_be_bytes()));
+        data.append(&Bytes::from_slice(env, &deadline.to_be_bytes()));
+        env.crypto().sha256(&data).into()
     }
 
     /// Set allowance for spender to transfer from `from`
@@ -74,8 +226,8 @@ impl LpToken {
         from.require_auth();
 
         // Validate expiration ledger (unless setting to 0)
-        if amount != 0 && expiration_ledger < env.ledger().sequence() {
-            return Err(LpTokenError::Unauthorized);
+        if amount != 0 && expiration_ledger <= env.ledger().sequence() {
+            return Err(LpTokenError::InvalidExpiration);
         }
 
         let key = LpTokenKey::Allowance(from.clone(), spender.clone());
@@ -115,6 +267,11 @@ impl LpToken {
         to: Address,
         amount: i128,
     ) -> Result<(), LpTokenError> {
+        // Check if paused
+        if Self::is_paused(env.clone()) {
+            return Err(LpTokenError::ContractPaused);
+        }
+
         // Require authorization from the `from` address
         from.require_auth();
 
@@ -133,6 +290,11 @@ impl LpToken {
         to: Address,
         amount: i128,
     ) -> Result<(), LpTokenError> {
+        // Check if paused
+        if Self::is_paused(env.clone()) {
+            return Err(LpTokenError::ContractPaused);
+        }
+
         // Require authorization from the spender
         spender.require_auth();
 
@@ -148,6 +310,11 @@ impl LpToken {
     /// Mint new tokens to an address
     /// Only callable by admin (pair contract)
     pub fn mint(env: Env, to: Address, amount: i128) -> Result<(), LpTokenError> {
+        // Check if paused
+        if Self::is_paused(env.clone()) {
+            return Err(LpTokenError::ContractPaused);
+        }
+
         // Get admin and require authorization
         let admin: Address =
             env.storage().instance().get(&LpTokenKey::Admin).ok_or(LpTokenError::NotInitialized)?;
@@ -175,6 +342,11 @@ impl LpToken {
     /// Burn tokens from an address
     /// Requires authorization from `from`
     pub fn burn(env: Env, from: Address, amount: i128) -> Result<(), LpTokenError> {
+        // Check if paused
+        if Self::is_paused(env.clone()) {
+            return Err(LpTokenError::ContractPaused);
+        }
+
         // Require authorization from the `from` address
         from.require_auth();
 
@@ -291,7 +463,7 @@ impl LpToken {
             env.storage().persistent().get(&key).ok_or(LpTokenError::InsufficientAllowance)?;
 
         // Check if allowance has expired
-        if allowance_entry.expiration_ledger < env.ledger().sequence() {
+        if allowance_entry.expiration_ledger <= env.ledger().sequence() {
             return Err(LpTokenError::InsufficientAllowance);
         }
 

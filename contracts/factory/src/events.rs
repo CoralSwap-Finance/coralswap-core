@@ -42,4 +42,32 @@ impl FactoryEvents {
     pub fn fee_to_setter_set(env: &Env, new_setter: &Address) {
         env.events().publish((soroban_sdk::symbol_short!("setter"),), new_setter.clone());
     }
+
+    pub fn protocol_fee_updated(
+        env: &Env,
+        old_fee_bps: u32,
+        new_fee_bps: u32,
+        fee_to: &Option<Address>,
+    ) {
+        env.events().publish(
+            (soroban_sdk::symbol_short!("fee_upd"),),
+            (old_fee_bps, new_fee_bps, fee_to.clone()),
+        );
+    }
+
+    /// Emitted by `Factory::set_pair_fee` whenever a per-pair fee override is
+    /// installed or updated (issue #132). `ledger` is the current ledger
+    /// sequence at the time the override took effect.
+    pub fn pair_fee_override_set(
+        env: &Env,
+        pair: &Address,
+        old_fee_bps: u32,
+        new_fee_bps: u32,
+        ledger: u32,
+    ) {
+        env.events().publish(
+            (soroban_sdk::symbol_short!("pair_fee"), pair.clone()),
+            (old_fee_bps, new_fee_bps, ledger),
+        );
+    }
 }

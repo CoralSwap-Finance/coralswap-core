@@ -1,0 +1,100 @@
+name: SDK Matrix
+
+# Builds and tests the contracts against multiple `soroban-sdk` versions so that
+# breaking changes in upcoming stable and preview releases are caught early.
+#
+# - The pinned `stable` version is required to pass (gates the workflow).
+# - Newer `latest-stable` and `preview` versions are warn-only: their failures
+#   are allowed (`continue-on-error`) but still surfaced as annotations and in
+#   the job summary so we can react before adopting them.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Proactively catch breakage introduced by freshly published SDK releases.
+  schedule:
+    - cron: "0 6 * * 1" # Every Monday at 06:00 UTC
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  matrix:
+    name: ${{ matrix.name }} (soroban-sdk ${{ matrix.soroban_sdk }})
+    runs-on: ubuntu-latest
+    # Preview/experimental versions are allowed to fail without failing the run.
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      # Run every version even if one fails so we get a full compatibility report.
+      fail-fast: false
+      matrix:
+        include:
+          # Currently pinned version in Cargo.toml — must pass.
+          - name: stable
+            soroban_sdk: "21.7.7"
+            soroban_token_sdk: "21.7.7"
+            experimental: false
+          # Latest published stable line — warn-only.
+          - name: latest-stable
+            soroban_sdk: "26.1.0"
+            soroban_token_sdk: "26.1.0"
+            experimental: true
+          # Next preview / release candidate — warn-only.
+          - name: preview
+            soroban_sdk: "27.0.0-rc.1"
+            soroban_token_sdk: "27.0.0-rc.1"
+            experimental: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Keep a separate cache per matrix version.
+          key: soroban-${{ matrix.soroban_sdk }}
+
+      - name: Pin soroban-sdk version
+        run: |
+          set -euo pipefail
+          sed -i -E \
+            's|^soroban-sdk = .*|soroban-sdk = "=${{ matrix.soroban_sdk }}"|' Cargo.toml
+          sed -i -E \
+            's|^soroban-token-sdk = .*|soroban-token-sdk = "=${{ matrix.soroban_token_sdk }}"|' Cargo.toml
+          echo "Using the following workspace dependency versions:"
+          grep -E '^soroban-(token-)?sdk = ' Cargo.toml
+          # Refresh the lockfile so the new versions resolve.
+          cargo update -p soroban-sdk --precise "${{ matrix.soroban_sdk }}" || true
+          cargo update -p soroban-token-sdk --precise "${{ matrix.soroban_token_sdk }}" || true
+
+      - name: Build (wasm release)
+        id: build
+        run: cargo build --release --target wasm32-unknown-unknown
+
+      - name: Test
+        id: test
+        run: cargo test
+
+      - name: Report result
+        if: always()
+        run: |
+          set -euo pipefail
+          BUILD="${{ steps.build.outcome }}"
+          TEST="${{ steps.test.outcome }}"
+          if [ "$BUILD" = "success" ] && [ "$TEST" = "success" ]; then
+            echo "✅ **${{ matrix.name }}** — soroban-sdk \`${{ matrix.soroban_sdk }}\` passed." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "❌ **${{ matrix.name }}** — soroban-sdk \`${{ matrix.soroban_sdk }}\` failed (build: $BUILD, test: $TEST)." >> "$GITHUB_STEP_SUMMARY"
+            if [ "${{ matrix.experimental }}" = "true" ]; then
+              echo "::warning title=SDK compatibility::soroban-sdk ${{ matrix.soroban_sdk }} (${{ matrix.name }}) failed — warn-only. Build: $BUILD, Test: $TEST."
+            else
+              echo "::error title=SDK compatibility::soroban-sdk ${{ matrix.soroban_sdk }} (${{ matrix.name }}) failed."
+              exit 1
+            fi
+          fi

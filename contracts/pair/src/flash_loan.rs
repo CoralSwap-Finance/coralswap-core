@@ -36,6 +36,11 @@ const MAX_PAYLOAD_SIZE: u32 = 256;
 /// (i.e., the loan amount is astronomically large).  Callers must propagate
 /// this error rather than proceeding with the loan.
 pub fn compute_flash_fee(amount: i128, current_fee_bps: u32) -> Result<i128, crate::errors::PairError> {
+    // Validate fee_bps does not exceed 10_000 (100%)
+    if current_fee_bps > 10_000 {
+        return Err(crate::errors::PairError::FlashLoanFeeTooHigh);
+    }
+
     let effective_bps = current_fee_bps.max(FLASH_FEE_FLOOR_BPS) as i128;
     let fee = amount
         .checked_mul(effective_bps)
@@ -217,7 +222,7 @@ pub fn execute_flash_loan(
 
     set_pair_state(env, &state);
 
-    PairEvents::flash_loan(env, receiver, amount_a, amount_b, fee_a, fee_b);
+    PairEvents::flash_loan(env, receiver, amount_a, amount_b, fee_a, fee_b, pool_fee_bps);
 
     // -----------------------------------------------------------------------
     // 11. Reentrancy lock released automatically when `_guard` is dropped

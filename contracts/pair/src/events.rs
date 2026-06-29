@@ -49,6 +49,43 @@ impl PairEvents {
     ///
     /// "flash_loan" = 10 chars → exceeds the 9-char symbol_short! limit,
     /// so we use Symbol::new for a runtime allocation.
+    pub fn burn_single_side(
+        env: &Env,
+        to: &Address,
+        lp_amount: i128,
+        preferred_token: &Address,
+        total_out: i128,
+    ) {
+        env.events().publish(
+            (symbol_short!("burn_ss"), to.clone()),
+            (lp_amount, preferred_token.clone(), total_out),
+        );
+    }
+
+    /// Emitted by `Pair::mint_with_one_token` after a successful single-sided
+    /// liquidity deposit.
+    ///
+    /// Topics: `("mint_1t", sender)`
+    /// Data:   `(token_in, amount_in, swap_amount, lp_minted)`
+    ///
+    /// `swap_amount` is the portion of `amount_in` that was swapped internally
+    /// to obtain the complementary token before minting.
+    ///
+    /// "mint_1t" = 6 chars — fits `symbol_short!` (≤ 9 chars).
+    pub fn mint_single_side(
+        env: &Env,
+        sender: &Address,
+        token_in: &Address,
+        amount_in: i128,
+        swap_amount: i128,
+        lp_minted: i128,
+    ) {
+        env.events().publish(
+            (symbol_short!("mint_1t"), sender.clone()),
+            (token_in.clone(), amount_in, swap_amount, lp_minted),
+        );
+    }
+
     #[allow(dead_code)]
     pub fn flash_loan(
         env: &Env,
@@ -57,10 +94,11 @@ impl PairEvents {
         amount_b: i128,
         fee_a: i128,
         fee_b: i128,
+        fee_bps: u32,
     ) {
         env.events().publish(
             (Symbol::new(env, "flash_loan"), receiver.clone()),
-            (amount_a, amount_b, fee_a, fee_b),
+            (amount_a, amount_b, fee_a, fee_b, fee_bps),
         );
     }
 }

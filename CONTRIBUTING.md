@@ -73,6 +73,17 @@ refactor(router): extracted deadline validation helper
 - Use `soroban_sdk::testutils` for test environments
 - All new functions must have corresponding tests
 
+## Continuous Integration
+
+- The `CI` workflow runs formatting, clippy, build, and tests on every push and PR.
+- The `SDK Matrix` workflow (`.github/workflows/matrix.yml`) builds and tests the
+  contracts against multiple `soroban-sdk` versions to catch breaking changes early:
+  - The pinned stable version (matching `Cargo.toml`) is **required** to pass.
+  - Newer stable and preview/RC versions are **warn-only** -- their failures are
+    allowed but reported as annotations and in the run summary.
+- It also runs on a weekly schedule and via manual `workflow_dispatch`. When adopting
+  a newer SDK, bump the pinned versions in `Cargo.toml` and the matrix entries together.
+
 ## Security
 
 - Never commit secrets, keys, or `.env` files

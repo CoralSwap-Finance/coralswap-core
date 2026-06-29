@@ -1,0 +1,55 @@
+name: Dependency Audit
+
+on:
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "deny.toml"
+  push:
+    branches: [main, develop]
+  schedule:
+    # Run weekly on Monday at 01:00 UTC
+    - cron: "0 1 * * 1"
+  workflow_dispatch:
+
+jobs:
+  cargo-deny:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        checks:
+          - advisories
+          - bans licenses sources
+
+    # Prevent sudden announcement of a new advisory from failing CI
+    continue-on-error: ${{ matrix.checks == 'advisories' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Run cargo deny check ${{ matrix.checks }}
+        run: cargo deny check ${{ matrix.checks }}
+
+      - name: Generate summary
+        if: always()
+        run: |
+          echo "## cargo-deny: ${{ matrix.checks }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if cargo deny check ${{ matrix.checks }} 2>&1; then
+            echo "✅ All checks passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Some checks failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cargo deny check ${{ matrix.checks }} 2>&1 || true >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi

@@ -1,5 +1,4 @@
 use crate::dynamic_fee::{compute_fee_bps, decay_stale_ema, update_volatility};
-use crate::errors::PairError;
 use crate::storage::FeeState;
 use soroban_sdk::{testutils::Ledger, Env};
 
@@ -186,6 +185,7 @@ fn test_decay_no_decay_before_threshold() {
     fee_state.decay_threshold_blocks = 1000; // Threshold not reached
 
     let initial_vol = fee_state.vol_accumulator;
+    let initial_update = fee_state.last_fee_update;
 
     decay_stale_ema(&env, &mut fee_state);
 
@@ -355,9 +355,6 @@ fn test_decay_caps_at_max_periods() {
     assert!(fee_state.vol_accumulator < i128::MAX / 1_000_000);
 }
 
-    assert_eq!(fee_state.vol_accumulator, 0);
-}
-
 #[test]
 fn test_large_trade_increases_fee() {
     let env = Env::default();
@@ -500,10 +497,10 @@ fn test_compute_fee_bps_moderate_vol_between_baseline_and_max() {
     let mut fee_state = default_fee_state();
     // Choose a vol_accumulator that produces a fee between baseline (30) and max (100)
     // vol_bps = (vol * ramp_up_multiplier) / (SCALE / 10_000)
-    //         = (vol * 1000) / 10_000_000_000
+    //         = (vol * 2) / 10_000_000_000
     // We want fee = 30 + vol_bps = 60, so vol_bps = 30
-    // 30 = (vol * 1000) / 10_000_000_000 → vol = 300_000_000
-    fee_state.vol_accumulator = 300_000_000; // 3e8
+    // 30 = (vol * 2) / 10_000_000_000 → vol = 150_000_000_000
+    fee_state.vol_accumulator = 150_000_000_000; // 1.5e11
 
     let fee = compute_fee_bps(&fee_state);
 
@@ -522,4 +519,214 @@ fn test_compute_fee_bps_tiny_vol_returns_near_baseline() {
 
     // vol_bps = (1 * 1000) / 1e10 = 0 → fee = 30 + 0 = 30
     assert_eq!(fee, fee_state.baseline_fee_bps);
+}
+
+// ============================================================================
+// Integration Test: Volatility Tracking in Swap
+// ============================================================================
+
+// Helper: Mock Token for testing
+mod mock_token_for_volatility_test {
+    use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+
+    #[contracttype]
+    pub enum MockTokenKey {
+        Balance(Address),
+    }
+
+    #[contract]
+    pub struct MockToken;
+
+    #[contractimpl]
+    impl MockToken {
+        pub fn mint(env: Env, to: Address, amount: i128) {
+            let key = MockTokenKey::Balance(to);
+            let bal: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+            env.storage().persistent().set(&key, &(bal + amount));
+        }
+
+        pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+            from.require_auth();
+            let fk = MockTokenKey::Balance(from);
+            let tk = MockTokenKey::Balance(to);
+            let fb: i128 = env.storage().persistent().get(&fk).unwrap_or(0);
+            let tb: i128 = env.storage().persistent().get(&tk).unwrap_or(0);
+            env.storage().persistent().set(&fk, &(fb - amount));
+            env.storage().persistent().set(&tk, &(tb + amount));
+        }
+
+        pub fn balance(env: Env, id: Address) -> i128 {
+            env.storage().persistent().get(&MockTokenKey::Balance(id)).unwrap_or(0)
+        }
+    }
+}
+
+#[test]
+fn test_swap_updates_volatility_accumulator() {
+    use crate::{Pair, PairClient};
+    use coralswap_lp_token::{LpToken, LpTokenClient};
+    use mock_token_for_volatility_test::{MockToken, MockTokenClient};
+    use soroban_sdk::{
+        testutils::Address as _,
+        Address, Env, String,
+    };
+
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    // Deploy contracts
+    let token_a_id = env.register_contract(None, MockToken);
+    let token_b_id = env.register_contract(None, MockToken);
+    let lp_id = env.register_contract(None, LpToken);
+    let pair_id = env.register_contract(None, Pair);
+
+    let token_a = MockTokenClient::new(&env, &token_a_id);
+    let token_b = MockTokenClient::new(&env, &token_b_id);
+    let lp_client = LpTokenClient::new(&env, &lp_id);
+    let pair_client = PairClient::new(&env, &pair_id);
+
+    let admin = Address::generate(&env);
+    let factory = Address::generate(&env);
+
+    lp_client.initialize(
+        &admin,
+        &7u32,
+        &String::from_str(&env, "Coral LP"),
+        &String::from_str(&env, "CLP"),
+    );
+
+    pair_client.initialize(&factory, &token_a_id, &token_b_id, &lp_id);
+
+    // Mint tokens to user
+    let user = Address::generate(&env);
+    token_a.mint(&user, &10_000_000);
+    token_b.mint(&user, &10_000_000);
+
+    // Add initial liquidity
+    token_a.transfer(&user, &pair_id, &1_000_000);
+    token_b.transfer(&user, &pair_id, &1_000_000);
+    pair_client.mint(&user);
+
+    // Get initial fee (should be baseline)
+    let initial_fee = pair_client.get_current_fee_bps();
+    assert_eq!(initial_fee, 30, "Initial fee should be baseline");
+
+    // Perform a large swap to create volatility
+    let swap_amount = 100_000i128;
+    token_a.transfer(&user, &pair_id, &swap_amount);
+    
+    // Request a reasonable output amount (less than what's available)
+    let (reserve_a, reserve_b, _) = pair_client.get_reserves();
+    let amount_out = reserve_b / 20; // Request 5% of reserve_b
+    
+    pair_client.swap(&0, &amount_out, &user);
+
+    // Get fee after first swap - volatility should have increased
+    let fee_after_swap1 = pair_client.get_current_fee_bps();
+    
+    // Perform another large swap in opposite direction
+    token_b.transfer(&user, &pair_id, &swap_amount);
+    let (reserve_a2, reserve_b2, _) = pair_client.get_reserves();
+    let amount_out2 = reserve_a2 / 20; // Request 5% of reserve_a
+    pair_client.swap(&amount_out2, &0, &user);
+
+    // Get fee after second swap
+    let fee_after_swap2 = pair_client.get_current_fee_bps();
+
+    // Verify that fees increased due to volatility
+    assert!(
+        fee_after_swap1 >= initial_fee,
+        "Fee after first swap should be >= initial fee (was {}, now {})",
+        initial_fee,
+        fee_after_swap1
+    );
+    
+    assert!(
+        fee_after_swap2 >= fee_after_swap1,
+        "Fee should continue to increase with more volatility (was {}, now {})",
+        fee_after_swap1,
+        fee_after_swap2
+    );
+
+    // Verify fee stays within bounds
+    assert!(fee_after_swap2 <= 100, "Fee should not exceed max_fee_bps");
+    assert!(fee_after_swap2 >= 10, "Fee should not go below min_fee_bps");
+}
+
+#[test]
+fn test_multiple_swaps_accumulate_volatility() {
+    use crate::{Pair, PairClient};
+    use coralswap_lp_token::{LpToken, LpTokenClient};
+    use mock_token_for_volatility_test::{MockToken, MockTokenClient};
+    use soroban_sdk::{
+        testutils::Address as _,
+        Address, Env, String,
+    };
+
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    // Deploy contracts
+    let token_a_id = env.register_contract(None, MockToken);
+    let token_b_id = env.register_contract(None, MockToken);
+    let lp_id = env.register_contract(None, LpToken);
+    let pair_id = env.register_contract(None, Pair);
+
+    let token_a = MockTokenClient::new(&env, &token_a_id);
+    let token_b = MockTokenClient::new(&env, &token_b_id);
+    let lp_client = LpTokenClient::new(&env, &lp_id);
+    let pair_client = PairClient::new(&env, &pair_id);
+
+    let admin = Address::generate(&env);
+    let factory = Address::generate(&env);
+
+    lp_client.initialize(
+        &admin,
+        &7u32,
+        &String::from_str(&env, "Coral LP"),
+        &String::from_str(&env, "CLP"),
+    );
+
+    pair_client.initialize(&factory, &token_a_id, &token_b_id, &lp_id);
+
+    // Mint tokens to user
+    let user = Address::generate(&env);
+    token_a.mint(&user, &100_000_000);
+    token_b.mint(&user, &100_000_000);
+
+    // Add initial liquidity
+    token_a.transfer(&user, &pair_id, &10_000_000);
+    token_b.transfer(&user, &pair_id, &10_000_000);
+    pair_client.mint(&user);
+
+    let initial_fee = pair_client.get_current_fee_bps();
+
+    // Perform multiple swaps to accumulate volatility
+    for i in 0..5 {
+        let swap_amount = 500_000i128;
+        
+        if i % 2 == 0 {
+            // Swap A for B
+            token_a.transfer(&user, &pair_id, &swap_amount);
+            let (reserve_a, reserve_b, _) = pair_client.get_reserves();
+            let amount_out = reserve_b / 30; // Request ~3% of reserve
+            pair_client.swap(&0, &amount_out, &user);
+        } else {
+            // Swap B for A
+            token_b.transfer(&user, &pair_id, &swap_amount);
+            let (reserve_a, reserve_b, _) = pair_client.get_reserves();
+            let amount_out = reserve_a / 30; // Request ~3% of reserve
+            pair_client.swap(&amount_out, &0, &user);
+        }
+    }
+
+    let final_fee = pair_client.get_current_fee_bps();
+
+    // After multiple large swaps, fee should be elevated
+    assert!(
+        final_fee > initial_fee,
+        "Fee should increase after multiple swaps (was {}, now {})",
+        initial_fee,
+        final_fee
+    );
 }

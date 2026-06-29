@@ -22,4 +22,14 @@ pub enum PairError {
     InvalidEmaAlpha = 115,
     FeeOverflow = 116,
     FlashCallbackFailed = 117,
+    FlashLoanFeeTooHigh = 118,
+    SlippageExceeded = 119,
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum OracleError {
+    WindowTooShort = 200,
+    WindowTooLong = 201,
 }

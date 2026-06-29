@@ -29,3 +29,5 @@ jobs:
         run: cargo build --release --target wasm32-unknown-unknown
       - name: Test
         run: cargo test
+      - name: Fuzz tests
+        run: cargo test -p coralswap-fuzz --features fuzz

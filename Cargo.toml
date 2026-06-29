@@ -5,10 +5,16 @@ members = [
     "contracts/lp_token",
     "contracts/router",
     "contracts/flash_receiver_interface",
-    "contracts/mock_flash_receiver"
+    "contracts/mock_flash_receiver",
+    "tests/fuzz"
 ]
 resolver = "2"
 
 [workspace.dependencies]
 soroban-sdk = "=21.7.7"
 soroban-token-sdk = "=21.7.7"
+
+[profile.release]
+overflow-checks = true
+opt-level = "z"
+debug = false

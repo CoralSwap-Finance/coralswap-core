@@ -99,7 +99,7 @@ fn flash_loan_event_emits_correct_topics_and_data() {
     let receiver = Address::generate(&env);
 
     env.as_contract(&contract_id, || {
-        PairEvents::flash_loan(&env, &receiver, 5_000_i128, 0_i128, 25_i128, 0_i128);
+        PairEvents::flash_loan(&env, &receiver, 5_000_i128, 0_i128, 25_i128, 0_i128, 30_u32);
     });
 
     let all = env.events().all();

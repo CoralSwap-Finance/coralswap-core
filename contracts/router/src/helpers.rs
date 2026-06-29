@@ -1,7 +1,5 @@
-#![allow(dead_code)]
-
 use crate::errors::RouterError;
-use soroban_sdk::{contractclient, Address, Env};
+use soroban_sdk::{contractclient, Address, Env, Vec};
 
 #[contractclient(name = "FactoryClient")]
 #[allow(dead_code)]
@@ -102,6 +100,7 @@ pub fn get_amount_in(
 ///
 /// Formula:
 /// amount_b = (amount_a * reserve_b) / reserve_a
+#[allow(dead_code)]
 pub fn quote(amount_a: i128, reserve_a: i128, reserve_b: i128) -> Result<i128, RouterError> {
     if amount_a <= 0 {
         return Err(RouterError::ZeroAmount);
@@ -180,4 +179,53 @@ pub fn get_pair_address(
 ) -> Result<Address, RouterError> {
     let factory_client = FactoryClient::new(env, factory);
     factory_client.get_pair(token_a, token_b).ok_or(RouterError::PairNotFound)
+}
+
+/// Returns (reserve_in, reserve_out, fee_bps) for a swap of token_in → token_out
+/// via the pair at the given address. Determines direction by sorting tokens.
+pub fn get_pair_reserves_and_fee(
+    env: &Env,
+    pair: &Address,
+    token_in: &Address,
+    token_out: &Address,
+) -> Result<(i128, i128, u32), RouterError> {
+    let pair_client = PairClient::new(env, pair);
+    let (reserve_a, reserve_b, _) = pair_client.get_reserves();
+    let fee_bps = pair_client.get_current_fee_bps();
+
+    let (token_0, _) = sort_tokens(token_in, token_out)?;
+    if *token_in == token_0 {
+        Ok((reserve_a, reserve_b, fee_bps))
+    } else {
+        Ok((reserve_b, reserve_a, fee_bps))
+    }
+}
+
+/// Computes output amounts for every hop along a multi-hop path.
+/// Returns a Vec of length path.len()-1 where amounts[i] is the output of
+/// swapping path[i] → path[i+1].
+pub fn get_path_amounts_out(
+    env: &Env,
+    factory: &Address,
+    path: &Vec<Address>,
+    amount_in: i128,
+) -> Result<Vec<i128>, RouterError> {
+    if path.len() < 2 {
+        return Err(RouterError::InvalidPath);
+    }
+    let mut amounts = Vec::new(env);
+    let mut current_amount = amount_in;
+    for i in 0..path.len() - 1 {
+        let pair =
+            get_pair_address(env, factory, &path.get(i).unwrap(), &path.get(i + 1).unwrap())?;
+        let (reserve_in, reserve_out, fee_bps) = get_pair_reserves_and_fee(
+            env,
+            &pair,
+            &path.get(i).unwrap(),
+            &path.get(i + 1).unwrap(),
+        )?;
+        current_amount = get_amount_out(env, current_amount, reserve_in, reserve_out, fee_bps)?;
+        amounts.push_back(current_amount);
+    }
+    Ok(amounts)
 }

@@ -14,4 +14,8 @@ pub enum RouterError {
     InsufficientLiquidity = 307,
     SlippageExceeded = 308,
     InternalError = 309,
+    CommitNotFound = 310,
+    CommitRevealTooEarly = 311,
+    CommitHashMismatch = 312,
+    NonceAlreadyUsed = 313,
 }

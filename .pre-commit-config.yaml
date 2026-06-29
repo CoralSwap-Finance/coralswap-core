@@ -1,0 +1,40 @@
+# Pre-commit hooks for CoralSwap Core
+#
+# Installation
+# ------------
+# 1. Install pre-commit:
+#      pip install pre-commit
+#    or via Homebrew:
+#      brew install pre-commit
+#
+# 2. Install the hooks into your local .git/hooks/:
+#      pre-commit install
+#
+# 3. (Optional) Run against all files manually:
+#      pre-commit run --all-files
+#
+# The hooks will now run automatically on every `git commit`.
+# To skip them in an emergency: git commit --no-verify
+
+repos:
+  - repo: local
+    hooks:
+      # Enforce consistent Rust formatting before every commit.
+      # Fails if any file would be reformatted by `cargo fmt`.
+      - id: cargo-fmt
+        name: cargo fmt
+        description: Check Rust formatting (cargo fmt --all -- --check)
+        language: system
+        entry: cargo fmt --all -- --check
+        types: [rust]
+        pass_filenames: false
+
+      # Enforce zero Clippy warnings before every commit.
+      # Treats all Clippy warnings as errors (-D warnings).
+      - id: cargo-clippy
+        name: cargo clippy
+        description: Lint Rust code (cargo clippy --all-targets -- -D warnings)
+        language: system
+        entry: cargo clippy --all-targets -- -D warnings
+        types: [rust]
+        pass_filenames: false

@@ -65,20 +65,3 @@ impl Drop for ReentrancyGuard {
         release_lock(env);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Legacy free-function shims (kept for backward-compatibility of call sites
-// in flash_loan.rs until they are migrated to the guard type).
-// ---------------------------------------------------------------------------
-
-/// Acquires the reentrancy lock. Reverts with `Locked` if already held.
-#[deprecated(note = "Prefer `ReentrancyGuard::acquire` for automatic release")]
-pub fn acquire(env: &Env) -> Result<(), PairError> {
-    acquire_lock(env)
-}
-
-/// Releases the reentrancy lock after all flash loan checks pass.
-#[deprecated(note = "Prefer `ReentrancyGuard::acquire` for automatic release")]
-pub fn release(env: &Env) {
-    release_lock(env);
-}

@@ -1,0 +1,123 @@
+name: Contract Size Benchmark
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install bc for calculations
+        run: sudo apt-get update && sudo apt-get install -y bc
+
+      - name: Run benchmark
+        run: ./scripts/benchmark.sh
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark-results.json
+
+      - name: Compare with base branch
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "## Contract Size Comparison" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Contract | Current Size | Change |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          # Checkout base branch
+          git fetch origin ${{ github.base_ref }}
+          git checkout origin/${{ github.base_ref }}
+
+          # Run benchmark on base
+          ./scripts/benchmark.sh
+          mv benchmark-results.json base-benchmark.json
+
+          # Checkout PR branch
+          git checkout ${{ github.sha }}
+          ./scripts/benchmark.sh
+          mv benchmark-results.json pr-benchmark.json
+
+          # Compare results
+          for contract in factory lp_token pair router; do
+            BASE_SIZE=$(jq -r ".contracts.$contract.size_bytes // 0" base-benchmark.json)
+            PR_SIZE=$(jq -r ".contracts.$contract.size_bytes // 0" pr-benchmark.json)
+            
+            if [ "$BASE_SIZE" != "0" ] && [ "$PR_SIZE" != "0" ]; then
+              DIFF=$((PR_SIZE - BASE_SIZE))
+              PERCENT=$(echo "scale=2; ($DIFF * 100) / $BASE_SIZE" | bc)
+              
+              if [ "$DIFF" -gt 0 ]; then
+                CHANGE="+$DIFF bytes (+${PERCENT}%)"
+                if (( $(echo "$PERCENT > 5.0" | bc -l) )); then
+                  CHANGE="⚠️ $CHANGE"
+                fi
+              elif [ "$DIFF" -lt 0 ]; then
+                CHANGE="$DIFF bytes (${PERCENT}%)"
+              else
+                CHANGE="No change"
+              fi
+              
+              PR_SIZE_KB=$(echo "scale=2; $PR_SIZE / 1024" | bc)
+              echo "| $contract | ${PR_SIZE_KB} KB | $CHANGE |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+      - name: Check for size regressions
+        if: github.event_name == 'pull_request'
+        run: |
+          WARNING_FOUND=false
+
+          for contract in factory lp_token pair router; do
+            BASE_SIZE=$(jq -r ".contracts.$contract.size_bytes // 0" base-benchmark.json)
+            PR_SIZE=$(jq -r ".contracts.$contract.size_bytes // 0" pr-benchmark.json)
+            
+            if [ "$BASE_SIZE" != "0" ] && [ "$PR_SIZE" != "0" ]; then
+              DIFF=$((PR_SIZE - BASE_SIZE))
+              PERCENT=$(echo "scale=2; ($DIFF * 100) / $BASE_SIZE" | bc)
+              
+              if (( $(echo "$PERCENT > 5.0" | bc -l) )); then
+                echo "⚠️ Warning: $contract size increased by ${PERCENT}%"
+                WARNING_FOUND=true
+              fi
+            fi
+          done
+
+          if [ "$WARNING_FOUND" = true ]; then
+            echo "::warning::One or more contracts have size increases > 5%"
+          fi

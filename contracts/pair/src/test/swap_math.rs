@@ -326,6 +326,7 @@ mod swap_math_tests {
         assert_eq!(sqrt(10), 3);
     }
 
+    // ---- 16. sqrt: negative input returns zero ----
     #[test]
     #[should_panic(expected = "sqrt received negative input")]
     fn test_sqrt_negative_input_panics() {

@@ -1,5 +1,7 @@
 #![no_std]
 
+pub mod malicious;
+
 use coralswap_flash_receiver_interface::FlashReceiver;
 use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Bytes, Env};
 

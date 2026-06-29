@@ -9,6 +9,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 soroban-sdk = { workspace = true }
 coralswap-flash-receiver-interface = { path = "../flash_receiver_interface" }
+coralswap-pair = { path = "../pair" }
 
 [target.wasm32-unknown-unknown]
 rustflags = [

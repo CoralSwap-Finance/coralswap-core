@@ -35,6 +35,12 @@ pub struct ReentrancyGuard {
     pub locked: bool,
 }
 
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct OracleState {
+    pub observations: soroban_sdk::Vec<(u64, i128, i128)>,
+}
+
 /// Storage keys for all persistent contract state.
 #[contracttype]
 pub enum DataKey {
@@ -44,6 +50,22 @@ pub enum DataKey {
     FeeState,
     /// Reentrancy lock for flash loan guard.
     Guard,
+    /// Oracle ring buffer.
+    OracleState,
+}
+
+// ---------------------------------------------------------------------------
+// OracleState helpers
+// ---------------------------------------------------------------------------
+
+pub fn get_oracle_state(env: &Env) -> OracleState {
+    env.storage().instance().get(&DataKey::OracleState).unwrap_or(OracleState {
+        observations: soroban_sdk::Vec::new(env),
+    })
+}
+
+pub fn set_oracle_state(env: &Env, state: &OracleState) {
+    env.storage().instance().set(&DataKey::OracleState, state);
 }
 
 // ---------------------------------------------------------------------------

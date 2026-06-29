@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 doctest = false
 
 [dependencies]
@@ -15,3 +15,4 @@ ethnum = { version = "*" }
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
 coralswap-lp-token = { path = "../lp_token" }
+coralswap-mock-flash-receiver = { path = "../mock_flash_receiver" }
