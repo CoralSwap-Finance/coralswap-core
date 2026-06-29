@@ -15,8 +15,39 @@ use helpers::{
     compute_optimal_amounts, get_amount_in, get_amount_out, get_pair_address,
     get_pair_reserves_and_fee, get_path_amounts_out, sort_tokens, PairClient,
 };
-use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Env, Vec};
-use storage::{get_factory, get_hubs, set_factory, set_hubs};
+use soroban_sdk::{
+    contract, contractimpl, token::TokenClient, xdr::ToXdr, Address, Bytes, BytesN, Env, Vec,
+};
+use storage::{
+    clear_commit, get_commit, get_factory, get_hubs, is_nonce_used, set_commit, set_factory,
+    set_hubs, set_nonce_used, CommitEntry,
+};
+
+/// Computes `sha256(sender || token_in || token_out || amount_in || min_out || nonce || salt)`.
+///
+/// Fields are concatenated in XDR/big-endian encoding so the result is deterministic
+/// and reproducible by off-chain clients building the commitment hash.
+fn compute_swap_hash(
+    env: &Env,
+    sender: &Address,
+    token_in: &Address,
+    token_out: &Address,
+    amount_in: i128,
+    min_out: i128,
+    nonce: u64,
+    salt: &BytesN<32>,
+) -> BytesN<32> {
+    let mut data = Bytes::new(env);
+    data.append(&sender.to_xdr(env));
+    data.append(&token_in.to_xdr(env));
+    data.append(&token_out.to_xdr(env));
+    data.append(&Bytes::from_slice(env, &amount_in.to_be_bytes()));
+    data.append(&Bytes::from_slice(env, &min_out.to_be_bytes()));
+    data.append(&Bytes::from_slice(env, &nonce.to_be_bytes()));
+    let salt_bytes: Bytes = salt.clone().into();
+    data.append(&salt_bytes);
+    env.crypto().sha256(&data).into()
+}
 
 #[contract]
 pub struct Router;
@@ -401,6 +432,83 @@ impl Router {
         let liquidity = pair_client.mint(&to);
 
         Ok((amount_a, amount_b, liquidity))
+    }
+
+    /// Commits to a future swap by storing a hash of the intended parameters.
+    ///
+    /// The caller computes the hash off-chain as:
+    /// `sha256(sender || token_in || token_out || amount_in || min_out || nonce || salt)`
+    /// where addresses are XDR-encoded and integers are big-endian.
+    ///
+    /// The commit records the current ledger sequence so that `reveal_swap` can
+    /// enforce a minimum delay, preventing front-running by MEV searchers who
+    /// observe the mempool.
+    ///
+    /// An existing pending commit for `sender` is silently overwritten.
+    ///
+    /// # Arguments
+    /// * `sender` - Address that will later call `reveal_swap`
+    /// * `hash`   - 32-byte SHA-256 commitment to the swap parameters
+    pub fn commit_swap(env: Env, sender: Address, hash: BytesN<32>) {
+        sender.require_auth();
+        set_commit(&env, &sender, &CommitEntry { hash, ledger: env.ledger().sequence() });
+    }
+
+    /// Reveals a previously committed swap and executes it atomically.
+    ///
+    /// Validation steps (in order):
+    /// 1. A commit must exist for `sender` — prevents reveals without a prior commit.
+    /// 2. At least one full ledger must have elapsed since the commit — enforces the
+    ///    MEV-resistant delay window; the hash was already on-chain before searchers
+    ///    could act on the revealed parameters.
+    /// 3. The nonce must not have been used before — prevents replay attacks where
+    ///    the same signed commitment is resubmitted.
+    /// 4. `sha256(sender || token_in || token_out || amount_in || min_out || nonce || salt)`
+    ///    must match the stored hash — authenticates the payload.
+    ///
+    /// On success the commit is deleted, the nonce is marked used, and the swap is
+    /// routed through the best available path with `u64::MAX` as the deadline (timing
+    /// was already enforced by the commit-reveal window).
+    ///
+    /// # Arguments
+    /// * `sender`   - Must match the original committer
+    /// * `token_in` / `token_out` - The swap pair
+    /// * `amount_in` - Exact input amount
+    /// * `min_out`   - Minimum acceptable output (slippage guard)
+    /// * `nonce`     - Caller-chosen unique value; reuse is rejected
+    /// * `salt`      - Random 32-byte value included in the commitment
+    pub fn reveal_swap(
+        env: Env,
+        sender: Address,
+        token_in: Address,
+        token_out: Address,
+        amount_in: i128,
+        min_out: i128,
+        nonce: u64,
+        salt: BytesN<32>,
+    ) -> Result<i128, RouterError> {
+        let entry = get_commit(&env, &sender).ok_or(RouterError::CommitNotFound)?;
+
+        if env.ledger().sequence() <= entry.ledger {
+            return Err(RouterError::CommitRevealTooEarly);
+        }
+
+        if is_nonce_used(&env, &sender, nonce) {
+            return Err(RouterError::NonceAlreadyUsed);
+        }
+
+        let computed =
+            compute_swap_hash(&env, &sender, &token_in, &token_out, amount_in, min_out, nonce, &salt);
+        if computed != entry.hash {
+            return Err(RouterError::CommitHashMismatch);
+        }
+
+        clear_commit(&env, &sender);
+        set_nonce_used(&env, &sender, nonce);
+
+        let (path, _) =
+            Self::get_best_path(env.clone(), token_in, token_out, amount_in)?;
+        Self::swap_exact_tokens_multi_hop(env, path, amount_in, min_out, sender, u64::MAX)
     }
 
     /// Removes liquidity from a token pair (not yet implemented).
