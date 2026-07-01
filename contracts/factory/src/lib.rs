@@ -117,8 +117,13 @@ impl Factory {
 
         // 3. Initialize Pair — propagate any error; do NOT store if this fails
         let pair_client = PairClient::new(&env, &pair_address);
-        let _ = pair_client
-            .try_initialize(&env.current_contract_address(), &token_0, &token_1, &lp_token_address)
+        pair_client
+            .try_initialize(
+                &env.current_contract_address(),
+                &token_0,
+                &token_1,
+                &lp_token_address,
+            )
             .map_err(|_| FactoryError::NotInitialized)?;
 
         // 4. Store pair — only reached when initialize() succeeded
@@ -167,16 +172,11 @@ impl Factory {
     }
 
     pub fn pause(env: Env, signers: Vec<Address>) -> Result<(), FactoryError> {
-        let mut factory_storage =
-            storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+        let mut storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
 
         // Require a majority (threshold = ceil(n/2)) of the registered signers.
-        let threshold = (factory_storage.signers.len() + 1) / 2;
+        let threshold = (storage.signers.len() + 1) / 2;
         governance::verify_multisig(&env, &signers, threshold)?;
-
-        factory_storage.paused = true;
-        storage::set_factory_storage(&env, &factory_storage);
-        let mut storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
 
         // Find a signer in the call that matches a stored signer, then require its auth.
         let authorized = signers
@@ -192,15 +192,10 @@ impl Factory {
     }
 
     pub fn unpause(env: Env, signers: Vec<Address>) -> Result<(), FactoryError> {
-        let mut factory_storage =
-            storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
-
-        let threshold = (factory_storage.signers.len() + 1) / 2;
-        governance::verify_multisig(&env, &signers, threshold)?;
-
-        factory_storage.paused = false;
-        storage::set_factory_storage(&env, &factory_storage);
         let mut storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+
+        let threshold = (storage.signers.len() + 1) / 2;
+        governance::verify_multisig(&env, &signers, threshold)?;
 
         // Find a signer in the call that matches a stored signer, then require its auth.
         let authorized = signers
