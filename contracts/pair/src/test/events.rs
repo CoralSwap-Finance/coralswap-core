@@ -90,6 +90,58 @@ fn sync_event_emits_correct_topics_and_data() {
 }
 
 // ---------------------------------------------------------------------------
+// reward_added
+// ---------------------------------------------------------------------------
+#[test]
+fn reward_added_event_emits_correct_topics_and_data() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, EventStub);
+    let token = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        PairEvents::reward_added(&env, &token, 1_000_i128);
+    });
+
+    let all = env.events().all();
+    assert_eq!(all.len(), 1, "expected exactly one reward_added event");
+}
+
+// ---------------------------------------------------------------------------
+// reward_rate
+// ---------------------------------------------------------------------------
+#[test]
+fn reward_rate_event_emits_correct_topics_and_data() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, EventStub);
+    let token = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        PairEvents::reward_rate(&env, &token, 100_i128, 200_i128);
+    });
+
+    let all = env.events().all();
+    assert_eq!(all.len(), 1, "expected exactly one reward_rate event");
+}
+
+// ---------------------------------------------------------------------------
+// rewards_claimed
+// ---------------------------------------------------------------------------
+#[test]
+fn rewards_claimed_event_emits_correct_topics_and_data() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, EventStub);
+    let user = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        PairEvents::rewards_claimed(&env, &user, &token, 500_i128);
+    });
+
+    let all = env.events().all();
+    assert_eq!(all.len(), 1, "expected exactly one rewards_claimed event");
+}
+
+// ---------------------------------------------------------------------------
 // flash_loan
 // ---------------------------------------------------------------------------
 #[test]
