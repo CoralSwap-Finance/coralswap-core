@@ -4,9 +4,7 @@ use coralswap_lp_token::{LpToken, LpTokenClient};
 
 use crate::{Pair, PairClient};
 use soroban_sdk::{
-    contract, contractimpl, contracttype,
-    testutils::Address as _,
-    Address, Env, String,
+    contract, contractimpl, contracttype, testutils::Address as _, Address, Env, String,
 };
 
 // ── Minimal mock token ────────────────────────────────────────────────────────

@@ -2,8 +2,8 @@
 
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
-use crate::oracle::{consult_twap, update_cumulative_prices, MAX_TWAP_WINDOW};
 use crate::errors::OracleError;
+use crate::oracle::{consult_twap, update_cumulative_prices, MAX_TWAP_WINDOW};
 use crate::Pair;
 
 fn setup_env() -> (Env, Address) {

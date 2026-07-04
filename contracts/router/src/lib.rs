@@ -497,8 +497,9 @@ impl Router {
             return Err(RouterError::NonceAlreadyUsed);
         }
 
-        let computed =
-            compute_swap_hash(&env, &sender, &token_in, &token_out, amount_in, min_out, nonce, &salt);
+        let computed = compute_swap_hash(
+            &env, &sender, &token_in, &token_out, amount_in, min_out, nonce, &salt,
+        );
         if computed != entry.hash {
             return Err(RouterError::CommitHashMismatch);
         }
@@ -506,8 +507,7 @@ impl Router {
         clear_commit(&env, &sender);
         set_nonce_used(&env, &sender, nonce);
 
-        let (path, _) =
-            Self::get_best_path(env.clone(), token_in, token_out, amount_in)?;
+        let (path, _) = Self::get_best_path(env.clone(), token_in, token_out, amount_in)?;
         Self::swap_exact_tokens_multi_hop(env, path, amount_in, min_out, sender, u64::MAX)
     }
 

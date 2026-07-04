@@ -14,7 +14,7 @@ pub struct AllowanceEntry {
 }
 
 #[contracttype]
-pub enum LpTokenKey {  
+pub enum LpTokenKey {
     Balance(Address),
     Allowance(Address, Address),
     TotalSupply,

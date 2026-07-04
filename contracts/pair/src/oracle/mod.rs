@@ -1,6 +1,6 @@
-use soroban_sdk::Env;
 use crate::errors::OracleError;
 use crate::storage::{get_oracle_state, set_oracle_state};
+use soroban_sdk::Env;
 
 pub const MAX_TWAP_WINDOW: u32 = 86400;
 
@@ -27,14 +27,15 @@ pub fn update_cumulative_prices(
     if oracle_state.observations.len() >= 24 {
         oracle_state.observations.remove(0);
     }
-    oracle_state.observations.push_back((env.ledger().sequence() as u64, *price_a_cumulative, *price_b_cumulative));
+    oracle_state.observations.push_back((
+        env.ledger().sequence() as u64,
+        *price_a_cumulative,
+        *price_b_cumulative,
+    ));
     set_oracle_state(env, &oracle_state);
 }
 
-pub fn consult_twap(
-    env: &Env,
-    window_ledgers: u32,
-) -> Result<(i128, i128), OracleError> {
+pub fn consult_twap(env: &Env, window_ledgers: u32) -> Result<(i128, i128), OracleError> {
     if window_ledgers == 0 {
         return Err(OracleError::WindowTooShort);
     }
@@ -81,21 +82,27 @@ pub fn consult_twap(
     let interpolated_a = if end_ledger == start_ledger {
         start_a
     } else {
-        start_a.wrapping_add((end_a.wrapping_sub(start_a)) * (target as i128 - start_ledger as i128) / (end_ledger as i128 - start_ledger as i128))
+        start_a.wrapping_add(
+            (end_a.wrapping_sub(start_a)) * (target as i128 - start_ledger as i128)
+                / (end_ledger as i128 - start_ledger as i128),
+        )
     };
 
     let interpolated_b = if end_ledger == start_ledger {
         start_b
     } else {
-        start_b.wrapping_add((end_b.wrapping_sub(start_b)) * (target as i128 - start_ledger as i128) / (end_ledger as i128 - start_ledger as i128))
+        start_b.wrapping_add(
+            (end_b.wrapping_sub(start_b)) * (target as i128 - start_ledger as i128)
+                / (end_ledger as i128 - start_ledger as i128),
+        )
     };
 
     // We also need the current accumulation
     // Since we don't have current cumulative in oracle state directly without passing it,
-    // Wait, the pair updates cumulative prices and stores it in pair storage. We can just use the latest observation if we don't have pair storage here. 
+    // Wait, the pair updates cumulative prices and stores it in pair storage. We can just use the latest observation if we don't have pair storage here.
     // Wait, "consult_twap() uses buffer for interpolation". "compare single-snapshot vs. buffer result over same window"
     // Let's assume we do window over observations.
-    
+
     let (latest_ledger, latest_a, latest_b) = obs.last().unwrap();
     if latest_ledger < target + window_ledgers as u64 {
         // Not enough data

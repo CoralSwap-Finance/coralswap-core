@@ -9,7 +9,7 @@ mod errors;
 mod storage;
 
 use errors::LpTokenError;
-use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, String, xdr::ToXdr};
+use soroban_sdk::{contract, contractimpl, xdr::ToXdr, Address, Bytes, BytesN, Env, String};
 use storage::{AllowanceEntry, LpTokenKey, TokenMetadata};
 
 #[contract]
@@ -51,22 +51,16 @@ impl LpToken {
     /// Only callable by current admin
     pub fn admin_transfer(env: Env, new_admin: Address) -> Result<(), LpTokenError> {
         // Get current admin and require authorization
-        let old_admin: Address = env
-            .storage()
-            .instance()
-            .get(&LpTokenKey::Admin)
-            .ok_or(LpTokenError::NotInitialized)?;
-        
+        let old_admin: Address =
+            env.storage().instance().get(&LpTokenKey::Admin).ok_or(LpTokenError::NotInitialized)?;
+
         old_admin.require_auth();
 
         // Atomically update admin
         env.storage().instance().set(&LpTokenKey::Admin, &new_admin);
 
         // Emit AdminTransferred event
-        env.events().publish(
-            (soroban_sdk::symbol_short!("adm_xfer"), old_admin, new_admin),
-            (),
-        );
+        env.events().publish((soroban_sdk::symbol_short!("adm_xfer"), old_admin, new_admin), ());
 
         Ok(())
     }
@@ -75,22 +69,16 @@ impl LpToken {
     /// Only callable by admin
     pub fn pause(env: Env) -> Result<(), LpTokenError> {
         // Get admin and require authorization
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&LpTokenKey::Admin)
-            .ok_or(LpTokenError::NotInitialized)?;
-        
+        let admin: Address =
+            env.storage().instance().get(&LpTokenKey::Admin).ok_or(LpTokenError::NotInitialized)?;
+
         admin.require_auth();
 
         // Set paused state
         env.storage().instance().set(&LpTokenKey::Paused, &true);
 
         // Emit Paused event
-        env.events().publish(
-            (soroban_sdk::symbol_short!("paused"), admin),
-            (),
-        );
+        env.events().publish((soroban_sdk::symbol_short!("paused"), admin), ());
 
         Ok(())
     }
@@ -99,32 +87,23 @@ impl LpToken {
     /// Only callable by admin
     pub fn unpause(env: Env) -> Result<(), LpTokenError> {
         // Get admin and require authorization
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&LpTokenKey::Admin)
-            .ok_or(LpTokenError::NotInitialized)?;
-        
+        let admin: Address =
+            env.storage().instance().get(&LpTokenKey::Admin).ok_or(LpTokenError::NotInitialized)?;
+
         admin.require_auth();
 
         // Set paused state
         env.storage().instance().set(&LpTokenKey::Paused, &false);
 
         // Emit Unpaused event
-        env.events().publish(
-            (soroban_sdk::symbol_short!("unpaused"), admin),
-            (),
-        );
+        env.events().publish((soroban_sdk::symbol_short!("unpaused"), admin), ());
 
         Ok(())
     }
 
     /// Check if contract is paused
     pub fn is_paused(env: Env) -> bool {
-        env.storage()
-            .instance()
-            .get(&LpTokenKey::Paused)
-            .unwrap_or(false)
+        env.storage().instance().get(&LpTokenKey::Paused).unwrap_or(false)
     }
 
     /// Get the allowance for spender to transfer from `from`
@@ -146,10 +125,7 @@ impl LpToken {
 
     /// Get the current permit nonce for an owner
     pub fn nonce(env: Env, owner: Address) -> u64 {
-        env.storage()
-            .persistent()
-            .get::<LpTokenKey, u64>(&LpTokenKey::Nonce(owner))
-            .unwrap_or(0)
+        env.storage().persistent().get::<LpTokenKey, u64>(&LpTokenKey::Nonce(owner)).unwrap_or(0)
     }
 
     /// Approve spender via off-chain signature (SEP-41 permit)
@@ -173,25 +149,24 @@ impl LpToken {
         // and panics on failure — there is no bool return value.
         // We convert the owner address to its raw 32-byte public key and then
         // verify; any mismatch causes the transaction to abort.
-        let pk_bytes: BytesN<32> = owner.clone().to_xdr(&env).slice(..32).try_into()
+        let pk_bytes: BytesN<32> = owner
+            .clone()
+            .to_xdr(&env)
+            .slice(..32)
+            .try_into()
             .map_err(|_| LpTokenError::InvalidSignature)?;
 
         let digest_bytes: Bytes = digest.into();
         env.crypto().ed25519_verify(&pk_bytes, &digest_bytes, &signature);
 
         let key = LpTokenKey::Allowance(owner.clone(), spender.clone());
-        let allowance_entry = AllowanceEntry {
-            amount,
-            expiration_ledger: deadline,
-        };
+        let allowance_entry = AllowanceEntry { amount, expiration_ledger: deadline };
         env.storage().persistent().set(&key, &allowance_entry);
 
         let ledgers_to_live = deadline.saturating_sub(env.ledger().sequence());
         env.storage().persistent().extend_ttl(&key, ledgers_to_live, ledgers_to_live);
 
-        env.storage()
-            .persistent()
-            .set(&LpTokenKey::Nonce(owner.clone()), &(nonce + 1));
+        env.storage().persistent().set(&LpTokenKey::Nonce(owner.clone()), &(nonce + 1));
 
         Ok(())
     }

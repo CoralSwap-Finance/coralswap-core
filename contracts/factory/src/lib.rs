@@ -118,12 +118,7 @@ impl Factory {
         // 3. Initialize Pair — propagate any error; do NOT store if this fails
         let pair_client = PairClient::new(&env, &pair_address);
         pair_client
-            .try_initialize(
-                &env.current_contract_address(),
-                &token_0,
-                &token_1,
-                &lp_token_address,
-            )
+            .try_initialize(&env.current_contract_address(), &token_0, &token_1, &lp_token_address)
             .map_err(|_| FactoryError::NotInitialized)?;
 
         // 4. Store pair — only reached when initialize() succeeded

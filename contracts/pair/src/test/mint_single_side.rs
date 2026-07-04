@@ -10,9 +10,7 @@ use coralswap_lp_token::{LpToken, LpTokenClient};
 
 use crate::{Pair, PairClient};
 use soroban_sdk::{
-    contract, contractimpl, contracttype,
-    testutils::Address as _,
-    Address, Env, String,
+    contract, contractimpl, contracttype, testutils::Address as _, Address, Env, String,
 };
 
 // ── Minimal mock token ────────────────────────────────────────────────────────
@@ -142,11 +140,7 @@ fn test_mint_with_one_token_entry_via_token_a() {
         "total_supply must increase by exactly lp_minted"
     );
 
-    assert_eq!(
-        lp_client.balance(&user),
-        lp_minted,
-        "user LP balance must equal lp_minted"
-    );
+    assert_eq!(lp_client.balance(&user), lp_minted, "user LP balance must equal lp_minted");
 }
 
 // ── Acceptance criterion 2: entry via token_1 (token_b) returns correct LP ───
@@ -238,8 +232,7 @@ fn test_mint_with_one_token_optimal_split_no_leftover() {
 #[test]
 fn test_mint_with_one_token_exact_min_lp_out_succeeds() {
     let reserve = 1_000_000_000i128;
-    let (env, pair_client, token_a, _, lp_client, _, token_a_id, _) =
-        setup_pair(reserve, reserve);
+    let (env, pair_client, token_a, _, lp_client, _, token_a_id, _) = setup_pair(reserve, reserve);
 
     let user = Address::generate(&env);
     let deposit = 100_000_000i128;
@@ -279,8 +272,7 @@ fn test_mint_with_one_token_slippage_reverts() {
     // Demand more LP than the pool can possibly return for this deposit.
     // The total LP supply is ~1e9 so demanding 2e9 is guaranteed to revert.
     let impossible_min = 2_000_000_000i128;
-    let result =
-        pair_client.try_mint_with_one_token(&user, &token_a_id, &deposit, &impossible_min);
+    let result = pair_client.try_mint_with_one_token(&user, &token_a_id, &deposit, &impossible_min);
 
     assert!(result.is_err(), "must revert when min_lp_out exceeds actual output");
 }
@@ -294,9 +286,7 @@ fn test_mint_with_one_token_k_invariant_holds() {
     let reserve = 1_000_000_000i128;
     let (env, pair_client, token_a, _, _, _, token_a_id, _) = setup_pair(reserve, reserve);
 
-    let k_before = reserve
-        .checked_mul(reserve)
-        .expect("k_before overflow");
+    let k_before = reserve.checked_mul(reserve).expect("k_before overflow");
 
     let user = Address::generate(&env);
     let deposit = 100_000_000i128;
@@ -319,8 +309,7 @@ fn test_mint_with_one_token_k_invariant_holds() {
 fn test_mint_with_one_token_k_invariant_asymmetric_pool() {
     let reserve_a = 2_000_000_000i128;
     let reserve_b = 1_000_000_000i128;
-    let (env, pair_client, token_a, _, _, _, token_a_id, _) =
-        setup_pair(reserve_a, reserve_b);
+    let (env, pair_client, token_a, _, _, _, token_a_id, _) = setup_pair(reserve_a, reserve_b);
 
     let k_before = reserve_a.checked_mul(reserve_b).expect("k_before overflow");
 
@@ -374,8 +363,7 @@ fn test_mint_with_one_token_invalid_token_reverts() {
 
     token_a.mint(&user, &100_000_000i128);
 
-    let result =
-        pair_client.try_mint_with_one_token(&user, &rando_token, &100_000_000i128, &1i128);
+    let result = pair_client.try_mint_with_one_token(&user, &rando_token, &100_000_000i128, &1i128);
     assert!(result.is_err(), "unknown token must revert");
 }
 
@@ -387,8 +375,7 @@ fn test_mint_with_one_token_zero_min_lp_out_reverts() {
     let user = Address::generate(&env);
     token_a.mint(&user, &100_000_000i128);
 
-    let result =
-        pair_client.try_mint_with_one_token(&user, &token_a_id, &100_000_000i128, &0i128);
+    let result = pair_client.try_mint_with_one_token(&user, &token_a_id, &100_000_000i128, &0i128);
     assert!(result.is_err(), "zero min_lp_out must revert");
 }
 
@@ -396,8 +383,7 @@ fn test_mint_with_one_token_zero_min_lp_out_reverts() {
 #[test]
 fn test_mint_with_one_token_multiple_users() {
     let reserve = 1_000_000_000i128;
-    let (env, pair_client, token_a, _, lp_client, _, token_a_id, _) =
-        setup_pair(reserve, reserve);
+    let (env, pair_client, token_a, _, lp_client, _, token_a_id, _) = setup_pair(reserve, reserve);
 
     let deposit = 50_000_000i128;
 

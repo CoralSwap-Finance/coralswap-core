@@ -59,9 +59,10 @@ pub enum DataKey {
 // ---------------------------------------------------------------------------
 
 pub fn get_oracle_state(env: &Env) -> OracleState {
-    env.storage().instance().get(&DataKey::OracleState).unwrap_or(OracleState {
-        observations: soroban_sdk::Vec::new(env),
-    })
+    env.storage()
+        .instance()
+        .get(&DataKey::OracleState)
+        .unwrap_or(OracleState { observations: soroban_sdk::Vec::new(env) })
 }
 
 pub fn set_oracle_state(env: &Env, state: &OracleState) {

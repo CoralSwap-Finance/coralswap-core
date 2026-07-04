@@ -28,8 +28,7 @@ pub fn propose_upgrade(env: &Env, new_wasm_hash: BytesN<32>) -> Result<(), Facto
 /// Executes a previously proposed upgrade after the 72-hour timelock has
 /// elapsed. Reverts with `UpgradeTimelockNotExpired` if called too early.
 pub fn execute_upgrade(env: &Env) -> Result<(), FactoryError> {
-    let proposal =
-        storage::get_pending_upgrade(env).ok_or(FactoryError::NoPendingUpgrade)?;
+    let proposal = storage::get_pending_upgrade(env).ok_or(FactoryError::NoPendingUpgrade)?;
 
     let elapsed = env.ledger().sequence().saturating_sub(proposal.proposed_at_ledger);
     if elapsed < UPGRADE_DELAY_LEDGERS {

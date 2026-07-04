@@ -580,9 +580,7 @@ fn make_commit_hash(
 }
 
 /// Deploys a router + factory + pair + two mock tokens ready for a 1-hop swap.
-fn deploy_router_with_pair(
-    env: &Env,
-) -> (Address, Address, Address, Address, Address) {
+fn deploy_router_with_pair(env: &Env) -> (Address, Address, Address, Address, Address) {
     let (router_id, factory_id) = deploy_router(env);
 
     let token_in_id = env.register_contract(None, MockToken);
@@ -732,7 +730,14 @@ fn test_commit_reveal_full_lifecycle() {
     let salt = BytesN::from_array(&env, &[0xABu8; 32]);
 
     let hash = make_commit_hash(
-        &env, &sender, &token_in_id, &token_out_id, amount_in, min_out, nonce, &salt,
+        &env,
+        &sender,
+        &token_in_id,
+        &token_out_id,
+        amount_in,
+        min_out,
+        nonce,
+        &salt,
     );
 
     // Step 1: commit
@@ -743,20 +748,39 @@ fn test_commit_reveal_full_lifecycle() {
 
     // Step 3: reveal — hash validates, nonce is consumed, swap executes
     let out = router.reveal_swap(
-        &sender, &token_in_id, &token_out_id, &amount_in, &min_out, &nonce, &salt,
+        &sender,
+        &token_in_id,
+        &token_out_id,
+        &amount_in,
+        &min_out,
+        &nonce,
+        &salt,
     );
     assert!(out > 0, "revealed swap must return positive output");
 
     // Step 4: same nonce is now rejected
     let hash2 = make_commit_hash(
-        &env, &sender, &token_in_id, &token_out_id, amount_in, min_out, nonce, &salt,
+        &env,
+        &sender,
+        &token_in_id,
+        &token_out_id,
+        amount_in,
+        min_out,
+        nonce,
+        &salt,
     );
     router.commit_swap(&sender, &hash2);
     env.ledger().set_sequence_number(env.ledger().sequence() + 1);
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         router.reveal_swap(
-            &sender, &token_in_id, &token_out_id, &amount_in, &min_out, &nonce, &salt,
+            &sender,
+            &token_in_id,
+            &token_out_id,
+            &amount_in,
+            &min_out,
+            &nonce,
+            &salt,
         );
     }));
     assert!(result.is_err(), "replayed nonce must be rejected");

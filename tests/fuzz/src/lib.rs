@@ -46,21 +46,27 @@ fn get_amount_out(
     let fee_factor = BPS_DENOMINATOR.checked_sub(fee_bps as i128)?;
     let amount_in_with_fee = amount_in.checked_mul(fee_factor)?;
     let numerator = amount_in_with_fee.checked_mul(reserve_out)?;
-    let denominator = reserve_in
-        .checked_mul(BPS_DENOMINATOR)?
-        .checked_add(amount_in_with_fee)?;
+    let denominator = reserve_in.checked_mul(BPS_DENOMINATOR)?.checked_add(amount_in_with_fee)?;
     if denominator == 0 {
         return None;
     }
     let out = numerator / denominator;
-    if out <= 0 { None } else { Some(out) }
+    if out <= 0 {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 /// LP tokens minted for the initial deposit.
 fn initial_liquidity(amount_a: i128, amount_b: i128) -> Option<i128> {
     let product = amount_a.checked_mul(amount_b)?;
     let liq = sqrt(product).checked_sub(MINIMUM_LIQUIDITY)?;
-    if liq <= 0 { None } else { Some(liq) }
+    if liq <= 0 {
+        None
+    } else {
+        Some(liq)
+    }
 }
 
 /// LP tokens minted for a subsequent deposit given current reserves and supply.
@@ -77,7 +83,11 @@ fn subsequent_liquidity(
     let liq_a = amount_a.checked_mul(total_supply)? / reserve_a;
     let liq_b = amount_b.checked_mul(total_supply)? / reserve_b;
     let liq = liq_a.min(liq_b);
-    if liq <= 0 { None } else { Some(liq) }
+    if liq <= 0 {
+        None
+    } else {
+        Some(liq)
+    }
 }
 
 /// Tokens returned when burning `lp_amount` from a pool.
@@ -92,7 +102,11 @@ fn burn_amounts(
     }
     let a = lp_amount.checked_mul(reserve_a)? / total_supply;
     let b = lp_amount.checked_mul(reserve_b)? / total_supply;
-    if a <= 0 || b <= 0 { None } else { Some((a, b)) }
+    if a <= 0 || b <= 0 {
+        None
+    } else {
+        Some((a, b))
+    }
 }
 
 // ── Strategies ────────────────────────────────────────────────────────────────

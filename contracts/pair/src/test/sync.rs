@@ -63,7 +63,13 @@ fn test_sync_resets_reserves() {
     let env_init = env.clone();
     env_init.as_contract(&contract_id, || {
         let env = env_init.clone();
-        let _ = Pair::initialize(env.clone(), factory.clone(), token_a.clone(), token_b.clone(), lp_token.clone());
+        let _ = Pair::initialize(
+            env.clone(),
+            factory.clone(),
+            token_a.clone(),
+            token_b.clone(),
+            lp_token.clone(),
+        );
         let mut state = crate::storage::get_pair_state(&env).unwrap();
         state.reserve_a = 1000;
         state.reserve_b = 2000;
@@ -181,7 +187,3 @@ fn test_sync_emits_event() {
         assert!(!events.is_empty(), "sync event emitted");
     });
 }
-
-
-
-

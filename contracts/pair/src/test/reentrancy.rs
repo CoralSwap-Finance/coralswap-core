@@ -37,7 +37,10 @@ fn test_guard_returns_locked_if_already_held() {
         assert!(_first.is_ok(), "first guard acquire should succeed");
 
         let second = reentrancy::ReentrancyGuard::acquire(&env);
-        assert!(matches!(second, Err(PairError::Locked)), "second acquire should return Locked while first guard is held");
+        assert!(
+            matches!(second, Err(PairError::Locked)),
+            "second acquire should return Locked while first guard is held"
+        );
         // First guard still held here, releases at end of scope
     });
 }
@@ -84,7 +87,10 @@ fn test_guard_releases_on_early_return() {
 
         // Second call should succeed because guard was released
         let result2 = operation_that_fails(&env);
-        assert!(result2.is_err(), "second operation should also fail but acquire guard successfully");
+        assert!(
+            result2.is_err(),
+            "second operation should also fail but acquire guard successfully"
+        );
     });
 }
 
@@ -102,7 +108,10 @@ fn test_lock_state_persists_while_guard_held() {
         // Lock should persist while guard is held
 
         let result = reentrancy::ReentrancyGuard::acquire(&env);
-        assert!(matches!(result, Err(PairError::Locked)), "lock should persist while guard is held");
+        assert!(
+            matches!(result, Err(PairError::Locked)),
+            "lock should persist while guard is held"
+        );
 
         // Guard releases at end of scope
     });
@@ -142,7 +151,10 @@ fn test_guard_lock_error_autorelease_relock_cycle() {
 
             // Step 5: Second acquire should fail again
             let result4 = reentrancy::ReentrancyGuard::acquire(&env);
-            assert!(matches!(result4, Err(PairError::Locked)), "step 4: should get Locked error again");
+            assert!(
+                matches!(result4, Err(PairError::Locked)),
+                "step 4: should get Locked error again"
+            );
             // Step 6: Guard auto-releases at end of this scope
         }
 
@@ -248,13 +260,13 @@ fn test_guard_releases_even_on_panic_simulation() {
     // In real Soroban contracts, panics would unwind the stack and Drop would be called
     fn operation_that_might_panic(env: &Env, should_fail: bool) -> Result<(), PairError> {
         let _guard = reentrancy::ReentrancyGuard::acquire(env)?;
-        
+
         if should_fail {
             // Simulate an error that causes early return
             // In a real panic, Drop is still called during unwinding
             return Err(PairError::InsufficientLiquidity);
         }
-        
+
         Ok(())
     }
 

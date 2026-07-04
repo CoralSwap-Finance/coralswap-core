@@ -91,10 +91,7 @@ impl PairEvents {
     /// Topics: `("rwd_added", token)`
     /// Data:   `(initial_rate,)`
     pub fn reward_added(env: &Env, token: &Address, initial_rate: i128) {
-        env.events().publish(
-            (symbol_short!("rwd_added"), token.clone()),
-            (initial_rate,),
-        );
+        env.events().publish((symbol_short!("rwd_added"), token.clone()), (initial_rate,));
     }
 
     /// Emits a `reward_rate` event when a reward rate changes.
@@ -102,10 +99,7 @@ impl PairEvents {
     /// Topics: `("rwd_rate", token)`
     /// Data:   `(old_rate, new_rate)`
     pub fn reward_rate(env: &Env, token: &Address, old_rate: i128, new_rate: i128) {
-        env.events().publish(
-            (symbol_short!("rwd_rate"), token.clone()),
-            (old_rate, new_rate),
-        );
+        env.events().publish((symbol_short!("rwd_rate"), token.clone()), (old_rate, new_rate));
     }
 
     /// Emits a `rewards_claimed` event when a user claims rewards.
@@ -113,10 +107,7 @@ impl PairEvents {
     /// Topics: `("rwd_claim", user)`
     /// Data:   `(token, amount)`
     pub fn rewards_claimed(env: &Env, user: &Address, token: &Address, amount: i128) {
-        env.events().publish(
-            (symbol_short!("rwd_claim"), user.clone()),
-            (token.clone(), amount),
-        );
+        env.events().publish((symbol_short!("rwd_claim"), user.clone()), (token.clone(), amount));
     }
 
     #[allow(dead_code)]

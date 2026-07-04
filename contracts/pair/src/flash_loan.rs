@@ -35,7 +35,10 @@ const MAX_PAYLOAD_SIZE: u32 = 256;
 /// Returns `Err(PairError::FeeOverflow)` when the multiplication overflows
 /// (i.e., the loan amount is astronomically large).  Callers must propagate
 /// this error rather than proceeding with the loan.
-pub fn compute_flash_fee(amount: i128, current_fee_bps: u32) -> Result<i128, crate::errors::PairError> {
+pub fn compute_flash_fee(
+    amount: i128,
+    current_fee_bps: u32,
+) -> Result<i128, crate::errors::PairError> {
     // Validate fee_bps does not exceed 10_000 (100%)
     if current_fee_bps > 10_000 {
         return Err(crate::errors::PairError::FlashLoanFeeTooHigh);

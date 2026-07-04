@@ -22,7 +22,9 @@ use errors::PairError;
 use events::PairEvents;
 use factory_client::FactoryClient;
 use math::MINIMUM_LIQUIDITY;
-use soroban_sdk::{contract, contractclient, contractimpl, token::TokenClient, Address, Bytes, Env};
+use soroban_sdk::{
+    contract, contractclient, contractimpl, token::TokenClient, Address, Bytes, Env,
+};
 use storage::{
     get_fee_state, get_pair_state, set_fee_state, set_pair_state, set_reentrancy_guard, FeeState,
     ReentrancyGuard,
@@ -280,11 +282,9 @@ impl Pair {
         //   swap_out = swap_in * fee_factor * reserve_out
         //              / (reserve_in * 10_000 + swap_in * fee_factor)
         let fee_factor = 10_000i128 - fee_bps as i128;
-        let amount_in_with_fee =
-            swap_in.checked_mul(fee_factor).ok_or(PairError::Overflow)?;
-        let swap_out_num = amount_in_with_fee
-            .checked_mul(reserve_out)
-            .ok_or(PairError::Overflow)?;
+        let amount_in_with_fee = swap_in.checked_mul(fee_factor).ok_or(PairError::Overflow)?;
+        let swap_out_num =
+            amount_in_with_fee.checked_mul(reserve_out).ok_or(PairError::Overflow)?;
         let swap_out_den = reserve_in
             .checked_mul(10_000)
             .ok_or(PairError::Overflow)?
@@ -344,11 +344,8 @@ impl Pair {
         let post_swap_state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
 
         // Map deposit amounts to (deposit_a, deposit_b) in pair storage order.
-        let (deposit_a, deposit_b) = if token_in_is_a {
-            (deposit_in, deposit_out)
-        } else {
-            (deposit_out, deposit_in)
-        };
+        let (deposit_a, deposit_b) =
+            if token_in_is_a { (deposit_in, deposit_out) } else { (deposit_out, deposit_in) };
 
         let lp_client = LpTokenClient::new(&env, &post_swap_state.lp_token);
         let total_supply = lp_client.total_supply();
@@ -386,19 +383,16 @@ impl Pair {
         lp_client.mint(&to, &lp_minted);
 
         // Update reserves: post-swap reserves + the deposit amounts.
-        let new_reserve_a = post_swap_state.reserve_a
-            .checked_add(deposit_a)
-            .ok_or(PairError::Overflow)?;
-        let new_reserve_b = post_swap_state.reserve_b
-            .checked_add(deposit_b)
-            .ok_or(PairError::Overflow)?;
+        let new_reserve_a =
+            post_swap_state.reserve_a.checked_add(deposit_a).ok_or(PairError::Overflow)?;
+        let new_reserve_b =
+            post_swap_state.reserve_b.checked_add(deposit_b).ok_or(PairError::Overflow)?;
 
         let mut updated_state = post_swap_state;
         updated_state.reserve_a = new_reserve_a;
         updated_state.reserve_b = new_reserve_b;
-        updated_state.k_last = new_reserve_a
-            .checked_mul(new_reserve_b)
-            .ok_or(PairError::Overflow)?;
+        updated_state.k_last =
+            new_reserve_a.checked_mul(new_reserve_b).ok_or(PairError::Overflow)?;
         updated_state.block_timestamp_last = env.ledger().timestamp();
 
         set_pair_state(&env, &updated_state);
@@ -527,19 +521,16 @@ impl Pair {
         };
 
         // Post-burn reserves are the baseline for the internal swap
-        let reserve_preferred_post_burn = reserve_preferred
-            .checked_sub(share_preferred)
-            .ok_or(PairError::Overflow)?;
-        let reserve_unwanted_post_burn = reserve_unwanted
-            .checked_sub(share_unwanted)
-            .ok_or(PairError::Overflow)?;
+        let reserve_preferred_post_burn =
+            reserve_preferred.checked_sub(share_preferred).ok_or(PairError::Overflow)?;
+        let reserve_unwanted_post_burn =
+            reserve_unwanted.checked_sub(share_unwanted).ok_or(PairError::Overflow)?;
 
         let fee_bps = dynamic_fee::compute_fee_bps(&fee_state) as i128;
         let fee_factor = 10_000i128 - fee_bps;
 
-        let amount_in_with_fee = share_unwanted
-            .checked_mul(fee_factor)
-            .ok_or(PairError::Overflow)?;
+        let amount_in_with_fee =
+            share_unwanted.checked_mul(fee_factor).ok_or(PairError::Overflow)?;
 
         let swap_numerator = amount_in_with_fee
             .checked_mul(reserve_preferred_post_burn)
@@ -557,18 +548,15 @@ impl Pair {
 
         let swap_out = swap_numerator / swap_denominator;
 
-        let total_out = share_preferred
-            .checked_add(swap_out)
-            .ok_or(PairError::Overflow)?;
+        let total_out = share_preferred.checked_add(swap_out).ok_or(PairError::Overflow)?;
 
         if total_out < min_amount_out {
             return Err(PairError::SlippageExceeded);
         }
 
         // Final reserves: unwanted is net-unchanged (burned share re-enters as swap input)
-        let reserve_preferred_final = reserve_preferred_post_burn
-            .checked_sub(swap_out)
-            .ok_or(PairError::Overflow)?;
+        let reserve_preferred_final =
+            reserve_preferred_post_burn.checked_sub(swap_out).ok_or(PairError::Overflow)?;
         let reserve_unwanted_final = reserve_unwanted;
 
         // K invariant check against post-burn baseline (swap leg must not violate K)
@@ -578,21 +566,17 @@ impl Pair {
             .checked_mul(100_000_000)
             .ok_or(PairError::Overflow)?;
 
-        let balance_preferred_adj = reserve_preferred_final
-            .checked_mul(10_000)
-            .ok_or(PairError::Overflow)?;
+        let balance_preferred_adj =
+            reserve_preferred_final.checked_mul(10_000).ok_or(PairError::Overflow)?;
 
         let balance_unwanted_adj = reserve_unwanted_final
             .checked_mul(10_000)
             .ok_or(PairError::Overflow)?
-            .checked_sub(
-                share_unwanted.checked_mul(fee_bps).ok_or(PairError::Overflow)?,
-            )
+            .checked_sub(share_unwanted.checked_mul(fee_bps).ok_or(PairError::Overflow)?)
             .ok_or(PairError::Overflow)?;
 
-        let k_after = balance_preferred_adj
-            .checked_mul(balance_unwanted_adj)
-            .ok_or(PairError::Overflow)?;
+        let k_after =
+            balance_preferred_adj.checked_mul(balance_unwanted_adj).ok_or(PairError::Overflow)?;
 
         if k_after < k_before {
             return Err(PairError::InvalidK);
@@ -609,10 +593,7 @@ impl Pair {
             state.reserve_b = reserve_preferred_final;
         }
 
-        state.k_last = state
-            .reserve_a
-            .checked_mul(state.reserve_b)
-            .ok_or(PairError::Overflow)?;
+        state.k_last = state.reserve_a.checked_mul(state.reserve_b).ok_or(PairError::Overflow)?;
         state.block_timestamp_last = env.ledger().timestamp();
 
         set_pair_state(&env, &state);

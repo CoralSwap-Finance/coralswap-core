@@ -1,8 +1,6 @@
 #![cfg(test)]
 
-use coralswap_mock_flash_receiver::{
-    malicious::MaliciousFlashReceiver, MockFlashReceiver,
-};
+use coralswap_mock_flash_receiver::{malicious::MaliciousFlashReceiver, MockFlashReceiver};
 
 use crate::{errors::PairError, Pair, PairClient};
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
@@ -112,9 +110,7 @@ fn flash_loan_honest_receiver_repays() {
     setup.token_a_admin.mint(&setup.honest_receiver, &fee);
 
     let repay_action = Bytes::from_slice(&setup.env, b"repay");
-    setup
-        .pair_client
-        .flash_loan(&setup.honest_receiver, &loan_amount, &0, &repay_action);
+    setup.pair_client.flash_loan(&setup.honest_receiver, &loan_amount, &0, &repay_action);
 
     let (res_a, res_b, _) = setup.pair_client.get_reserves();
     assert_eq!(res_a, initial_reserve + fee);
@@ -128,12 +124,7 @@ fn flash_loan_reentrancy_swap_attack_reverts() {
     setup.fund_pool(1_000_000);
 
     let attack = Bytes::from_slice(&setup.env, b"attack_swap");
-    let result = setup.pair_client.try_flash_loan(
-        &setup.malicious_receiver,
-        &10_000,
-        &0,
-        &attack,
-    );
+    let result = setup.pair_client.try_flash_loan(&setup.malicious_receiver, &10_000, &0, &attack);
 
     assert!(
         is_reentrancy_error(result),
@@ -148,17 +139,9 @@ fn flash_loan_reentrancy_nested_flash_attack_reverts() {
     setup.fund_pool(1_000_000);
 
     let attack = Bytes::from_slice(&setup.env, b"attack_flash");
-    let result = setup.pair_client.try_flash_loan(
-        &setup.malicious_receiver,
-        &10_000,
-        &0,
-        &attack,
-    );
+    let result = setup.pair_client.try_flash_loan(&setup.malicious_receiver, &10_000, &0, &attack);
 
-    assert!(
-        is_reentrancy_error(result),
-        "nested flash_loan during callback must revert cleanly"
-    );
+    assert!(is_reentrancy_error(result), "nested flash_loan during callback must revert cleanly");
 }
 
 #[test]

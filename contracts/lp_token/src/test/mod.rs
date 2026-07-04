@@ -1,19 +1,12 @@
 #![cfg(test)]
 
-use crate::{LpToken, LpTokenClient};
-use crate::storage::LpTokenKey;
 use crate::errors::LpTokenError;
-use soroban_sdk::{
-    testutils::Address as _,
-    Address,
-    Bytes,
-    BytesN,
-    Env,
-    Ledger,
-    String,
-    xdr::ToXdr,
-};
+use crate::storage::LpTokenKey;
+use crate::{LpToken, LpTokenClient};
 use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signer};
+use soroban_sdk::{
+    testutils::Address as _, xdr::ToXdr, Address, Bytes, BytesN, Env, Ledger, String,
+};
 
 #[test]
 fn test_contract_compiles() {
@@ -52,9 +45,7 @@ fn test_approve_allows_future_expiration_and_transfer_from_deducts_allowance() {
     assert_eq!(client.allowance(&owner, &spender), 100);
 
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&LpTokenKey::Balance(owner.clone()), &100_i128);
+        env.storage().persistent().set(&LpTokenKey::Balance(owner.clone()), &100_i128);
     });
 
     client.transfer_from(&spender, &owner, &receiver, &25_i128).unwrap();
@@ -80,7 +71,14 @@ fn owner_address(env: &Env, keypair: &Keypair) -> Address {
     Address::Account(pk)
 }
 
-fn permit_digest(env: &Env, owner: &Address, spender: &Address, amount: i128, nonce: u64, deadline: u32) -> BytesN<32> {
+fn permit_digest(
+    env: &Env,
+    owner: &Address,
+    spender: &Address,
+    amount: i128,
+    nonce: u64,
+    deadline: u32,
+) -> BytesN<32> {
     let mut data = Bytes::new(env);
     data.append(&owner.clone().to_xdr(env));
     data.append(&spender.clone().to_xdr(env));
@@ -90,7 +88,15 @@ fn permit_digest(env: &Env, owner: &Address, spender: &Address, amount: i128, no
     env.crypto().sha256(&data)
 }
 
-fn sign_permit(env: &Env, keypair: &Keypair, owner: &Address, spender: &Address, amount: i128, nonce: u64, deadline: u32) -> BytesN<64> {
+fn sign_permit(
+    env: &Env,
+    keypair: &Keypair,
+    owner: &Address,
+    spender: &Address,
+    amount: i128,
+    nonce: u64,
+    deadline: u32,
+) -> BytesN<64> {
     let digest = permit_digest(env, owner, spender, amount, nonce, deadline);
     let signature = keypair.sign(digest.as_ref());
     BytesN::from_array(env, &signature.to_bytes())
@@ -102,7 +108,7 @@ fn test_permit_approves_spender_without_on_chain_approval() {
     env.mock_all_auths_allowing_non_root_auth();
     let contract_id = env.register_contract(None, LpToken);
     let client = LpTokenClient::new(&env, &contract_id);
-    
+
     let owner_keys = make_keypair();
     let owner = owner_address(&env, &owner_keys);
     let spender = Address::generate(&env);
@@ -112,9 +118,7 @@ fn test_permit_approves_spender_without_on_chain_approval() {
 
     // Mint tokens to owner
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&LpTokenKey::Balance(owner.clone()), &amount);
+        env.storage().persistent().set(&LpTokenKey::Balance(owner.clone()), &amount);
     });
 
     // Check initial nonce is 0
@@ -142,7 +146,7 @@ fn test_permit_expired_deadline_reverts() {
     env.mock_all_auths_allowing_non_root_auth();
     let contract_id = env.register_contract(None, LpToken);
     let client = LpTokenClient::new(&env, &contract_id);
-    
+
     let owner_keys = make_keypair();
     let owner = owner_address(&env, &owner_keys);
     let spender = Address::generate(&env);
@@ -162,7 +166,7 @@ fn test_permit_replayed_nonce_reverts() {
     env.mock_all_auths_allowing_non_root_auth();
     let contract_id = env.register_contract(None, LpToken);
     let client = LpTokenClient::new(&env, &contract_id);
-    
+
     let owner_keys = make_keypair();
     let owner = owner_address(&env, &owner_keys);
     let spender = Address::generate(&env);
@@ -191,7 +195,7 @@ fn test_permit_invalid_signature_reverts() {
     env.mock_all_auths_allowing_non_root_auth();
     let contract_id = env.register_contract(None, LpToken);
     let client = LpTokenClient::new(&env, &contract_id);
-    
+
     let owner_keys = make_keypair();
     let owner = owner_address(&env, &owner_keys);
     let spender = Address::generate(&env);
@@ -200,7 +204,8 @@ fn test_permit_invalid_signature_reverts() {
     let nonce = 0;
 
     // Sign for a different amount
-    let bad_signature = sign_permit(&env, &owner_keys, &owner, &spender, amount + 1, nonce, deadline);
+    let bad_signature =
+        sign_permit(&env, &owner_keys, &owner, &spender, amount + 1, nonce, deadline);
 
     // Try to use bad signature with original amount
     let result = client.try_permit(&owner, &spender, &amount, &deadline, &bad_signature);

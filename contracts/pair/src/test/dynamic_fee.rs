@@ -566,10 +566,7 @@ fn test_swap_updates_volatility_accumulator() {
     use crate::{Pair, PairClient};
     use coralswap_lp_token::{LpToken, LpTokenClient};
     use mock_token_for_volatility_test::{MockToken, MockTokenClient};
-    use soroban_sdk::{
-        testutils::Address as _,
-        Address, Env, String,
-    };
+    use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
     let env = Env::default();
     env.mock_all_auths_allowing_non_root_auth();
@@ -614,16 +611,16 @@ fn test_swap_updates_volatility_accumulator() {
     // Perform a large swap to create volatility
     let swap_amount = 100_000i128;
     token_a.transfer(&user, &pair_id, &swap_amount);
-    
+
     // Request a reasonable output amount (less than what's available)
     let (reserve_a, reserve_b, _) = pair_client.get_reserves();
     let amount_out = reserve_b / 20; // Request 5% of reserve_b
-    
+
     pair_client.swap(&0, &amount_out, &user);
 
     // Get fee after first swap - volatility should have increased
     let fee_after_swap1 = pair_client.get_current_fee_bps();
-    
+
     // Perform another large swap in opposite direction
     token_b.transfer(&user, &pair_id, &swap_amount);
     let (reserve_a2, reserve_b2, _) = pair_client.get_reserves();
@@ -640,7 +637,7 @@ fn test_swap_updates_volatility_accumulator() {
         initial_fee,
         fee_after_swap1
     );
-    
+
     assert!(
         fee_after_swap2 >= fee_after_swap1,
         "Fee should continue to increase with more volatility (was {}, now {})",
@@ -658,10 +655,7 @@ fn test_multiple_swaps_accumulate_volatility() {
     use crate::{Pair, PairClient};
     use coralswap_lp_token::{LpToken, LpTokenClient};
     use mock_token_for_volatility_test::{MockToken, MockTokenClient};
-    use soroban_sdk::{
-        testutils::Address as _,
-        Address, Env, String,
-    };
+    use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
     let env = Env::default();
     env.mock_all_auths_allowing_non_root_auth();
@@ -704,7 +698,7 @@ fn test_multiple_swaps_accumulate_volatility() {
     // Perform multiple swaps to accumulate volatility
     for i in 0..5 {
         let swap_amount = 500_000i128;
-        
+
         if i % 2 == 0 {
             // Swap A for B
             token_a.transfer(&user, &pair_id, &swap_amount);
