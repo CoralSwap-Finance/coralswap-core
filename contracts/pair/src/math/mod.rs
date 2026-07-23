@@ -66,6 +66,100 @@ pub fn sqrt(value: i128) -> i128 {
     x
 }
 
+/// Constant-product output amount (Uniswap V2 style) for a swap of
+/// `amount_in` against reserves `(reserve_in, reserve_out)` with a
+/// basis-point fee `fee_bps`.
+///
+/// This is the single source of truth for the swap output used by the
+/// single-sided deposit path and by the fuzz suite.
+///
+/// # Errors
+/// - `PairError::Overflow` on any intermediate arithmetic overflow.
+/// - `PairError::InsufficientLiquidity` if the denominator is zero.
+pub fn get_amount_out(
+    amount_in: i128,
+    reserve_in: i128,
+    reserve_out: i128,
+    fee_bps: u32,
+) -> Result<i128, PairError> {
+    let fee_factor = BPS_DENOMINATOR.checked_sub(fee_bps as i128).ok_or(PairError::Overflow)?;
+    let amount_in_with_fee = amount_in.checked_mul(fee_factor).ok_or(PairError::Overflow)?;
+    let numerator = amount_in_with_fee.checked_mul(reserve_out).ok_or(PairError::Overflow)?;
+    let denominator = reserve_in
+        .checked_mul(BPS_DENOMINATOR)
+        .ok_or(PairError::Overflow)?
+        .checked_add(amount_in_with_fee)
+        .ok_or(PairError::Overflow)?;
+    if denominator == 0 {
+        return Err(PairError::InsufficientLiquidity);
+    }
+    Ok(numerator / denominator)
+}
+
+/// LP tokens minted for the very first deposit into an empty pool:
+/// `sqrt(amount_a * amount_b) - MINIMUM_LIQUIDITY`.
+///
+/// Returns the raw liquidity value; callers still enforce `> 0`.
+///
+/// # Errors
+/// - `PairError::Overflow` if the product overflows.
+/// - `PairError::InsufficientLiquidityMinted` if subtracting the locked
+///   minimum liquidity underflows (deposit too small).
+pub fn initial_liquidity(amount_a: i128, amount_b: i128) -> Result<i128, PairError> {
+    let product = amount_a.checked_mul(amount_b).ok_or(PairError::Overflow)?;
+    sqrt(product).checked_sub(MINIMUM_LIQUIDITY).ok_or(PairError::InsufficientLiquidityMinted)
+}
+
+/// LP tokens minted for a subsequent proportional deposit given the current
+/// reserves and total LP supply: `min(amount_a * supply / reserve_a,
+/// amount_b * supply / reserve_b)`.
+///
+/// # Errors
+/// - `PairError::Overflow` on multiplication overflow or a zero divisor.
+pub fn subsequent_liquidity(
+    amount_a: i128,
+    amount_b: i128,
+    reserve_a: i128,
+    reserve_b: i128,
+    total_supply: i128,
+) -> Result<i128, PairError> {
+    let liquidity_a = amount_a
+        .checked_mul(total_supply)
+        .ok_or(PairError::Overflow)?
+        .checked_div(reserve_a)
+        .ok_or(PairError::Overflow)?;
+    let liquidity_b = amount_b
+        .checked_mul(total_supply)
+        .ok_or(PairError::Overflow)?
+        .checked_div(reserve_b)
+        .ok_or(PairError::Overflow)?;
+    Ok(liquidity_a.min(liquidity_b))
+}
+
+/// Underlying token amounts returned when burning `lp_amount` LP tokens:
+/// `(lp_amount * reserve_a / supply, lp_amount * reserve_b / supply)`.
+///
+/// # Errors
+/// - `PairError::Overflow` on multiplication overflow or a zero divisor.
+pub fn burn_amounts(
+    lp_amount: i128,
+    reserve_a: i128,
+    reserve_b: i128,
+    total_supply: i128,
+) -> Result<(i128, i128), PairError> {
+    let amount_a = lp_amount
+        .checked_mul(reserve_a)
+        .ok_or(PairError::Overflow)?
+        .checked_div(total_supply)
+        .ok_or(PairError::Overflow)?;
+    let amount_b = lp_amount
+        .checked_mul(reserve_b)
+        .ok_or(PairError::Overflow)?
+        .checked_div(total_supply)
+        .ok_or(PairError::Overflow)?;
+    Ok((amount_a, amount_b))
+}
+
 /// Integer square root for U256 values using Newton's method.
 fn sqrt_u256(value: U256) -> U256 {
     if value == U256::ZERO {
