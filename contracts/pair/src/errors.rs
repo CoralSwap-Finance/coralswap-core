@@ -24,6 +24,7 @@ pub enum PairError {
     FlashCallbackFailed = 117,
     FlashLoanFeeTooHigh = 118,
     SlippageExceeded = 119,
+    InvalidStaleThreshold = 120,
 }
 
 #[contracterror]

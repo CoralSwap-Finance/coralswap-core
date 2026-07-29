@@ -137,6 +137,7 @@ fn test_get_current_fee_bps_with_state() {
         cooldown_divisor: 2,
         last_fee_update: 0,
         decay_threshold_blocks: 100,
+        stale_threshold: crate::dynamic_fee::DEFAULT_STALE_LEDGER_THRESHOLD,
     };
 
     env.as_contract(&contract_id, || {

@@ -6,6 +6,15 @@ use soroban_sdk::Env;
 /// Fixed-point scale factor (1e14) — must match `math::SCALE`.
 const SCALE: i128 = 100_000_000_000_000;
 
+/// Default EMA staleness decay threshold in ledgers.
+///
+/// When a pool's EMA has not been updated for this many ledgers,
+/// the volatility accumulator begins exponential time decay. This prevents
+/// idle pools from charging inflated fees.
+///
+/// Default value: 100 ledgers (~8.3 minutes at Stellar's ~5s/ledger cadence).
+pub const DEFAULT_STALE_LEDGER_THRESHOLD: u32 = 100;
+
 /// Updates the EMA volatility accumulator with a new price observation.
 ///
 /// Uses size-weighted EMA so that large trades move the accumulator more than
@@ -116,10 +125,14 @@ pub fn compute_fee_bps(fee_state: &FeeState) -> u32 {
 }
 
 /// Decays the volatility accumulator if the pool has been idle.
+///
+/// Uses the configurable `stale_threshold` field to determine when
+/// the pool should begin time-based decay. The threshold can be updated
+/// via `Pair::set_stale_threshold()` (factory-admin-gated).
 pub fn decay_stale_ema(env: &Env, fee_state: &mut FeeState) {
     let current_ledger = env.ledger().sequence() as u64;
 
-    if current_ledger > fee_state.last_fee_update + fee_state.decay_threshold_blocks {
+    if current_ledger > fee_state.last_fee_update + (fee_state.stale_threshold as u64) {
         apply_time_decay(env, fee_state, current_ledger);
     }
 }
@@ -144,6 +157,7 @@ mod tests {
             cooldown_divisor: 2,
             last_fee_update: 0,
             decay_threshold_blocks: 100,
+            stale_threshold: DEFAULT_STALE_LEDGER_THRESHOLD,
         }
     }
 
