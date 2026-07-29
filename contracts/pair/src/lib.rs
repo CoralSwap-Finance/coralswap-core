@@ -111,6 +111,20 @@ impl Pair {
         to.require_auth();
 
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+
+        // ── Update oracle cumulative prices BEFORE state changes ───────────────
+        // Update using time elapsed and reserves BEFORE the mint operation
+        let current_timestamp = env.ledger().timestamp();
+        let time_elapsed = current_timestamp.saturating_sub(state.block_timestamp_last);
+        oracle::update_cumulative_prices(
+            &env,
+            state.reserve_a,
+            state.reserve_b,
+            time_elapsed,
+            &mut state.price_a_cumulative,
+            &mut state.price_b_cumulative,
+        );
+
         let contract = env.current_contract_address();
 
         let balance_a = TokenClient::new(&env, &state.token_a).balance(&contract);
@@ -411,6 +425,20 @@ impl Pair {
         to.require_auth();
 
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+
+        // ── Update oracle cumulative prices BEFORE state changes ───────────────
+        // Update using time elapsed and reserves BEFORE the burn operation
+        let current_timestamp = env.ledger().timestamp();
+        let time_elapsed = current_timestamp.saturating_sub(state.block_timestamp_last);
+        oracle::update_cumulative_prices(
+            &env,
+            state.reserve_a,
+            state.reserve_b,
+            time_elapsed,
+            &mut state.price_a_cumulative,
+            &mut state.price_b_cumulative,
+        );
+
         let contract = env.current_contract_address();
 
         let lp_balance = TokenClient::new(&env, &state.lp_token).balance(&contract);
@@ -479,6 +507,21 @@ impl Pair {
         if lp_amount <= 0 || min_amount_out <= 0 {
             return Err(PairError::InvalidInput);
         }
+
+        // ── Update oracle cumulative prices BEFORE state changes ───────────────
+        // Update using time elapsed and reserves BEFORE the burn_single_side
+        // operation. This path implements burn logic inline (it does not call
+        // burn()), so it needs its own oracle update.
+        let current_timestamp = env.ledger().timestamp();
+        let time_elapsed = current_timestamp.saturating_sub(state.block_timestamp_last);
+        oracle::update_cumulative_prices(
+            &env,
+            state.reserve_a,
+            state.reserve_b,
+            time_elapsed,
+            &mut state.price_a_cumulative,
+            &mut state.price_b_cumulative,
+        );
 
         let prefer_a = if preferred_token == state.token_a {
             true
@@ -705,6 +748,21 @@ impl Pair {
         if amount_a_out >= pair.reserve_a || amount_b_out >= pair.reserve_b {
             return Err(PairError::InsufficientLiquidity);
         }
+
+        // ── Update oracle cumulative prices BEFORE state changes ───────────────
+        // This follows the Uniswap V2 cumulative-price-accumulator pattern:
+        // update using time elapsed and reserves BEFORE the current swap's
+        // state change is applied.
+        let current_timestamp = env.ledger().timestamp();
+        let time_elapsed = current_timestamp.saturating_sub(pair.block_timestamp_last);
+        oracle::update_cumulative_prices(
+            env,
+            pair.reserve_a,
+            pair.reserve_b,
+            time_elapsed,
+            &mut pair.price_a_cumulative,
+            &mut pair.price_b_cumulative,
+        );
 
         // Store pre-swap reserves for price delta calculation
         let reserve_a_before = pair.reserve_a;

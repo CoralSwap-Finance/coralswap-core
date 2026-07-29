@@ -4,7 +4,6 @@ use soroban_sdk::Env;
 
 pub const MAX_TWAP_WINDOW: u32 = 86400;
 
-#[allow(dead_code)]
 pub fn update_cumulative_prices(
     env: &Env,
     reserve_a: i128,
