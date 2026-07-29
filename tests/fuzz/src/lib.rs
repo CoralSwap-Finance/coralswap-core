@@ -1,56 +1,47 @@
 //! Fuzz / property-based tests for CoralSwap Pair mint, burn, and swap math.
 //!
+//! These tests drive the **real** AMM math shipped in the pair contract
+//! (`coralswap_pair::math`) rather than a hand-rolled reimplementation, so a
+//! bug in the shipped constant-product code can actually be caught here
+//! (issue #276).
+//!
 //! Run with:
 //!   cargo test -p coralswap-fuzz --features fuzz
 //!
 //! Each proptest macro generates 10 000 random inputs by default (configured
-//! via `ProptestConfig::with_cases`).  Any invariant violation prints the
-//! exact shrunk counter-example so the failure is immediately reproducible.
+//! via `ProptestConfig::with_cases`); override with `PROPTEST_CASES=<n>` for a
+//! longer campaign.  Any invariant violation prints the exact shrunk
+//! counter-example so the failure is immediately reproducible.
 
 #![cfg(feature = "fuzz")]
 #![allow(dead_code)] // helpers are used inside proptest! macros
 
 use proptest::prelude::*;
 
-// ── Constants (mirror contracts/pair/src/math/mod.rs) ────────────────────────
+// The fuzz suite exercises the *real* shipped AMM math from the pair contract
+// (contracts/pair/src/math), not a hand-rolled reimplementation. See issue #276.
+use coralswap_pair::math;
 
-const MINIMUM_LIQUIDITY: i128 = 1_000;
-const BPS_DENOMINATOR: i128 = 10_000;
+// ── Constants (from the real contract math module) ───────────────────────────
 
-// ── Pure math helpers (mirror on-chain logic) ─────────────────────────────────
+const MINIMUM_LIQUIDITY: i128 = math::MINIMUM_LIQUIDITY;
 
-fn sqrt(value: i128) -> i128 {
-    if value <= 0 {
-        return 0;
-    }
-    let mut x = value;
-    let mut y = (x + 1) / 2;
-    while y < x {
-        x = y;
-        y = (x + value / x) / 2;
-    }
-    x
-}
+// ── Adapters over the real contract math ──────────────────────────────────────
+//
+// The proptest bodies below are written against `Option`-returning helpers
+// (None == "skip this input"). The contract functions return
+// `Result<_, PairError>`; these thin adapters map an error or a non-positive
+// (dust) result to `None`, preserving the original skip semantics while
+// delegating *all* arithmetic to `coralswap_pair::math`.
 
-/// Uniswap V2-style constant-product output amount.
-/// Returns None on invalid inputs or overflow.
+/// Uniswap V2-style constant-product output amount via the real contract math.
 fn get_amount_out(
     amount_in: i128,
     reserve_in: i128,
     reserve_out: i128,
     fee_bps: u32,
 ) -> Option<i128> {
-    if amount_in <= 0 || reserve_in <= 0 || reserve_out <= 0 {
-        return None;
-    }
-    let fee_factor = BPS_DENOMINATOR.checked_sub(fee_bps as i128)?;
-    let amount_in_with_fee = amount_in.checked_mul(fee_factor)?;
-    let numerator = amount_in_with_fee.checked_mul(reserve_out)?;
-    let denominator = reserve_in.checked_mul(BPS_DENOMINATOR)?.checked_add(amount_in_with_fee)?;
-    if denominator == 0 {
-        return None;
-    }
-    let out = numerator / denominator;
+    let out = math::get_amount_out(amount_in, reserve_in, reserve_out, fee_bps).ok()?;
     if out <= 0 {
         None
     } else {
@@ -58,10 +49,9 @@ fn get_amount_out(
     }
 }
 
-/// LP tokens minted for the initial deposit.
+/// LP tokens minted for the initial deposit via the real contract math.
 fn initial_liquidity(amount_a: i128, amount_b: i128) -> Option<i128> {
-    let product = amount_a.checked_mul(amount_b)?;
-    let liq = sqrt(product).checked_sub(MINIMUM_LIQUIDITY)?;
+    let liq = math::initial_liquidity(amount_a, amount_b).ok()?;
     if liq <= 0 {
         None
     } else {
@@ -69,7 +59,7 @@ fn initial_liquidity(amount_a: i128, amount_b: i128) -> Option<i128> {
     }
 }
 
-/// LP tokens minted for a subsequent deposit given current reserves and supply.
+/// LP tokens minted for a subsequent deposit via the real contract math.
 fn subsequent_liquidity(
     amount_a: i128,
     amount_b: i128,
@@ -77,12 +67,8 @@ fn subsequent_liquidity(
     reserve_b: i128,
     total_supply: i128,
 ) -> Option<i128> {
-    if reserve_a <= 0 || reserve_b <= 0 || total_supply <= 0 {
-        return None;
-    }
-    let liq_a = amount_a.checked_mul(total_supply)? / reserve_a;
-    let liq_b = amount_b.checked_mul(total_supply)? / reserve_b;
-    let liq = liq_a.min(liq_b);
+    let liq =
+        math::subsequent_liquidity(amount_a, amount_b, reserve_a, reserve_b, total_supply).ok()?;
     if liq <= 0 {
         None
     } else {
@@ -90,18 +76,14 @@ fn subsequent_liquidity(
     }
 }
 
-/// Tokens returned when burning `lp_amount` from a pool.
+/// Tokens returned when burning `lp_amount` from a pool, via the real contract math.
 fn burn_amounts(
     lp_amount: i128,
     reserve_a: i128,
     reserve_b: i128,
     total_supply: i128,
 ) -> Option<(i128, i128)> {
-    if total_supply <= 0 || lp_amount <= 0 {
-        return None;
-    }
-    let a = lp_amount.checked_mul(reserve_a)? / total_supply;
-    let b = lp_amount.checked_mul(reserve_b)? / total_supply;
+    let (a, b) = math::burn_amounts(lp_amount, reserve_a, reserve_b, total_supply).ok()?;
     if a <= 0 || b <= 0 {
         None
     } else {
