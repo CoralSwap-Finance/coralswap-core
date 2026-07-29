@@ -4,12 +4,12 @@
 extern crate std;
 
 mod dynamic_fee;
-mod errors;
+pub mod errors;
 mod events;
 mod factory_client;
 mod fee_decay;
 mod flash_loan;
-mod math;
+pub mod math;
 mod oracle;
 mod reentrancy;
 mod storage;
@@ -126,27 +126,17 @@ impl Pair {
         let liquidity;
 
         if total_supply == 0 {
-            let product = amount_a.checked_mul(amount_b).ok_or(PairError::Overflow)?;
-
-            liquidity = math::sqrt(product)
-                .checked_sub(MINIMUM_LIQUIDITY)
-                .ok_or(PairError::InsufficientLiquidityMinted)?;
+            liquidity = math::initial_liquidity(amount_a, amount_b)?;
 
             lp_client.mint(&contract, &MINIMUM_LIQUIDITY);
         } else {
-            let liquidity_a = amount_a
-                .checked_mul(total_supply)
-                .ok_or(PairError::Overflow)?
-                .checked_div(state.reserve_a)
-                .ok_or(PairError::Overflow)?;
-
-            let liquidity_b = amount_b
-                .checked_mul(total_supply)
-                .ok_or(PairError::Overflow)?
-                .checked_div(state.reserve_b)
-                .ok_or(PairError::Overflow)?;
-
-            liquidity = liquidity_a.min(liquidity_b);
+            liquidity = math::subsequent_liquidity(
+                amount_a,
+                amount_b,
+                state.reserve_a,
+                state.reserve_b,
+                total_supply,
+            )?;
         }
 
         if liquidity <= 0 {
@@ -281,20 +271,7 @@ impl Pair {
         // Constant-product formula:
         //   swap_out = swap_in * fee_factor * reserve_out
         //              / (reserve_in * 10_000 + swap_in * fee_factor)
-        let fee_factor = 10_000i128 - fee_bps as i128;
-        let amount_in_with_fee = swap_in.checked_mul(fee_factor).ok_or(PairError::Overflow)?;
-        let swap_out_num =
-            amount_in_with_fee.checked_mul(reserve_out).ok_or(PairError::Overflow)?;
-        let swap_out_den = reserve_in
-            .checked_mul(10_000)
-            .ok_or(PairError::Overflow)?
-            .checked_add(amount_in_with_fee)
-            .ok_or(PairError::Overflow)?;
-
-        if swap_out_den == 0 {
-            return Err(PairError::InsufficientLiquidity);
-        }
-        let swap_out = swap_out_num / swap_out_den;
+        let swap_out = math::get_amount_out(swap_in, reserve_in, reserve_out, fee_bps)?;
 
         if swap_out <= 0 {
             return Err(PairError::InsufficientLiquidity);
@@ -356,19 +333,13 @@ impl Pair {
             return Err(PairError::InsufficientLiquidityMinted);
         }
 
-        let liquidity_a = deposit_a
-            .checked_mul(total_supply)
-            .ok_or(PairError::Overflow)?
-            .checked_div(post_swap_state.reserve_a)
-            .ok_or(PairError::Overflow)?;
-
-        let liquidity_b = deposit_b
-            .checked_mul(total_supply)
-            .ok_or(PairError::Overflow)?
-            .checked_div(post_swap_state.reserve_b)
-            .ok_or(PairError::Overflow)?;
-
-        let lp_minted = liquidity_a.min(liquidity_b);
+        let lp_minted = math::subsequent_liquidity(
+            deposit_a,
+            deposit_b,
+            post_swap_state.reserve_a,
+            post_swap_state.reserve_b,
+            total_supply,
+        )?;
 
         if lp_minted <= 0 {
             return Err(PairError::InsufficientLiquidityMinted);
@@ -421,17 +392,8 @@ impl Pair {
             return Err(PairError::InsufficientLiquidityBurned);
         }
 
-        let amount_a = lp_balance
-            .checked_mul(state.reserve_a)
-            .ok_or(PairError::Overflow)?
-            .checked_div(total_supply)
-            .ok_or(PairError::Overflow)?;
-
-        let amount_b = lp_balance
-            .checked_mul(state.reserve_b)
-            .ok_or(PairError::Overflow)?
-            .checked_div(total_supply)
-            .ok_or(PairError::Overflow)?;
+        let (amount_a, amount_b) =
+            math::burn_amounts(lp_balance, state.reserve_a, state.reserve_b, total_supply)?;
 
         if amount_a <= 0 || amount_b <= 0 {
             return Err(PairError::InsufficientLiquidityBurned);
