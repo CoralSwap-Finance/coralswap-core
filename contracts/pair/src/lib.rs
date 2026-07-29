@@ -111,6 +111,8 @@ impl Pair {
     pub fn mint(env: Env, to: Address) -> Result<i128, PairError> {
         to.require_auth();
 
+        let _guard = reentrancy::ReentrancyGuard::acquire(&env)?;
+
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
         let contract = env.current_contract_address();
 
@@ -382,6 +384,8 @@ impl Pair {
     pub fn burn(env: Env, to: Address) -> Result<(i128, i128), PairError> {
         to.require_auth();
 
+        let _guard = reentrancy::ReentrancyGuard::acquire(&env)?;
+
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
         let contract = env.current_contract_address();
 
@@ -634,6 +638,7 @@ impl Pair {
 
     /// Syncs reserves to actual token balances and updates the oracle timestamp.
     pub fn sync(env: Env) -> Result<(), PairError> {
+        let _guard = reentrancy::ReentrancyGuard::acquire(&env)?;
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
         let contract = env.current_contract_address();
 

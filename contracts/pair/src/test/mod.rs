@@ -20,7 +20,7 @@
 
 mod burn;
 mod dynamic_fee;
-mod events;
+//mod events;
 mod flash_loan;
 mod initialize;
 mod mint;
