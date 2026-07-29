@@ -17,7 +17,7 @@ mod storage;
 #[cfg(test)]
 mod test;
 
-use dynamic_fee::compute_fee_bps;
+use dynamic_fee::{compute_fee_bps, DEFAULT_STALE_LEDGER_THRESHOLD};
 use errors::PairError;
 use events::PairEvents;
 use factory_client::FactoryClient;
@@ -89,6 +89,7 @@ impl Pair {
             cooldown_divisor: 2,
             last_fee_update: 0,
             decay_threshold_blocks: 100,
+            stale_threshold: DEFAULT_STALE_LEDGER_THRESHOLD,
         };
         set_fee_state(&env, &fee_state);
 
@@ -799,6 +800,65 @@ impl Pair {
             fee_bps,
             to,
         );
+
+        Ok(())
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Admin: Configure Dynamic Fee Parameters
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Sets the EMA staleness decay threshold (in ledgers).
+    ///
+    /// The dynamic fee engine begins exponential time-based decay of the
+    /// volatility accumulator when a pool has been idle (no swaps) for this
+    /// many ledgers. This prevents idle pools from perpetually charging
+    /// inflated fees based on stale historical volatility.
+    ///
+    /// # Authorization
+    /// This function requires authorization from the factory's admin signers.
+    /// The factory is determined at initialization time.
+    ///
+    /// # Parameters
+    /// - `new_threshold`: New staleness threshold in ledgers
+    ///   - Minimum: 1 (decay starts after next ledger)
+    ///   - Maximum: 100,000 (~11.6 days at 5s/ledger)
+    ///   - Typical: 100–1,000 ledgers
+    ///
+    /// # Validation
+    /// Returns `InvalidStaleThreshold` if:
+    /// - `new_threshold == 0` (must be at least 1)
+    /// - `new_threshold > 100_000` (capped for safety)
+    ///
+    /// # Event
+    /// Emits `stale_threshold_updated` with the new threshold on success.
+    ///
+    /// # Backward Compatibility
+    /// Existing pools remain unaffected until this function is explicitly called.
+    /// Default behavior uses `DEFAULT_STALE_LEDGER_THRESHOLD` (100 ledgers).
+    pub fn set_stale_threshold(env: Env, new_threshold: u32) -> Result<(), PairError> {
+        // Authorize against the factory's admin signers via cross-contract call.
+        // We retrieve the factory address from pair state, then delegate auth check
+        // to the factory (which implements governance::verify_multisig internally).
+        let pair = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+        let mut fee_state = get_fee_state(&env).ok_or(PairError::NotInitialized)?;
+
+        // Require authorization from the factory.
+        // The factory contract is responsible for managing its signers and
+        // enforcing multisig checks. Here we simply require auth from the factory address.
+        pair.factory.require_auth();
+
+        // Validate the new threshold is in the safe range [1, 100_000].
+        if new_threshold == 0 || new_threshold > 100_000 {
+            return Err(PairError::InvalidStaleThreshold);
+        }
+
+        // Update the stale threshold.
+        fee_state.stale_threshold = new_threshold;
+        set_fee_state(&env, &fee_state);
+
+        // Emit event for off-chain indexing.
+        PairEvents::stale_threshold_updated(&env, new_threshold);
 
         Ok(())
     }
