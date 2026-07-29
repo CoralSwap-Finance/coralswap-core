@@ -1,7 +1,10 @@
 use crate::errors::PairError;
 use crate::{Pair, PairClient};
 use coralswap_lp_token::{LpToken, LpTokenClient};
-use soroban_sdk::{testutils::Address as _, Address, Env, String};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Address, Env, String,
+};
 
 /// Helper to deploy and initialize pair for testing
 fn setup_pair(env: &Env) -> (PairClient<'static>, Address, Address, Address, Address) {
@@ -72,7 +75,7 @@ fn test_set_stale_threshold_validation_zero_fails() {
 
     assert!(result.is_err());
     if let Err(e) = result {
-        assert_eq!(e, PairError::InvalidStaleThreshold);
+        assert_eq!(e, Ok(PairError::InvalidStaleThreshold));
     }
 }
 
@@ -88,7 +91,7 @@ fn test_set_stale_threshold_validation_exceeds_max() {
 
     assert!(result.is_err());
     if let Err(e) = result {
-        assert_eq!(e, PairError::InvalidStaleThreshold);
+        assert_eq!(e, Ok(PairError::InvalidStaleThreshold));
     }
 }
 
@@ -218,8 +221,7 @@ fn test_set_stale_threshold_invalid_values() {
         let result = pair_client.try_set_stale_threshold(&threshold);
         assert!(result.is_err(), "Should reject invalid threshold: {}", threshold);
         if let Err(e) = result {
-            assert_eq!(e, PairError::InvalidStaleThreshold);
+            assert_eq!(e, Ok(PairError::InvalidStaleThreshold));
         }
     }
 }
-

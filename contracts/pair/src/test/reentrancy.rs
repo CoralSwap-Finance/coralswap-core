@@ -1,7 +1,7 @@
 #![cfg(test)]
 
-use soroban_sdk::{contract, contractimpl, Address, Env};
 use soroban_sdk::testutils::Address as _;
+use soroban_sdk::{contract, contractimpl, Address, Env};
 
 use crate::{errors::PairError, reentrancy};
 

@@ -7,11 +7,11 @@ use soroban_sdk::Env;
 const SCALE: i128 = 100_000_000_000_000;
 
 /// Default EMA staleness decay threshold in ledgers.
-/// 
+///
 /// When a pool's EMA has not been updated for this many ledgers,
 /// the volatility accumulator begins exponential time decay. This prevents
 /// idle pools from charging inflated fees.
-/// 
+///
 /// Default value: 100 ledgers (~8.3 minutes at Stellar's ~5s/ledger cadence).
 pub const DEFAULT_STALE_LEDGER_THRESHOLD: u32 = 100;
 

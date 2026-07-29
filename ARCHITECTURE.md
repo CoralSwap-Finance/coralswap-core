@@ -73,7 +73,7 @@ Each Pair contract holds reserves of two tokens and implements the constant-prod
 - **Mint**: Accepts token deposits and mints LP shares proportional to the deposit. On first mint, `MINIMUM_LIQUIDITY` shares are locked to the contract itself.
 - **Burn**: Burns LP tokens and returns pro-rata reserves. Supports standard two-sided burn and single-sided burn (with an internal swap leg).
 - **Flash Loans**: Lends reserve tokens to a receiver contract, requires repayment (principal + fee) in the same transaction.
-- **Oracle**: Tracks cumulative prices for TWAP queries (`consult_twap`).
+- **Oracle**: Cumulative prices are accumulated on every `swap`, `mint`, and `burn` (including the single-sided variants) using the reserves and elapsed time from before each operation's state change, then recorded into a ring-buffered observation window queried via `consult_twap`.
 - **Reentrancy Guard**: All state-mutating swap and burn paths are protected by a storage-based reentrancy lock.
 
 ### LP Token
