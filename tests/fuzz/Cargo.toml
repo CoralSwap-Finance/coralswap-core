@@ -8,3 +8,6 @@ fuzz = ["dep:proptest"]
 
 [dependencies]
 proptest = { version = "=1.11.0", optional = true }
+# Depend on the real pair contract so the fuzz suite exercises the shipped
+# AMM math (contracts/pair/src/math) instead of a hand-rolled reimplementation.
+coralswap-pair = { path = "../../contracts/pair" }

@@ -4,12 +4,12 @@
 extern crate std;
 
 mod dynamic_fee;
-mod errors;
+pub mod errors;
 mod events;
 mod factory_client;
 mod fee_decay;
 mod flash_loan;
-mod math;
+pub mod math;
 mod oracle;
 mod price_feed;
 mod reentrancy;
@@ -18,7 +18,7 @@ mod storage;
 #[cfg(test)]
 mod test;
 
-use dynamic_fee::compute_fee_bps;
+use dynamic_fee::{compute_fee_bps, DEFAULT_STALE_LEDGER_THRESHOLD};
 use errors::PairError;
 use events::PairEvents;
 use factory_client::FactoryClient;
@@ -102,6 +102,7 @@ impl Pair {
             cooldown_divisor: 2,
             last_fee_update: 0,
             decay_threshold_blocks: 100,
+            stale_threshold: DEFAULT_STALE_LEDGER_THRESHOLD,
         };
         set_fee_state(&env, &fee_state);
 
@@ -123,6 +124,8 @@ impl Pair {
     pub fn mint(env: Env, to: Address) -> Result<i128, PairError> {
         to.require_auth();
 
+        let _guard = reentrancy::ReentrancyGuard::acquire(&env)?;
+
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
         let contract = env.current_contract_address();
 
@@ -139,27 +142,17 @@ impl Pair {
         let liquidity;
 
         if total_supply == 0 {
-            let product = amount_a.checked_mul(amount_b).ok_or(PairError::Overflow)?;
-
-            liquidity = math::sqrt(product)
-                .checked_sub(MINIMUM_LIQUIDITY)
-                .ok_or(PairError::InsufficientLiquidityMinted)?;
+            liquidity = math::initial_liquidity(amount_a, amount_b)?;
 
             lp_client.mint(&contract, &MINIMUM_LIQUIDITY);
         } else {
-            let liquidity_a = amount_a
-                .checked_mul(total_supply)
-                .ok_or(PairError::Overflow)?
-                .checked_div(state.reserve_a)
-                .ok_or(PairError::Overflow)?;
-
-            let liquidity_b = amount_b
-                .checked_mul(total_supply)
-                .ok_or(PairError::Overflow)?
-                .checked_div(state.reserve_b)
-                .ok_or(PairError::Overflow)?;
-
-            liquidity = liquidity_a.min(liquidity_b);
+            liquidity = math::subsequent_liquidity(
+                amount_a,
+                amount_b,
+                state.reserve_a,
+                state.reserve_b,
+                total_supply,
+            )?;
         }
 
         if liquidity <= 0 {
@@ -294,20 +287,7 @@ impl Pair {
         // Constant-product formula:
         //   swap_out = swap_in * fee_factor * reserve_out
         //              / (reserve_in * 10_000 + swap_in * fee_factor)
-        let fee_factor = 10_000i128 - fee_bps as i128;
-        let amount_in_with_fee = swap_in.checked_mul(fee_factor).ok_or(PairError::Overflow)?;
-        let swap_out_num =
-            amount_in_with_fee.checked_mul(reserve_out).ok_or(PairError::Overflow)?;
-        let swap_out_den = reserve_in
-            .checked_mul(10_000)
-            .ok_or(PairError::Overflow)?
-            .checked_add(amount_in_with_fee)
-            .ok_or(PairError::Overflow)?;
-
-        if swap_out_den == 0 {
-            return Err(PairError::InsufficientLiquidity);
-        }
-        let swap_out = swap_out_num / swap_out_den;
+        let swap_out = math::get_amount_out(swap_in, reserve_in, reserve_out, fee_bps)?;
 
         if swap_out <= 0 {
             return Err(PairError::InsufficientLiquidity);
@@ -369,19 +349,13 @@ impl Pair {
             return Err(PairError::InsufficientLiquidityMinted);
         }
 
-        let liquidity_a = deposit_a
-            .checked_mul(total_supply)
-            .ok_or(PairError::Overflow)?
-            .checked_div(post_swap_state.reserve_a)
-            .ok_or(PairError::Overflow)?;
-
-        let liquidity_b = deposit_b
-            .checked_mul(total_supply)
-            .ok_or(PairError::Overflow)?
-            .checked_div(post_swap_state.reserve_b)
-            .ok_or(PairError::Overflow)?;
-
-        let lp_minted = liquidity_a.min(liquidity_b);
+        let lp_minted = math::subsequent_liquidity(
+            deposit_a,
+            deposit_b,
+            post_swap_state.reserve_a,
+            post_swap_state.reserve_b,
+            total_supply,
+        )?;
 
         if lp_minted <= 0 {
             return Err(PairError::InsufficientLiquidityMinted);
@@ -423,6 +397,8 @@ impl Pair {
     pub fn burn(env: Env, to: Address) -> Result<(i128, i128), PairError> {
         to.require_auth();
 
+        let _guard = reentrancy::ReentrancyGuard::acquire(&env)?;
+
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
         let contract = env.current_contract_address();
 
@@ -434,17 +410,8 @@ impl Pair {
             return Err(PairError::InsufficientLiquidityBurned);
         }
 
-        let amount_a = lp_balance
-            .checked_mul(state.reserve_a)
-            .ok_or(PairError::Overflow)?
-            .checked_div(total_supply)
-            .ok_or(PairError::Overflow)?;
-
-        let amount_b = lp_balance
-            .checked_mul(state.reserve_b)
-            .ok_or(PairError::Overflow)?
-            .checked_div(total_supply)
-            .ok_or(PairError::Overflow)?;
+        let (amount_a, amount_b) =
+            math::burn_amounts(lp_balance, state.reserve_a, state.reserve_b, total_supply)?;
 
         if amount_a <= 0 || amount_b <= 0 {
             return Err(PairError::InsufficientLiquidityBurned);
@@ -951,6 +918,7 @@ impl Pair {
 
     /// Syncs reserves to actual token balances and updates the oracle timestamp.
     pub fn sync(env: Env) -> Result<(), PairError> {
+        let _guard = reentrancy::ReentrancyGuard::acquire(&env)?;
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
         let contract = env.current_contract_address();
 
@@ -1126,6 +1094,65 @@ impl Pair {
             fee_bps,
             to,
         );
+
+        Ok(())
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Admin: Configure Dynamic Fee Parameters
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Sets the EMA staleness decay threshold (in ledgers).
+    ///
+    /// The dynamic fee engine begins exponential time-based decay of the
+    /// volatility accumulator when a pool has been idle (no swaps) for this
+    /// many ledgers. This prevents idle pools from perpetually charging
+    /// inflated fees based on stale historical volatility.
+    ///
+    /// # Authorization
+    /// This function requires authorization from the factory's admin signers.
+    /// The factory is determined at initialization time.
+    ///
+    /// # Parameters
+    /// - `new_threshold`: New staleness threshold in ledgers
+    ///   - Minimum: 1 (decay starts after next ledger)
+    ///   - Maximum: 100,000 (~11.6 days at 5s/ledger)
+    ///   - Typical: 100–1,000 ledgers
+    ///
+    /// # Validation
+    /// Returns `InvalidStaleThreshold` if:
+    /// - `new_threshold == 0` (must be at least 1)
+    /// - `new_threshold > 100_000` (capped for safety)
+    ///
+    /// # Event
+    /// Emits `stale_threshold_updated` with the new threshold on success.
+    ///
+    /// # Backward Compatibility
+    /// Existing pools remain unaffected until this function is explicitly called.
+    /// Default behavior uses `DEFAULT_STALE_LEDGER_THRESHOLD` (100 ledgers).
+    pub fn set_stale_threshold(env: Env, new_threshold: u32) -> Result<(), PairError> {
+        // Authorize against the factory's admin signers via cross-contract call.
+        // We retrieve the factory address from pair state, then delegate auth check
+        // to the factory (which implements governance::verify_multisig internally).
+        let pair = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+        let mut fee_state = get_fee_state(&env).ok_or(PairError::NotInitialized)?;
+
+        // Require authorization from the factory.
+        // The factory contract is responsible for managing its signers and
+        // enforcing multisig checks. Here we simply require auth from the factory address.
+        pair.factory.require_auth();
+
+        // Validate the new threshold is in the safe range [1, 100_000].
+        if new_threshold == 0 || new_threshold > 100_000 {
+            return Err(PairError::InvalidStaleThreshold);
+        }
+
+        // Update the stale threshold.
+        fee_state.stale_threshold = new_threshold;
+        set_fee_state(&env, &fee_state);
+
+        // Emit event for off-chain indexing.
+        PairEvents::stale_threshold_updated(&env, new_threshold);
 
         Ok(())
     }

@@ -27,6 +27,20 @@ pub struct FeeState {
     pub cooldown_divisor: u32,
     pub last_fee_update: u64,
     pub decay_threshold_blocks: u64,
+    /// Configurable staleness threshold in ledgers.
+    ///
+    /// The EMA volatility accumulator begins time-based exponential decay
+    /// when the pool has been idle (no trades) for this many ledgers.
+    /// This prevents idle pools from charging inflated fees.
+    ///
+    /// # Valid Range
+    /// - Minimum: 1 ledger
+    /// - Maximum: 100,000 ledgers (~11.6 days at 5s/ledger)
+    /// - Default: 100 ledgers (~8.3 minutes)
+    ///
+    /// This threshold can only be updated by calling `Pair::set_stale_threshold()`
+    /// with factory admin authorization.
+    pub stale_threshold: u32,
 }
 
 #[contracttype]

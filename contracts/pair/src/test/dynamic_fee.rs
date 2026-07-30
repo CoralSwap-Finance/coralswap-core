@@ -1,4 +1,4 @@
-use crate::dynamic_fee::{compute_fee_bps, decay_stale_ema, update_volatility};
+use crate::dynamic_fee::{compute_fee_bps, decay_stale_ema, update_volatility, DEFAULT_STALE_LEDGER_THRESHOLD};
 use crate::storage::FeeState;
 use soroban_sdk::{testutils::Ledger, Env};
 
@@ -16,6 +16,7 @@ fn default_fee_state() -> FeeState {
         cooldown_divisor: 2,
         last_fee_update: 0,
         decay_threshold_blocks: 100,
+        stale_threshold: DEFAULT_STALE_LEDGER_THRESHOLD,
     }
 }
 
@@ -724,3 +725,232 @@ fn test_multiple_swaps_accumulate_volatility() {
         final_fee
     );
 }
+
+// ============================================================================
+// set_stale_threshold Tests
+// ============================================================================
+
+#[test]
+fn test_default_fee_state_has_correct_stale_threshold() {
+    let fee_state = default_fee_state();
+
+    assert_eq!(fee_state.stale_threshold, DEFAULT_STALE_LEDGER_THRESHOLD);
+    assert_eq!(fee_state.stale_threshold, 100);
+}
+
+#[test]
+fn test_decay_uses_configurable_stale_threshold() {
+    let env = Env::default();
+    env.ledger().set_sequence_number(200);
+
+    let mut fee_state = default_fee_state();
+    fee_state.vol_accumulator = 1_000_000_000_000;
+    fee_state.last_fee_update = 0;
+    fee_state.stale_threshold = 150; // Set to 150
+    fee_state.decay_threshold_blocks = 100; // Should be ignored in favor of stale_threshold
+
+    let initial_vol = fee_state.vol_accumulator;
+
+    decay_stale_ema(&env, &mut fee_state);
+
+    // No decay yet because 200 < 150 + 0 is false but 200 > 150 is true.
+    // Actually: current_ledger (200) > last_fee_update (0) + stale_threshold (150)
+    // 200 > 150? Yes, so decay should happen.
+    assert!(fee_state.vol_accumulator < initial_vol);
+}
+
+#[test]
+fn test_decay_does_not_trigger_before_stale_threshold() {
+    let env = Env::default();
+    env.ledger().set_sequence_number(100);
+
+    let mut fee_state = default_fee_state();
+    fee_state.vol_accumulator = 1_000_000_000_000;
+    fee_state.last_fee_update = 0;
+    fee_state.stale_threshold = 500; // High threshold
+
+    let initial_vol = fee_state.vol_accumulator;
+
+    decay_stale_ema(&env, &mut fee_state);
+
+    // Should not decay: 100 is not > 500
+    assert_eq!(fee_state.vol_accumulator, initial_vol);
+}
+
+#[test]
+fn test_low_stale_threshold_causes_faster_decay() {
+    let env = Env::default();
+    env.ledger().set_sequence_number(200);
+
+    // Pool with low threshold (5 ledgers)
+    let mut fee_state_low = default_fee_state();
+    fee_state_low.vol_accumulator = 1_000_000_000_000;
+    fee_state_low.last_fee_update = 0;
+    fee_state_low.stale_threshold = 5;
+    fee_state_low.cooldown_divisor = 2;
+
+    // Pool with high threshold (1000 ledgers)
+    let mut fee_state_high = default_fee_state();
+    fee_state_high.vol_accumulator = 1_000_000_000_000;
+    fee_state_high.last_fee_update = 0;
+    fee_state_high.stale_threshold = 1000;
+    fee_state_high.cooldown_divisor = 2;
+
+    decay_stale_ema(&env, &mut fee_state_low);
+    decay_stale_ema(&env, &mut fee_state_high);
+
+    // Low threshold pool should have more decay (lower accumulator)
+    assert!(fee_state_low.vol_accumulator < fee_state_high.vol_accumulator);
+    assert_eq!(fee_state_high.vol_accumulator, 1_000_000_000_000); // No decay yet
+}
+
+#[test]
+fn test_high_stale_threshold_prevents_decay() {
+    let env = Env::default();
+    env.ledger().set_sequence_number(500);
+
+    let mut fee_state = default_fee_state();
+    fee_state.vol_accumulator = 1_000_000_000_000;
+    fee_state.last_fee_update = 0;
+    fee_state.stale_threshold = 1000; // Requires 1000+ ledgers
+
+    let initial_vol = fee_state.vol_accumulator;
+
+    decay_stale_ema(&env, &mut fee_state);
+
+    // Should not decay: 500 is not > 1000
+    assert_eq!(fee_state.vol_accumulator, initial_vol);
+}
+
+#[test]
+fn test_two_pools_different_thresholds_decay_independently() {
+    let env = Env::default();
+    env.ledger().set_sequence_number(300);
+
+    // Pool A: threshold = 100
+    let mut pool_a = default_fee_state();
+    pool_a.vol_accumulator = 1_000_000_000_000;
+    pool_a.last_fee_update = 0;
+    pool_a.stale_threshold = 100;
+
+    // Pool B: threshold = 500
+    let mut pool_b = default_fee_state();
+    pool_b.vol_accumulator = 1_000_000_000_000;
+    pool_b.last_fee_update = 0;
+    pool_b.stale_threshold = 500;
+
+    decay_stale_ema(&env, &mut pool_a);
+    decay_stale_ema(&env, &mut pool_b);
+
+    // Pool A should decay (300 > 100 + 0)
+    // Pool B should NOT decay (300 is not > 500 + 0)
+    assert!(pool_a.vol_accumulator < 1_000_000_000_000);
+    assert_eq!(pool_b.vol_accumulator, 1_000_000_000_000);
+}
+
+#[test]
+fn test_stale_threshold_boundary_1() {
+    let env = Env::default();
+    env.ledger().set_sequence_number(2);
+
+    let mut fee_state = default_fee_state();
+    fee_state.vol_accumulator = 1_000_000_000_000;
+    fee_state.last_fee_update = 0;
+    fee_state.stale_threshold = 1; // Minimum valid threshold
+
+    let initial_vol = fee_state.vol_accumulator;
+
+    decay_stale_ema(&env, &mut fee_state);
+
+    // Should decay: 2 > 1 + 0
+    assert!(fee_state.vol_accumulator < initial_vol);
+}
+
+#[test]
+fn test_stale_threshold_boundary_100_000() {
+    let env = Env::default();
+    env.ledger().set_sequence_number(100_001);
+
+    let mut fee_state = default_fee_state();
+    fee_state.vol_accumulator = 1_000_000_000_000;
+    fee_state.last_fee_update = 0;
+    fee_state.stale_threshold = 100_000; // Maximum threshold
+
+    let initial_vol = fee_state.vol_accumulator;
+
+    decay_stale_ema(&env, &mut fee_state);
+
+    // Should decay: 100_001 > 100_000 + 0
+    assert!(fee_state.vol_accumulator < initial_vol);
+}
+
+#[test]
+fn test_stale_threshold_just_before_decay() {
+    let env = Env::default();
+    env.ledger().set_sequence_number(150);
+
+    let mut fee_state = default_fee_state();
+    fee_state.vol_accumulator = 1_000_000_000_000;
+    fee_state.last_fee_update = 0;
+    fee_state.stale_threshold = 150; // Same as ledger distance
+
+    let initial_vol = fee_state.vol_accumulator;
+
+    decay_stale_ema(&env, &mut fee_state);
+
+    // Should NOT decay: 150 is not > 150
+    assert_eq!(fee_state.vol_accumulator, initial_vol);
+}
+
+#[test]
+fn test_stale_threshold_just_past_decay() {
+    let env = Env::default();
+    env.ledger().set_sequence_number(151);
+
+    let mut fee_state = default_fee_state();
+    fee_state.vol_accumulator = 1_000_000_000_000;
+    fee_state.last_fee_update = 0;
+    fee_state.stale_threshold = 150;
+
+    let initial_vol = fee_state.vol_accumulator;
+
+    decay_stale_ema(&env, &mut fee_state);
+
+    // Should decay: 151 > 150
+    assert!(fee_state.vol_accumulator < initial_vol);
+}
+
+#[test]
+fn test_stale_threshold_affects_fee_persistence() {
+    let env = Env::default();
+
+    // Pool with LOW stale threshold: fees decay quickly when idle
+    let mut pool_low = default_fee_state();
+    pool_low.vol_accumulator = 500_000_000_000; // Moderate volatility
+    pool_low.stale_threshold = 10; // Decay starts after 10 blocks
+    pool_low.cooldown_divisor = 2;
+
+    // Pool with HIGH stale threshold: fees persist longer when idle
+    let mut pool_high = default_fee_state();
+    pool_high.vol_accumulator = 500_000_000_000;
+    pool_high.stale_threshold = 5000; // Decay starts after 5000 blocks
+    pool_high.cooldown_divisor = 2;
+
+    let fee_low_before = compute_fee_bps(&pool_low);
+    let fee_high_before = compute_fee_bps(&pool_high);
+
+    // Simulate being idle for 100 blocks
+    env.ledger().set_sequence_number(100);
+    decay_stale_ema(&env, &mut pool_low);
+    decay_stale_ema(&env, &mut pool_high);
+
+    let fee_low_after = compute_fee_bps(&pool_low);
+    let fee_high_after = compute_fee_bps(&pool_high);
+
+    // Pool with low threshold should have decayed (lower fee)
+    assert!(fee_low_after < fee_low_before);
+
+    // Pool with high threshold should NOT have decayed (same fee)
+    assert_eq!(fee_high_after, fee_high_before);
+}
+

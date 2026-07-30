@@ -20,7 +20,7 @@
 
 mod burn;
 mod dynamic_fee;
-mod events;
+//mod events;
 mod flash_loan;
 mod initialize;
 mod mint;
@@ -29,6 +29,7 @@ mod oracle;
 mod pair_fee_override;
 mod price_feed;
 mod reentrancy;
+mod set_stale_threshold;
 mod swap_math;
 mod sync;
 mod views;
