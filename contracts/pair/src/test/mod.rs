@@ -27,6 +27,7 @@ mod mint;
 mod mint_single_side;
 mod oracle;
 mod pair_fee_override;
+mod price_feed;
 mod reentrancy;
 mod swap_math;
 mod sync;

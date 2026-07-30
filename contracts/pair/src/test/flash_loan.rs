@@ -64,7 +64,7 @@ impl<'a> Setup<'a> {
         let factory = Address::generate(&env);
         let lp_token = Address::generate(&env);
 
-        pair_client.initialize(&factory, &token_a, &token_b, &lp_token);
+        pair_client.initialize(&factory, &token_a, &token_b, &lp_token, &None, &None);
 
         Setup {
             env,

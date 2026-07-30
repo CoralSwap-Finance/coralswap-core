@@ -30,7 +30,7 @@ impl MockFactory {
         env.storage().instance().get(&MFKey::Pair(t0, t1))
     }
 
-    pub fn create_pair(_env: Env, _token_a: Address, _token_b: Address) -> Address {
+    pub fn create_pair(_env: Env, _token_a: Address, _token_b: Address, _price_feed_a: Option<Address>, _price_feed_b: Option<Address>) -> Address {
         panic!("not needed for router unit tests")
     }
 }

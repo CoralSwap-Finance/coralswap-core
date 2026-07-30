@@ -37,7 +37,7 @@ fn test_get_reserves_initialized() {
     let token_b = Address::generate(&env);
     let lp_token = Address::generate(&env);
 
-    pair_client.initialize(&factory, &token_a, &token_b, &lp_token);
+    pair_client.initialize(&factory, &token_a, &token_b, &lp_token, &None, &None);
 
     let (reserve_a, reserve_b, timestamp) = pair_client.get_reserves();
 
@@ -69,9 +69,9 @@ fn test_get_current_fee_bps_initialized_no_volatility() {
     let token_b = Address::generate(&env);
     let lp_token = Address::generate(&env);
 
-    pair_client.initialize(&factory, &token_a, &token_b, &lp_token);
+    pair_client.initialize(&factory, &token_a, &token_b, &lp_token, &None, &None);
 
-    // Also we need to simulate the fee state being set by initialization or default.
+    // Also we need to simulate the fee state being set
     // Actually, `initialize` does NOT set the FeeState. It's set during `swap` when decaying/updating.
     // If it's not set, `get_current_fee_bps` returns 30 (fallback).
     let fee = pair_client.get_current_fee_bps();

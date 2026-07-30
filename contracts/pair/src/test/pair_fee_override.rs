@@ -69,7 +69,7 @@ fn setup_harness() -> EnvHarness {
 
     let pair = env.register_contract(None, Pair);
     let pair_client = PairClient::new(&env, &pair);
-    pair_client.initialize(&factory, &token_a, &_token_b, &lp);
+    pair_client.initialize(&factory, &token_a, &_token_b, &lp, &None, &None);
 
     let user = Address::generate(&env);
     StellarAssetClient::new(&env, &token_a).mint(&user, &10_000_000_i128);
@@ -167,7 +167,7 @@ fn swap_with_override_does_not_panic_even_when_factory_missing() {
 
     let pair = env.register_contract(None, Pair);
     let pair_client = PairClient::new(&env, &pair);
-    pair_client.initialize(&factory, &token_a, &token_b, &lp);
+    pair_client.initialize(&factory, &token_a, &token_b, &lp, &None, &None);
 
     let user = Address::generate(&env);
     StellarAssetClient::new(&env, &token_a).mint(&user, &10_000_000_i128);

@@ -18,7 +18,7 @@ fn happy_path_initializes_all_state() {
     let (env, contract_id, factory, token_a, token_b, lp_token) = setup_env();
     let client = PairClient::new(&env, &contract_id);
 
-    client.initialize(&factory, &token_a, &token_b, &lp_token);
+    client.initialize(&factory, &token_a, &token_b, &lp_token, &None, &None);
 
     // Reserves should be (0, 0, _)
     let (r_a, r_b, _ts) = client.get_reserves();
@@ -46,9 +46,9 @@ fn double_init_returns_already_initialized() {
     let (env, contract_id, factory, token_a, token_b, lp_token) = setup_env();
     let client = PairClient::new(&env, &contract_id);
 
-    client.initialize(&factory, &token_a, &token_b, &lp_token);
+    client.initialize(&factory, &token_a, &token_b, &lp_token, &None, &None);
 
-    let result = client.try_initialize(&factory, &token_a, &token_b, &lp_token);
+    let result = client.try_initialize(&factory, &token_a, &token_b, &lp_token, &None, &None);
     assert_eq!(result, Err(Ok(PairError::AlreadyInitialized)));
 }
 
@@ -57,7 +57,7 @@ fn identical_tokens_returns_error() {
     let (env, contract_id, factory, token_a, _token_b, lp_token) = setup_env();
     let client = PairClient::new(&env, &contract_id);
 
-    let result = client.try_initialize(&factory, &token_a, &token_a, &lp_token);
+    let result = client.try_initialize(&factory, &token_a, &token_a, &lp_token, &None, &None);
     assert_eq!(result, Err(Ok(PairError::InvalidInput)));
 }
 
@@ -66,7 +66,7 @@ fn get_reserves_returns_zeros_after_init() {
     let (env, contract_id, factory, token_a, token_b, lp_token) = setup_env();
     let client = PairClient::new(&env, &contract_id);
 
-    client.initialize(&factory, &token_a, &token_b, &lp_token);
+    client.initialize(&factory, &token_a, &token_b, &lp_token, &None, &None);
 
     let (r_a, r_b, ts) = client.get_reserves();
     assert_eq!(r_a, 0);
@@ -79,7 +79,7 @@ fn fee_state_has_sane_defaults() {
     let (env, contract_id, factory, token_a, token_b, lp_token) = setup_env();
     let client = PairClient::new(&env, &contract_id);
 
-    client.initialize(&factory, &token_a, &token_b, &lp_token);
+    client.initialize(&factory, &token_a, &token_b, &lp_token, &None, &None);
 
     // Default fee should be 30 bps (no volatility yet)
     let fee = client.get_current_fee_bps();
@@ -91,7 +91,7 @@ fn pair_state_stores_correct_addresses() {
     let (env, contract_id, factory, token_a, token_b, lp_token) = setup_env();
     let client = PairClient::new(&env, &contract_id);
 
-    client.initialize(&factory, &token_a, &token_b, &lp_token);
+    client.initialize(&factory, &token_a, &token_b, &lp_token, &None, &None);
 
     env.as_contract(&contract_id, || {
         let state = get_pair_state(&env).expect("PairStorage missing");
