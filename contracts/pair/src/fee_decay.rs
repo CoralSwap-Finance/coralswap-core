@@ -38,6 +38,13 @@ pub fn apply_time_decay(_env: &Env, fee_state: &mut FeeState, current_ledger: u6
     let threshold = fee_state.decay_threshold_blocks.max(1);
     let decay_periods = (elapsed / threshold).min(MAX_DECAY_PERIODS);
 
+    // Not enough elapsed time to complete even one decay period — leave
+    // last_fee_update untouched so the unconsumed elapsed time keeps
+    // accumulating toward the next call instead of being silently reset.
+    if decay_periods == 0 {
+        return;
+    }
+
     // Apply compounding exponential decay: vol /= divisor per period.
     for _ in 0..decay_periods {
         fee_state.vol_accumulator /= divisor;

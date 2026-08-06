@@ -9,6 +9,12 @@ use soroban_sdk::{contract, contractimpl, Address, Bytes, Env};
 /// `data` selects the attack vector:
 /// - `b"attack_swap"` — re-enter the pair via `swap()` during the callback
 /// - `b"attack_flash"` — nest another `flash_loan()` during the callback
+///
+/// Only ever registered natively (`env.register_contract`) in unit tests,
+/// never deployed as a real wasm contract — this crate has no `cdylib`
+/// target, so it can't collide with `MockFlashReceiver`'s exported
+/// `on_flash_loan` symbol at the wasm level even if both ended up in the
+/// same build graph.
 #[contract]
 pub struct MaliciousFlashReceiver;
 

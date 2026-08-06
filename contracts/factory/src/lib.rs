@@ -173,12 +173,16 @@ impl Factory {
         let threshold = (storage.signers.len() + 1) / 2;
         governance::verify_multisig(&env, &signers, threshold)?;
 
-        // Find a signer in the call that matches a stored signer, then require its auth.
-        let authorized = signers
+        // Require that at least one of the (already auth-verified) provided
+        // signers is a registered signer. `verify_multisig` already called
+        // `require_auth()` on every provided signer above, so this is a
+        // membership check only — a second `require_auth()` on the same
+        // address here would be a redundant re-authorization within the same
+        // call frame, which soroban-sdk rejects.
+        signers
             .iter()
             .find(|s| storage.signers.contains(s))
             .ok_or(FactoryError::Unauthorized)?;
-        authorized.require_auth();
 
         storage.paused = true;
         storage::set_factory_storage(&env, &storage);
@@ -192,12 +196,12 @@ impl Factory {
         let threshold = (storage.signers.len() + 1) / 2;
         governance::verify_multisig(&env, &signers, threshold)?;
 
-        // Find a signer in the call that matches a stored signer, then require its auth.
-        let authorized = signers
+        // See the matching comment in `pause()` — membership check only,
+        // `verify_multisig` already required auth from every provided signer.
+        signers
             .iter()
             .find(|s| storage.signers.contains(s))
             .ok_or(FactoryError::Unauthorized)?;
-        authorized.require_auth();
 
         storage.paused = false;
         storage::set_factory_storage(&env, &storage);

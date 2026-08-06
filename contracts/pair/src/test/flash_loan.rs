@@ -1,6 +1,7 @@
 #![cfg(test)]
 
-use coralswap_mock_flash_receiver::{malicious::MaliciousFlashReceiver, MockFlashReceiver};
+use coralswap_malicious_flash_receiver::MaliciousFlashReceiver;
+use coralswap_mock_flash_receiver::MockFlashReceiver;
 
 use crate::{errors::PairError, Pair, PairClient};
 use soroban_sdk::token::{StellarAssetClient, TokenClient};

@@ -16,3 +16,4 @@ ethnum = { version = "*" }
 soroban-sdk = { workspace = true, features = ["testutils"] }
 coralswap-lp-token = { path = "../lp_token" }
 coralswap-mock-flash-receiver = { path = "../mock_flash_receiver" }
+coralswap-malicious-flash-receiver = { path = "../malicious_flash_receiver" }

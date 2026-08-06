@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use crate::dynamic_fee::DEFAULT_STALE_LEDGER_THRESHOLD;
 use crate::storage::{FeeState, PairStorage};
 use crate::{Pair, PairClient};
 use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env};
@@ -137,6 +138,7 @@ fn test_get_current_fee_bps_with_state() {
         cooldown_divisor: 2,
         last_fee_update: 0,
         decay_threshold_blocks: 100,
+        stale_threshold: DEFAULT_STALE_LEDGER_THRESHOLD,
     };
 
     env.as_contract(&contract_id, || {

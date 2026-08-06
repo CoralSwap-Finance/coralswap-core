@@ -434,20 +434,20 @@ mod factory_tests {
 
     #[test]
     fn test_pause_authorized_signers_succeeds() {
-        let (env, client, _, _, _, _, _) = setup_env();
-        // setup_env initialises with 3 signers and mock_all_auths, so any
-        // address passes require_auth(). Threshold = ceil(3/2) = 2.
-        let s1 = Address::generate(&env);
-        let s2 = Address::generate(&env);
+        let (env, client, _, _, _, _, signers) = setup_env();
+        // setup_env registers 3 signers; pause() requires at least one of the
+        // provided signers to be a registered one. Threshold = ceil(3/2) = 2.
+        let s1 = signers.get(0).unwrap();
+        let s2 = signers.get(1).unwrap();
         client.pause(&Vec::from_array(&env, [s1, s2]));
         assert!(client.is_paused());
     }
 
     #[test]
     fn test_unpause_authorized_signers_succeeds() {
-        let (env, client, _, _, _, _, _) = setup_env();
-        let s1 = Address::generate(&env);
-        let s2 = Address::generate(&env);
+        let (env, client, _, _, _, _, signers) = setup_env();
+        let s1 = signers.get(0).unwrap();
+        let s2 = signers.get(1).unwrap();
         client.pause(&Vec::from_array(&env, [s1.clone(), s2.clone()]));
         client.unpause(&Vec::from_array(&env, [s1, s2]));
         assert!(!client.is_paused());
@@ -760,6 +760,6 @@ mod factory_tests {
         client.set_pair_fee(&fee_to_setter, &pair, &5u32);
 
         let all = env.events().all();
-        assert_eq!(all.len(), 1, "set_pair_fee must emit exactly one event on success");
+        assert_eq!(all.events().len(), 1, "set_pair_fee must emit exactly one event on success");
     }
 }

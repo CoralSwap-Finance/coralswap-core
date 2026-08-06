@@ -857,6 +857,11 @@ fn test_stale_threshold_boundary_1() {
     fee_state.vol_accumulator = 1_000_000_000_000;
     fee_state.last_fee_update = 0;
     fee_state.stale_threshold = 1; // Minimum valid threshold
+    // Isolate the stale_threshold gate from decay_threshold_blocks (a
+    // separate field governing how many decay periods elapsed time buys) —
+    // without this, decay_periods = elapsed / decay_threshold_blocks = 2/100
+    // rounds down to 0, so the gate fires but no decay is visible.
+    fee_state.decay_threshold_blocks = 1;
 
     let initial_vol = fee_state.vol_accumulator;
 
