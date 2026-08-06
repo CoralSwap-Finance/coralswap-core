@@ -1,5 +1,8 @@
 target/
 *.wasm
+benchmark-results.json
+base-benchmark.json
+pr-benchmark.json
 !test/*.wasm
 .idea/
 .vscode/
@@ -10,7 +13,6 @@ target/
 Thumbs.db
 .env
 .env.local
-*.sh
 target_local/
 issue.md
 pr.md

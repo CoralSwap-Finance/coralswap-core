@@ -35,7 +35,7 @@ fn swap_event_emits_correct_topics_and_data() {
     });
 
     let all = env.events().all();
-    assert_eq!(all.len(), 1, "expected exactly one swap event");
+    assert_eq!(all.events().len(), 1, "expected exactly one swap event");
 }
 
 // ---------------------------------------------------------------------------
@@ -52,7 +52,7 @@ fn mint_event_emits_correct_topics_and_data() {
     });
 
     let all = env.events().all();
-    assert_eq!(all.len(), 1, "expected exactly one mint event");
+    assert_eq!(all.events().len(), 1, "expected exactly one mint event");
 }
 
 // ---------------------------------------------------------------------------
@@ -70,7 +70,7 @@ fn burn_event_emits_correct_topics_and_data() {
     });
 
     let all = env.events().all();
-    assert_eq!(all.len(), 1, "expected exactly one burn event");
+    assert_eq!(all.events().len(), 1, "expected exactly one burn event");
 }
 
 // ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ fn sync_event_emits_correct_topics_and_data() {
     });
 
     let all = env.events().all();
-    assert_eq!(all.len(), 1, "expected exactly one sync event");
+    assert_eq!(all.events().len(), 1, "expected exactly one sync event");
 }
 
 // ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ fn reward_added_event_emits_correct_topics_and_data() {
     });
 
     let all = env.events().all();
-    assert_eq!(all.len(), 1, "expected exactly one reward_added event");
+    assert_eq!(all.events().len(), 1, "expected exactly one reward_added event");
 }
 
 // ---------------------------------------------------------------------------
@@ -120,7 +120,7 @@ fn reward_rate_event_emits_correct_topics_and_data() {
     });
 
     let all = env.events().all();
-    assert_eq!(all.len(), 1, "expected exactly one reward_rate event");
+    assert_eq!(all.events().len(), 1, "expected exactly one reward_rate event");
 }
 
 // ---------------------------------------------------------------------------
@@ -138,7 +138,7 @@ fn rewards_claimed_event_emits_correct_topics_and_data() {
     });
 
     let all = env.events().all();
-    assert_eq!(all.len(), 1, "expected exactly one rewards_claimed event");
+    assert_eq!(all.events().len(), 1, "expected exactly one rewards_claimed event");
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +155,7 @@ fn flash_loan_event_emits_correct_topics_and_data() {
     });
 
     let all = env.events().all();
-    assert_eq!(all.len(), 1, "expected exactly one flash_loan event");
+    assert_eq!(all.events().len(), 1, "expected exactly one flash_loan event");
 }
 
 // ---------------------------------------------------------------------------
@@ -173,5 +173,5 @@ fn multiple_events_are_independent() {
     });
 
     let all = env.events().all();
-    assert_eq!(all.len(), 2, "expected two events in order");
+    assert_eq!(all.events().len(), 2, "expected two events in order");
 }

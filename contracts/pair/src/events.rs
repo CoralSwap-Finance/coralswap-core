@@ -113,14 +113,14 @@ impl PairEvents {
     /// Emits a `stale_threshold_updated` event when the EMA staleness decay
     /// threshold is reconfigured.
     ///
-    /// Topics: `("stl_thresh",)`
+    /// Topics: `("stl_thrsh",)`
     /// Data:   `(new_threshold,)`
     ///
     /// Called by `Pair::set_stale_threshold()` after a successful threshold update.
     /// "stale_threshold_updated" is too long for symbol_short!, so we use
-    /// "stl_thresh" (9 chars).
+    /// "stl_thrsh" (9 chars).
     pub fn stale_threshold_updated(env: &Env, new_threshold: u32) {
-        env.events().publish((symbol_short!("stl_thresh"),), (new_threshold,));
+        env.events().publish((symbol_short!("stl_thrsh"),), (new_threshold,));
     }
 
     #[allow(dead_code)]

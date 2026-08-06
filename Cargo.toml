@@ -6,7 +6,21 @@ members = [
     "contracts/router",
     "contracts/flash_receiver_interface",
     "contracts/mock_flash_receiver",
+    "contracts/malicious_flash_receiver",
     "tests/fuzz"
+]
+# `tests/fuzz` requires `std` and is built/run only via its own explicit
+# `-p coralswap-fuzz` invocation (see the "Fuzz tests" CI step) — it isn't a
+# `no_std` wasm contract crate, so it must stay out of default-members or an
+# unscoped `cargo build --target wasm32*` across the workspace fails on it.
+default-members = [
+    "contracts/factory",
+    "contracts/pair",
+    "contracts/lp_token",
+    "contracts/router",
+    "contracts/flash_receiver_interface",
+    "contracts/mock_flash_receiver",
+    "contracts/malicious_flash_receiver",
 ]
 resolver = "2"
 
