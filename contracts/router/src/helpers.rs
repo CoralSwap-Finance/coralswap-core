@@ -5,7 +5,13 @@ use soroban_sdk::{contractclient, Address, Env, Vec};
 #[allow(dead_code)]
 pub trait FactoryInterface {
     fn get_pair(env: Env, token_a: Address, token_b: Address) -> Option<Address>;
-    fn create_pair(env: Env, token_a: Address, token_b: Address) -> Address;
+    fn create_pair(
+        env: Env,
+        token_a: Address,
+        token_b: Address,
+        price_feed_a: Option<Address>,
+        price_feed_b: Option<Address>,
+    ) -> Address;
 }
 
 #[contractclient(name = "PairClient")]

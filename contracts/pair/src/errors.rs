@@ -24,7 +24,8 @@ pub enum PairError {
     FlashCallbackFailed = 117,
     FlashLoanFeeTooHigh = 118,
     SlippageExceeded = 119,
-    InvalidStaleThreshold = 120,
+    /// Price feed returned an invalid value (e.g., zero or negative).
+    InvalidPriceFeed = 120,
 }
 
 #[contracterror]

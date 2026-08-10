@@ -90,7 +90,7 @@ fn setup_pair(
         &String::from_str(&env, "CLP"),
     );
 
-    pair_client.initialize(&factory, &token_a_id, &token_b_id, &lp_id);
+    pair_client.initialize(&factory, &token_a_id, &token_b_id, &lp_id, &None, &None);
 
     // Seed the pool with initial liquidity via the standard two-sided mint.
     token_a.mint(&seed_user, &reserve_a);

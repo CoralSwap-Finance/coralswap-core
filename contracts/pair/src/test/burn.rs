@@ -80,7 +80,7 @@ fn setup_pair(
         &String::from_str(&env, "CLP"),
     );
 
-    pair_client.initialize(&factory, &token_a_id, &token_b_id, &lp_id);
+    pair_client.initialize(&factory, &token_a_id, &token_b_id, &lp_id, &None, &None);
 
     token_a.mint(&user, &reserve_a);
     token_b.mint(&user, &reserve_b);

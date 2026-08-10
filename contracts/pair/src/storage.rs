@@ -55,6 +55,23 @@ pub struct OracleState {
     pub observations: soroban_sdk::Vec<(u64, i128, i128)>,
 }
 
+/// Per-pair configuration that is set once during initialization.
+/// Includes optional price feed addresses for RWA (yield-bearing) tokens.
+/// When a price feed is set, reserve amounts are normalized by the feed price
+/// during liquidity math (NAV-normalized reserves).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PairConfig {
+    /// Fee in basis points (set by factory during creation).
+    pub fee_bps: u32,
+    /// Optional price feed address for token_0 (RWA NAV oracle).
+    pub price_feed_0: Option<Address>,
+    /// Optional price feed address for token_1 (RWA NAV oracle).
+    pub price_feed_1: Option<Address>,
+    /// Whether the pair is paused (set by factory governance).
+    pub is_paused: bool,
+}
+
 /// Storage keys for all persistent contract state.
 #[contracttype]
 pub enum DataKey {
@@ -66,6 +83,8 @@ pub enum DataKey {
     Guard,
     /// Oracle ring buffer.
     OracleState,
+    /// Per-pair configuration (fee_bps, price feeds, pause state).
+    PairConfig,
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +124,57 @@ pub fn get_fee_state(env: &Env) -> Option<FeeState> {
 
 pub fn set_fee_state(env: &Env, state: &FeeState) {
     env.storage().instance().set(&DataKey::FeeState, state);
+}
+
+// ---------------------------------------------------------------------------
+// PairConfig helpers
+// ---------------------------------------------------------------------------
+
+/// Returns the pair's configuration (fee_bps, price feeds, pause state),
+/// or a sensible default if not yet set (post-migration compat).
+pub fn get_pair_config(env: &Env) -> PairConfig {
+    env.storage()
+        .instance()
+        .get(&DataKey::PairConfig)
+        .unwrap_or(PairConfig {
+            fee_bps: 0,
+            price_feed_0: None,
+            price_feed_1: None,
+            is_paused: false,
+        })
+}
+
+/// Stores the pair configuration.
+pub fn set_pair_config(env: &Env, config: &PairConfig) {
+    env.storage().instance().set(&DataKey::PairConfig, config);
+}
+
+/// Looks up the price feed address for a given token, returning `None` if the
+/// token is not one of the pair's tokens or if no price feed is configured.
+///
+/// Price feeds are used to normalize reserves for RWA (yield-bearing) tokens
+/// whose NAV grows over time. A standard x*y=k pool with a yield-bearing
+/// token drifts out of balance as NAV accrues. An optional price feed enables
+/// NAV-normalized reserve math.
+pub fn get_price_feed(env: &Env, token: &Address, state: &PairStorage) -> Option<Address> {
+    let config = get_pair_config(env);
+    if token == &state.token_a {
+        config.price_feed_0
+    } else if token == &state.token_b {
+        config.price_feed_1
+    } else {
+        None
+    }
+}
+
+/// Returns the price feed address for token_0, if configured.
+pub fn get_price_feed_0(env: &Env) -> Option<Address> {
+    get_pair_config(env).price_feed_0
+}
+
+/// Returns the price feed address for token_1, if configured.
+pub fn get_price_feed_1(env: &Env) -> Option<Address> {
+    get_pair_config(env).price_feed_1
 }
 
 // ---------------------------------------------------------------------------

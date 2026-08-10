@@ -25,6 +25,8 @@ pub trait PairInterface {
         token_a: Address,
         token_b: Address,
         lp_token: Address,
+        price_feed_0: Option<Address>,
+        price_feed_1: Option<Address>,
     ) -> Result<(), FactoryError>;
 }
 
@@ -75,6 +77,8 @@ impl Factory {
         env: Env,
         token_a: Address,
         token_b: Address,
+        price_feed_a: Option<Address>,
+        price_feed_b: Option<Address>,
     ) -> Result<Address, FactoryError> {
         if token_a == token_b {
             return Err(FactoryError::IdenticalTokens);
@@ -115,10 +119,24 @@ impl Factory {
             .with_current_contract(lp_salt)
             .deploy(factory_storage.lp_token_wasm_hash.clone());
 
-        // 3. Initialize Pair — propagate any error; do NOT store if this fails
+        // 3. Map price feeds to canonical token order (token_0 / token_1)
+        let (price_feed_0, price_feed_1) = if token_a < token_b {
+            (price_feed_a, price_feed_b)
+        } else {
+            (price_feed_b, price_feed_a)
+        };
+
+        // 4. Initialize Pair — propagate any error; do NOT store if this fails
         let pair_client = PairClient::new(&env, &pair_address);
         pair_client
-            .try_initialize(&env.current_contract_address(), &token_0, &token_1, &lp_token_address)
+            .try_initialize(
+                &env.current_contract_address(),
+                &token_0,
+                &token_1,
+                &lp_token_address,
+                &price_feed_0,
+                &price_feed_1,
+            )
             .map_err(|_| FactoryError::NotInitialized)?;
 
         // 4. Store pair — only reached when initialize() succeeded

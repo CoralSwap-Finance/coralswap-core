@@ -11,6 +11,7 @@ mod fee_decay;
 mod flash_loan;
 pub mod math;
 mod oracle;
+mod price_feed;
 mod reentrancy;
 mod storage;
 
@@ -22,12 +23,13 @@ use errors::PairError;
 use events::PairEvents;
 use factory_client::FactoryClient;
 use math::MINIMUM_LIQUIDITY;
+use price_feed::{PriceFeedClient, PRICE_SCALE};
 use soroban_sdk::{
     contract, contractclient, contractimpl, token::TokenClient, Address, Bytes, Env,
 };
 use storage::{
-    get_fee_state, get_pair_state, set_fee_state, set_pair_state, set_reentrancy_guard, FeeState,
-    ReentrancyGuard,
+    get_fee_state, get_pair_config, get_pair_state, get_price_feed, set_fee_state,
+    set_pair_config, set_pair_state, set_reentrancy_guard, FeeState, PairConfig, ReentrancyGuard,
 };
 
 #[contractclient(name = "LpTokenClient")]
@@ -52,6 +54,8 @@ impl Pair {
         token_a: Address,
         token_b: Address,
         lp_token: Address,
+        price_feed_0: Option<Address>,
+        price_feed_1: Option<Address>,
     ) -> Result<(), PairError> {
         // 1. Double-init guard
         if get_pair_state(&env).is_some() {
@@ -77,6 +81,15 @@ impl Pair {
         };
 
         set_pair_state(&env, &state);
+
+        // 3. Initialize PairConfig with optional price feeds for RWA tokens
+        let config = PairConfig {
+            fee_bps: 0,
+            price_feed_0,
+            price_feed_1,
+            is_paused: false,
+        };
+        set_pair_config(&env, &config);
 
         // 4. Initialize FeeState with sane defaults
         let fee_state = FeeState {
@@ -632,6 +645,273 @@ impl Pair {
         }
     }
 
+    /// Returns the full pair configuration in one call.
+    ///
+    /// # Returns
+    /// `PairConfig { fee_bps, price_feed_0, price_feed_1, is_paused }`
+    pub fn get_pair_config(env: Env) -> PairConfig {
+        storage::get_pair_config(&env)
+    }
+
+    /// Calculates the output amount for a swap with optional NAV-normalized
+    /// reserve math for RWA tokens.
+    ///
+    /// When a price feed is set for the input token, the input amount is
+    /// normalized by the current feed price before applying the constant-product
+    /// formula. The output is then de-normalized by the output token's feed
+    /// price (if set).
+    ///
+    /// For standard tokens (no feed), this is equivalent to the standard
+    /// Uniswap V2 `getAmountOut` formula.
+    ///
+    /// # Arguments
+    /// * `amount_in` - The amount of input tokens to swap
+    /// * `reserve_in` - The reserve of the input token
+    /// * `reserve_out` - The reserve of the output token
+    /// * `token_in` - The input token address (used to look up price feed)
+    ///
+    /// # Returns
+    /// The amount of output tokens received
+    pub fn get_amounts_out(
+        env: Env,
+        amount_in: i128,
+        reserve_in: i128,
+        reserve_out: i128,
+        token_in: Address,
+    ) -> Result<i128, PairError> {
+        if amount_in <= 0 {
+            return Err(PairError::InsufficientInputAmount);
+        }
+        if reserve_in <= 0 || reserve_out <= 0 {
+            return Err(PairError::InsufficientLiquidity);
+        }
+
+        let state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+        let fee_state = get_fee_state(&env).ok_or(PairError::NotInitialized)?;
+        let fee_bps = compute_fee_bps(&fee_state);
+
+        // Normalize reserves using price feeds if configured
+        let (norm_amount_in, norm_reserve_in, norm_reserve_out) =
+            Self::normalize_reserves(&env, &state, amount_in, reserve_in, reserve_out, &token_in)?;
+
+        // Standard CPMM formula on normalized values:
+        // amount_out = (amount_in * (10_000 - fee_bps) * reserve_out)
+        //             / (reserve_in * 10_000 + amount_in * (10_000 - fee_bps))
+        let fee_factor = 10_000i128 - fee_bps as i128;
+        let amount_in_with_fee =
+            norm_amount_in.checked_mul(fee_factor).ok_or(PairError::Overflow)?;
+
+        let numerator = amount_in_with_fee
+            .checked_mul(norm_reserve_out)
+            .ok_or(PairError::Overflow)?;
+
+        let denominator = norm_reserve_in
+            .checked_mul(10_000)
+            .ok_or(PairError::Overflow)?
+            .checked_add(amount_in_with_fee)
+            .ok_or(PairError::Overflow)?;
+
+        if denominator == 0 {
+            return Err(PairError::InsufficientLiquidity);
+        }
+
+        let norm_amount_out = numerator / denominator;
+        if norm_amount_out <= 0 {
+            return Err(PairError::InsufficientOutputAmount);
+        }
+
+        // De-normalize the output amount
+        let amount_out = Self::denormalize_amount(&env, &state, norm_amount_out, &token_in)?;
+
+        Ok(amount_out)
+    }
+
+    // ─────────────────────────────────────────
+    // Price-feed helpers (NAV normalization)
+    // ─────────────────────────────────────────
+
+    /// Normalizes reserves and input amounts using price feeds for RWA tokens.
+    ///
+    /// If a price feed is configured for the input token, the input amount and
+    /// that token's reserve are multiplied by `feed_price / PRICE_SCALE`.
+    /// If configured for the output token, the output reserve is adjusted.
+    fn normalize_reserves(
+        env: &Env,
+        state: &storage::PairStorage,
+        amount_in: i128,
+        reserve_in: i128,
+        reserve_out: i128,
+        token_in: &Address,
+    ) -> Result<(i128, i128, i128), PairError> {
+        let feed_in = get_price_feed(env, token_in, state);
+        let token_out = if *token_in == state.token_a {
+            &state.token_b
+        } else {
+            &state.token_a
+        };
+        let feed_out = get_price_feed(env, token_out, state);
+
+        // Normalize input side
+        let (norm_amount_in, norm_reserve_in) = match feed_in {
+            Some(feed_addr) => {
+                let price = PriceFeedClient::new(env, &feed_addr).get_price();
+                if price <= 0 {
+                    return Err(PairError::InvalidPriceFeed);
+                }
+                // effective_amount = raw_amount * price / PRICE_SCALE
+                let norm_amount = amount_in
+                    .checked_mul(price)
+                    .ok_or(PairError::Overflow)?
+                    .checked_div(PRICE_SCALE)
+                    .ok_or(PairError::Overflow)?;
+                let norm_reserve = reserve_in
+                    .checked_mul(price)
+                    .ok_or(PairError::Overflow)?
+                    .checked_div(PRICE_SCALE)
+                    .ok_or(PairError::Overflow)?;
+                (norm_amount, norm_reserve)
+            }
+            None => (amount_in, reserve_in),
+        };
+
+        // Normalize output side
+        let norm_reserve_out = match feed_out {
+            Some(feed_addr) => {
+                let price = PriceFeedClient::new(env, &feed_addr).get_price();
+                if price <= 0 {
+                    return Err(PairError::InvalidPriceFeed);
+                }
+                reserve_out
+                    .checked_mul(price)
+                    .ok_or(PairError::Overflow)?
+                    .checked_div(PRICE_SCALE)
+                    .ok_or(PairError::Overflow)?
+            }
+            None => reserve_out,
+        };
+
+        Ok((norm_amount_in, norm_reserve_in, norm_reserve_out))
+    }
+
+    /// De-normalizes an amount calculated in normalized space back to raw tokens.
+    ///
+    /// For RWA tokens with a price feed, the normalized amount must be divided
+    /// by the feed price to get the raw output amount.
+    fn denormalize_amount(
+        env: &Env,
+        state: &storage::PairStorage,
+        norm_amount: i128,
+        token_out: &Address,
+    ) -> Result<i128, PairError> {
+        let feed = get_price_feed(env, token_out, state);
+        match feed {
+            Some(feed_addr) => {
+                let price = PriceFeedClient::new(env, &feed_addr).get_price();
+                if price <= 0 {
+                    return Err(PairError::InvalidPriceFeed);
+                }
+                // raw_amount = norm_amount * PRICE_SCALE / price
+                norm_amount
+                    .checked_mul(PRICE_SCALE)
+                    .ok_or(PairError::Overflow)?
+                    .checked_div(price)
+                    .ok_or(PairError::Overflow)
+                    .map_err(|_| PairError::Overflow)
+            }
+            None => Ok(norm_amount),
+        }
+    }
+
+    /// Normalizes both reserves using price feeds for k-invariant check.
+    ///
+    /// Returns `(norm_reserve_a, norm_reserve_b)` where each reserve is
+    /// multiplied by its respective feed price / `PRICE_SCALE`.
+    /// If no feed is configured for a token, the reserve is returned as-is.
+    fn normalize_pair_reserves(
+        env: &Env,
+        state: &storage::PairStorage,
+        config: &PairConfig,
+    ) -> Result<(i128, i128), PairError> {
+        let norm_a = match &config.price_feed_0 {
+            Some(feed_addr) => {
+                let price = PriceFeedClient::new(env, feed_addr).get_price();
+                if price <= 0 {
+                    return Err(PairError::InvalidPriceFeed);
+                }
+                state
+                    .reserve_a
+                    .checked_mul(price)
+                    .ok_or(PairError::Overflow)?
+                    .checked_div(PRICE_SCALE)
+                    .ok_or(PairError::Overflow)?
+            }
+            None => state.reserve_a,
+        };
+
+        let norm_b = match &config.price_feed_1 {
+            Some(feed_addr) => {
+                let price = PriceFeedClient::new(env, feed_addr).get_price();
+                if price <= 0 {
+                    return Err(PairError::InvalidPriceFeed);
+                }
+                state
+                    .reserve_b
+                    .checked_mul(price)
+                    .ok_or(PairError::Overflow)?
+                    .checked_div(PRICE_SCALE)
+                    .ok_or(PairError::Overflow)?
+            }
+            None => state.reserve_b,
+        };
+
+        Ok((norm_a, norm_b))
+    }
+
+    /// Normalizes both balances using price feeds for k-invariant check.
+    ///
+    /// Returns `(norm_balance_a, norm_balance_b)` where each balance is
+    /// multiplied by its respective feed price / `PRICE_SCALE`.
+    /// If no feed is configured for a token, the balance is returned as-is.
+    fn normalize_pair_balances(
+        env: &Env,
+        state: &storage::PairStorage,
+        config: &PairConfig,
+        balance_a: i128,
+        balance_b: i128,
+    ) -> Result<(i128, i128), PairError> {
+        let norm_a = match &config.price_feed_0 {
+            Some(feed_addr) => {
+                let price = PriceFeedClient::new(env, feed_addr).get_price();
+                if price <= 0 {
+                    return Err(PairError::InvalidPriceFeed);
+                }
+                balance_a
+                    .checked_mul(price)
+                    .ok_or(PairError::Overflow)?
+                    .checked_div(PRICE_SCALE)
+                    .ok_or(PairError::Overflow)?
+            }
+            None => balance_a,
+        };
+
+        let norm_b = match &config.price_feed_1 {
+            Some(feed_addr) => {
+                let price = PriceFeedClient::new(env, feed_addr).get_price();
+                if price <= 0 {
+                    return Err(PairError::InvalidPriceFeed);
+                }
+                balance_b
+                    .checked_mul(price)
+                    .ok_or(PairError::Overflow)?
+                    .checked_div(PRICE_SCALE)
+                    .ok_or(PairError::Overflow)?
+            }
+            None => balance_b,
+        };
+
+        Ok((norm_a, norm_b))
+    }
+
     // ─────────────────────────────────────────
     // Sync
     // ─────────────────────────────────────────
@@ -715,21 +995,30 @@ impl Pair {
 
         let fee = fee_bps as i128;
 
-        let balance_a_adj = balance_a
+        // --- NAV-normalized k-invariant check (Issue #128) ---
+        // When price feeds are set for RWA tokens, normalize reserves and
+        // balances by the feed price before checking the constant-product
+        // invariant. This prevents yield-bearing tokens (e.g. Centrifuge RWAs)
+        // from causing the invariant to drift as NAV accrues.
+        let config = get_pair_config(env);
+        let (norm_reserve_a, norm_reserve_b) = Self::normalize_pair_reserves(env, &pair, &config)?;
+        let (norm_balance_a, norm_balance_b) =
+            Self::normalize_pair_balances(env, &pair, &config, balance_a, balance_b)?;
+
+        let balance_a_adj = norm_balance_a
             .checked_mul(10_000)
             .ok_or(PairError::Overflow)?
             .checked_sub(amount_a_in * fee)
             .ok_or(PairError::Overflow)?;
 
-        let balance_b_adj = balance_b
+        let balance_b_adj = norm_balance_b
             .checked_mul(10_000)
             .ok_or(PairError::Overflow)?
             .checked_sub(amount_b_in * fee)
             .ok_or(PairError::Overflow)?;
 
-        let k_before = pair
-            .reserve_a
-            .checked_mul(pair.reserve_b)
+        let k_before = norm_reserve_a
+            .checked_mul(norm_reserve_b)
             .ok_or(PairError::Overflow)?
             .checked_mul(100_000_000)
             .ok_or(PairError::Overflow)?;

@@ -17,7 +17,13 @@ mod integration_tests {
             lp_token_wasm_hash: BytesN<32>,
             fee_to_setter: Address,
         );
-        fn create_pair(env: Env, token_a: Address, token_b: Address) -> Address;
+fn create_pair(
+            env: Env,
+            token_a: Address,
+            token_b: Address,
+            price_feed_a: Option<Address>,
+            price_feed_b: Option<Address>,
+        ) -> Address;
         fn get_pair(env: Env, token_a: Address, token_b: Address) -> Option<Address>;
     }
 
@@ -116,7 +122,7 @@ mod integration_tests {
         );
         factory_client.initialize(&signers, &pair_wasm_hash, &lp_token_wasm_hash, &fee_to_setter);
 
-        let pair_address = factory_client.create_pair(&token_a, &token_b);
+let pair_address = factory_client.create_pair(&token_a, &token_b, &None, &None);
         assert_eq!(factory_client.get_pair(&token_a, &token_b), Some(pair_address.clone()));
 
         let router_client = RouterClient::new(&env, &router);

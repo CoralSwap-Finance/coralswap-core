@@ -37,7 +37,7 @@ fn test_sync_succeeds_after_init() {
     let env_init = env.clone();
     env_init.as_contract(&contract_id, || {
         let env = env_init.clone();
-        let _ = Pair::initialize(env, factory, token_a, token_b, lp_token);
+        let _ = Pair::initialize(env, factory, token_a, token_b, lp_token, None, None);
     });
 
     // Call sync - should succeed even though balance() returns 0
@@ -69,6 +69,8 @@ fn test_sync_resets_reserves() {
             token_a.clone(),
             token_b.clone(),
             lp_token.clone(),
+            None,
+            None,
         );
         let mut state = crate::storage::get_pair_state(&env).unwrap();
         state.reserve_a = 1000;
@@ -102,7 +104,7 @@ fn test_sync_updates_cumulative_prices_with_time() {
     let env_init = env.clone();
     env_init.as_contract(&contract_id, || {
         let env = env_init.clone();
-        let _ = Pair::initialize(env.clone(), factory, token_a, token_b, lp_token);
+        let _ = Pair::initialize(env.clone(), factory, token_a, token_b, lp_token, None, None);
         let mut state = crate::storage::get_pair_state(&env).unwrap();
         // Set non-zero reserves
         state.reserve_a = 1000;
@@ -137,7 +139,7 @@ fn test_sync_no_price_update_no_time() {
     let env_init = env.clone();
     env_init.as_contract(&contract_id, || {
         let env = env_init.clone();
-        let _ = Pair::initialize(env.clone(), factory, token_a, token_b, lp_token);
+        let _ = Pair::initialize(env.clone(), factory, token_a, token_b, lp_token, None, None);
         // First sync to set initial state
         let _ = Pair::sync(env.clone());
     });
@@ -180,7 +182,7 @@ fn test_sync_emits_event() {
     let env_test = env.clone();
     env_test.as_contract(&contract_id, || {
         let env = env_test.clone();
-        let _ = Pair::initialize(env.clone(), factory, token_a, token_b, lp_token);
+        let _ = Pair::initialize(env.clone(), factory, token_a, token_b, lp_token, None, None);
         let _ = Pair::sync(env.clone());
         let events = env.events().all();
         // Should have at least one event (sync event)
