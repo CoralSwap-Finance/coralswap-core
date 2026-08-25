@@ -33,7 +33,7 @@ mod factory_tests {
         let env = Env::default();
         env.mock_all_auths();
 
-        let factory_address = env.register_contract(None, Factory);
+        let factory_address = env.register(Factory, ());
         let client = FactoryClient::new(&env, &factory_address);
 
         let signer_1 = Address::generate(&env);
@@ -64,7 +64,7 @@ mod factory_tests {
     #[test]
     fn test_initialize_happy_path() {
         let env = Env::default();
-        let factory_address = env.register_contract(None, Factory);
+        let factory_address = env.register(Factory, ());
         let client = FactoryClient::new(&env, &factory_address);
         let fee_to_setter = Address::generate(&env);
 
@@ -115,7 +115,7 @@ mod factory_tests {
     #[test]
     fn test_initialize_empty_signers_fails() {
         let env = Env::default();
-        let factory_address = env.register_contract(None, Factory);
+        let factory_address = env.register(Factory, ());
         let client = FactoryClient::new(&env, &factory_address);
         let fee_to_setter = Address::generate(&env);
 
@@ -135,7 +135,7 @@ mod factory_tests {
     #[test]
     fn test_initialize_too_many_signers_fails() {
         let env = Env::default();
-        let factory_address = env.register_contract(None, Factory);
+        let factory_address = env.register(Factory, ());
         let client = FactoryClient::new(&env, &factory_address);
         let fee_to_setter = Address::generate(&env);
 
@@ -156,7 +156,7 @@ mod factory_tests {
     #[test]
     fn test_initialize_single_signer_succeeds() {
         let env = Env::default();
-        let factory_address = env.register_contract(None, Factory);
+        let factory_address = env.register(Factory, ());
         let client = FactoryClient::new(&env, &factory_address);
         let fee_to_setter = Address::generate(&env);
 
@@ -178,7 +178,7 @@ mod factory_tests {
     #[test]
     fn test_initialize_ten_signers_succeeds() {
         let env = Env::default();
-        let factory_address = env.register_contract(None, Factory);
+        let factory_address = env.register(Factory, ());
         let client = FactoryClient::new(&env, &factory_address);
         let fee_to_setter = Address::generate(&env);
 
@@ -256,7 +256,7 @@ mod factory_tests {
     #[test]
     fn test_propose_upgrade_insufficient_signers_fails() {
         let env = Env::default();
-        let factory_address = env.register_contract(None, Factory);
+        let factory_address = env.register(Factory, ());
         let client = FactoryClient::new(&env, &factory_address);
         let fee_to_setter = Address::generate(&env);
 
@@ -397,7 +397,7 @@ mod factory_tests {
 
     #[test]
     fn test_create_pair_while_paused() {
-        let (env, client, token_a, token_b, _, _, signers) = setup_env();
+        let (_env, client, token_a, token_b, _, _, signers) = setup_env();
 
         // Pause the factory using a stored signer.
         client.pause(&signers);
@@ -457,7 +457,7 @@ mod factory_tests {
     fn test_pause_insufficient_signers_fails() {
         let env = Env::default();
         // Do NOT mock_all_auths — we want real auth enforcement.
-        let factory_address = env.register_contract(None, Factory);
+        let factory_address = env.register(Factory, ());
         let client = FactoryClient::new(&env, &factory_address);
         let fee_to_setter = Address::generate(&env);
 
@@ -482,7 +482,7 @@ mod factory_tests {
     #[test]
     fn test_unpause_insufficient_signers_fails() {
         let env = Env::default();
-        let factory_address = env.register_contract(None, Factory);
+        let factory_address = env.register(Factory, ());
         let client = FactoryClient::new(&env, &factory_address);
         let fee_to_setter = Address::generate(&env);
 
@@ -582,14 +582,14 @@ mod factory_tests {
 
     #[test]
     fn test_get_all_pairs_empty_list() {
-        let (env, client, _, _, _, _, _) = setup_env();
+        let (_env, client, _, _, _, _, _) = setup_env();
         let result = client.get_all_pairs(&0, &10);
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_get_all_pairs_over_limit_returns_error() {
-        let (env, client, _, _, _, _, _) = setup_env();
+        let (_env, client, _, _, _, _, _) = setup_env();
         let result = client.try_get_all_pairs(&0, &51);
         assert!(result.is_err(), "limit > 50 must return an error");
     }
@@ -630,7 +630,7 @@ mod factory_tests {
 
     #[test]
     fn test_set_fee_to_zero_address_with_nonzero_fee_returns_error() {
-        let (env, client, _, _, _, fee_to_setter, _) = setup_env();
+        let (_env, client, _, _, _, fee_to_setter, _) = setup_env();
         // Passing None recipient but nonzero fee must fail
         let result = client.try_set_fee_to(&fee_to_setter, &None, &10u32);
         assert!(result.is_err(), "None fee_to with nonzero fee_bps must return an error");
@@ -658,7 +658,7 @@ mod factory_tests {
         let env = Env::default();
         env.mock_all_auths();
 
-        let factory_address = env.register_contract(None, Factory);
+        let factory_address = env.register(Factory, ());
         let client = FactoryClient::new(&env, &factory_address);
 
         let fee_to_setter = Address::generate(&env);

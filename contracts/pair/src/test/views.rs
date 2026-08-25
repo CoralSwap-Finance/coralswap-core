@@ -9,7 +9,7 @@ fn setup_test_env() -> (Env, PairClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
 
-    let pair_id = env.register_contract(None, Pair);
+    let pair_id = env.register(Pair, ());
     let client = PairClient::new(&env, &pair_id);
 
     (env, client)
@@ -30,7 +30,7 @@ fn test_get_reserves_initialized() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register_contract(None, Pair);
+    let contract_id = env.register(Pair, ());
     let pair_client = PairClient::new(&env, &contract_id);
 
     let factory = Address::generate(&env);
@@ -62,7 +62,7 @@ fn test_get_current_fee_bps_initialized_no_volatility() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register_contract(None, Pair);
+    let contract_id = env.register(Pair, ());
     let pair_client = PairClient::new(&env, &contract_id);
 
     let factory = Address::generate(&env);
@@ -89,7 +89,7 @@ fn test_get_reserves_after_state_change() {
 
     env.ledger().set_timestamp(12345);
 
-    let contract_id = env.register_contract(None, Pair);
+    let contract_id = env.register(Pair, ());
     let pair_client = PairClient::new(&env, &contract_id);
 
     // Direct state manipulation is cleaner for isolated testing of the view function without pulling in tokens.
@@ -125,7 +125,7 @@ fn test_get_current_fee_bps_with_state() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register_contract(None, Pair);
+    let contract_id = env.register(Pair, ());
     let pair_client = PairClient::new(&env, &contract_id);
 
     let fee_state = FeeState {

@@ -7,7 +7,7 @@ use soroban_sdk::{testutils::Address as _, Address, Env};
 fn test_approve_rejects_current_ledger_expiration() {
     let env = Env::default();
     env.mock_all_auths_allowing_non_root_auth();
-    let contract_id = env.register_contract(None, LpToken);
+    let contract_id = env.register(LpToken, ());
     let client = LpTokenClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     let spender = Address::generate(&env);
@@ -23,7 +23,7 @@ fn test_approve_rejects_current_ledger_expiration() {
 fn test_approve_allows_future_expiration_and_transfer_from_deducts_allowance() {
     let env = Env::default();
     env.mock_all_auths_allowing_non_root_auth();
-    let contract_id = env.register_contract(None, LpToken);
+    let contract_id = env.register(LpToken, ());
     let client = LpTokenClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     let spender = Address::generate(&env);

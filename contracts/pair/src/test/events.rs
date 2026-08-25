@@ -26,7 +26,7 @@ impl EventStub {}
 #[test]
 fn swap_event_emits_correct_topics_and_data() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, EventStub);
+    let contract_id = env.register(EventStub, ());
     let sender = Address::generate(&env);
     let to = Address::generate(&env);
 
@@ -44,7 +44,7 @@ fn swap_event_emits_correct_topics_and_data() {
 #[test]
 fn mint_event_emits_correct_topics_and_data() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, EventStub);
+    let contract_id = env.register(EventStub, ());
     let sender = Address::generate(&env);
 
     env.as_contract(&contract_id, || {
@@ -61,7 +61,7 @@ fn mint_event_emits_correct_topics_and_data() {
 #[test]
 fn burn_event_emits_correct_topics_and_data() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, EventStub);
+    let contract_id = env.register(EventStub, ());
     let sender = Address::generate(&env);
     let to = Address::generate(&env);
 
@@ -79,7 +79,7 @@ fn burn_event_emits_correct_topics_and_data() {
 #[test]
 fn sync_event_emits_correct_topics_and_data() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, EventStub);
+    let contract_id = env.register(EventStub, ());
 
     env.as_contract(&contract_id, || {
         PairEvents::sync(&env, 10_000_i128, 20_000_i128);
@@ -95,7 +95,7 @@ fn sync_event_emits_correct_topics_and_data() {
 #[test]
 fn reward_added_event_emits_correct_topics_and_data() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, EventStub);
+    let contract_id = env.register(EventStub, ());
     let token = Address::generate(&env);
 
     env.as_contract(&contract_id, || {
@@ -112,7 +112,7 @@ fn reward_added_event_emits_correct_topics_and_data() {
 #[test]
 fn reward_rate_event_emits_correct_topics_and_data() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, EventStub);
+    let contract_id = env.register(EventStub, ());
     let token = Address::generate(&env);
 
     env.as_contract(&contract_id, || {
@@ -129,7 +129,7 @@ fn reward_rate_event_emits_correct_topics_and_data() {
 #[test]
 fn rewards_claimed_event_emits_correct_topics_and_data() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, EventStub);
+    let contract_id = env.register(EventStub, ());
     let user = Address::generate(&env);
     let token = Address::generate(&env);
 
@@ -147,7 +147,7 @@ fn rewards_claimed_event_emits_correct_topics_and_data() {
 #[test]
 fn flash_loan_event_emits_correct_topics_and_data() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, EventStub);
+    let contract_id = env.register(EventStub, ());
     let receiver = Address::generate(&env);
 
     env.as_contract(&contract_id, || {
@@ -164,7 +164,7 @@ fn flash_loan_event_emits_correct_topics_and_data() {
 #[test]
 fn multiple_events_are_independent() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, EventStub);
+    let contract_id = env.register(EventStub, ());
     let sender = Address::generate(&env);
 
     env.as_contract(&contract_id, || {

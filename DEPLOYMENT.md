@@ -7,7 +7,7 @@ Step-by-step instructions for deploying CoralSwap contracts to Stellar testnet a
 | Requirement | Version / Notes |
 |---|---|
 | **Rust** | Stable toolchain (managed by `rust-toolchain.toml`) |
-| **wasm32-unknown-unknown target** | Installed automatically via `rust-toolchain.toml` |
+| **wasm32v1-none target** | Installed automatically via `rust-toolchain.toml` |
 | **Soroban CLI** | `stellar` CLI with Soroban support (>= 21.x recommended) |
 | **Stellar account** | Funded account with signing key for deployment |
 
@@ -59,12 +59,12 @@ make build
 soroban contract build
 ```
 
-The compiled WASM files are output to `target/wasm32-unknown-unknown/release/`.
+The compiled WASM files are output to `target/wasm32v1-none/release/`.
 
 Verify the build artifacts exist:
 
 ```bash
-ls target/wasm32-unknown-unknown/release/*.wasm
+ls target/wasm32v1-none/release/*.wasm
 ```
 
 Expected outputs:
@@ -80,7 +80,7 @@ Before deploying, record the WASM hash of each contract. These hashes are used d
 
 ```bash
 stellar contract install \
-  --wasm target/wasm32-unknown-unknown/release/coralswap_factory.wasm \
+  --wasm target/wasm32v1-none/release/coralswap_factory.wasm \
   --source deployer \
   --network testnet
 ```
@@ -94,22 +94,22 @@ This prints the WASM hash (a 64-character hex string). Repeat for each contract.
 ```bash
 # Install each contract's WASM and note the returned hash
 PAIR_HASH=$(stellar contract install \
-  --wasm target/wasm32-unknown-unknown/release/coralswap_pair.wasm \
+  --wasm target/wasm32v1-none/release/coralswap_pair.wasm \
   --source deployer \
   --network testnet)
 
 LP_TOKEN_HASH=$(stellar contract install \
-  --wasm target/wasm32-unknown-unknown/release/coralswap_lp_token.wasm \
+  --wasm target/wasm32v1-none/release/coralswap_lp_token.wasm \
   --source deployer \
   --network testnet)
 
 FACTORY_HASH=$(stellar contract install \
-  --wasm target/wasm32-unknown-unknown/release/coralswap_factory.wasm \
+  --wasm target/wasm32v1-none/release/coralswap_factory.wasm \
   --source deployer \
   --network testnet)
 
 ROUTER_HASH=$(stellar contract install \
-  --wasm target/wasm32-unknown-unknown/release/coralswap_router.wasm \
+  --wasm target/wasm32v1-none/release/coralswap_router.wasm \
   --source deployer \
   --network testnet)
 ```
@@ -213,7 +213,7 @@ stellar contract info \
 
 # Compare against your local build hash
 stellar contract install \
-  --wasm target/wasm32-unknown-unknown/release/coralswap_factory.wasm \
+  --wasm target/wasm32v1-none/release/coralswap_factory.wasm \
   --source deployer \
   --network testnet
 ```
@@ -238,10 +238,10 @@ Common causes:
 - **Insufficient gas**: Increase the fee with `--fee <stroops>` (e.g., `--fee 1000000`).
 - **Wrong network**: Verify you're targeting the correct network in your command.
 
-### `error: wasm32-unknown-unknown target not installed`
+### `error: wasm32v1-none target not installed`
 
 ```bash
-rustup target add wasm32-unknown-unknown
+rustup target add wasm32v1-none
 ```
 
 ### Build fails with dependency errors

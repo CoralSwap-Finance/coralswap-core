@@ -69,10 +69,10 @@ fn setup_pair(
     let env = Env::default();
     env.mock_all_auths_allowing_non_root_auth();
 
-    let token_a_id = env.register_contract(None, MintOneMockToken);
-    let token_b_id = env.register_contract(None, MintOneMockToken);
-    let lp_id = env.register_contract(None, LpToken);
-    let pair_id = env.register_contract(None, Pair);
+    let token_a_id = env.register(MintOneMockToken, ());
+    let token_b_id = env.register(MintOneMockToken, ());
+    let lp_id = env.register(LpToken, ());
+    let pair_id = env.register(Pair, ());
 
     let token_a = MintOneMockTokenClient::new(&env, &token_a_id);
     let token_b = MintOneMockTokenClient::new(&env, &token_b_id);
@@ -100,14 +100,6 @@ fn setup_pair(
     pair_client.mint(&seed_user);
 
     (env, pair_client, token_a, token_b, lp_client, seed_user, token_a_id, token_b_id)
-}
-
-// ── Helper: replicate on-chain swap-out formula for test assertions ───────────
-
-fn get_amount_out(amount_in: i128, reserve_in: i128, reserve_out: i128, fee_bps: i128) -> i128 {
-    let fee_factor = 10_000 - fee_bps;
-    let aif = amount_in * fee_factor;
-    aif * reserve_out / (reserve_in * 10_000 + aif)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

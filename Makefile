@@ -5,10 +5,10 @@ build:
 	soroban contract build
 
 # Build all contracts with release profile, optimised for WASM deployment.
-# Produces .wasm files in target/wasm32-unknown-unknown/release/ ready for
+# Produces .wasm files in target/wasm32v1-none/release/ ready for
 # on-chain upload.
 build-optimized:
-	cargo build --release --target wasm32-unknown-unknown
+	cargo build --release --target wasm32v1-none
 
 # Run the full workspace test suite
 test:
@@ -32,14 +32,14 @@ clean:
 deploy-testnet: build-optimized
 	@echo "Deploying contracts to testnet..."
 	soroban contract deploy \
-		--wasm target/wasm32-unknown-unknown/release/factory.wasm \
+		--wasm target/wasm32v1-none/release/coralswap_factory.wasm \
 		--network testnet
 	soroban contract deploy \
-		--wasm target/wasm32-unknown-unknown/release/pair.wasm \
+		--wasm target/wasm32v1-none/release/coralswap_pair.wasm \
 		--network testnet
 	soroban contract deploy \
-		--wasm target/wasm32-unknown-unknown/release/lp_token.wasm \
+		--wasm target/wasm32v1-none/release/coralswap_lp_token.wasm \
 		--network testnet
 	soroban contract deploy \
-		--wasm target/wasm32-unknown-unknown/release/router.wasm \
+		--wasm target/wasm32v1-none/release/coralswap_router.wasm \
 		--network testnet

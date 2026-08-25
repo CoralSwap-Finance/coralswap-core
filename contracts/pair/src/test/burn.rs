@@ -59,10 +59,10 @@ fn setup_pair(
     let env = Env::default();
     env.mock_all_auths_allowing_non_root_auth();
 
-    let token_a_id = env.register_contract(None, BurnMockToken);
-    let token_b_id = env.register_contract(None, BurnMockToken);
-    let lp_id = env.register_contract(None, LpToken);
-    let pair_id = env.register_contract(None, Pair);
+    let token_a_id = env.register(BurnMockToken, ());
+    let token_b_id = env.register(BurnMockToken, ());
+    let lp_id = env.register(LpToken, ());
+    let pair_id = env.register(Pair, ());
 
     let token_a = BurnMockTokenClient::new(&env, &token_a_id);
     let token_b = BurnMockTokenClient::new(&env, &token_b_id);

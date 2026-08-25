@@ -103,7 +103,7 @@ impl Factory {
         let pair_address = env
             .deployer()
             .with_current_contract(salt.clone())
-            .deploy(factory_storage.pair_wasm_hash.clone());
+            .deploy_v2(factory_storage.pair_wasm_hash.clone(), ());
 
         // 2. Deploy LP Token
         let mut lp_salt_data = Bytes::new(&env);
@@ -113,12 +113,16 @@ impl Factory {
         let lp_token_address = env
             .deployer()
             .with_current_contract(lp_salt)
-            .deploy(factory_storage.lp_token_wasm_hash.clone());
+            .deploy_v2(factory_storage.lp_token_wasm_hash.clone(), ());
 
         // 3. Initialize Pair — propagate any error; do NOT store if this fails
+        // `try_initialize` returns a nested `Result`: outer layer covers
+        // invocation errors, inner one carries the pair's own error. Both
+        // must fail the call, otherwise an uninitialized pair gets stored.
         let pair_client = PairClient::new(&env, &pair_address);
         pair_client
             .try_initialize(&env.current_contract_address(), &token_0, &token_1, &lp_token_address)
+            .map_err(|_| FactoryError::NotInitialized)?
             .map_err(|_| FactoryError::NotInitialized)?;
 
         // 4. Store pair — only reached when initialize() succeeded
@@ -170,7 +174,7 @@ impl Factory {
         let mut storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
 
         // Require a majority (threshold = ceil(n/2)) of the registered signers.
-        let threshold = (storage.signers.len() + 1) / 2;
+        let threshold = storage.signers.len().div_ceil(2);
         governance::verify_multisig(&env, &signers, threshold)?;
 
         // Require that at least one of the (already auth-verified) provided
@@ -179,10 +183,7 @@ impl Factory {
         // membership check only — a second `require_auth()` on the same
         // address here would be a redundant re-authorization within the same
         // call frame, which soroban-sdk rejects.
-        signers
-            .iter()
-            .find(|s| storage.signers.contains(s))
-            .ok_or(FactoryError::Unauthorized)?;
+        signers.iter().find(|s| storage.signers.contains(s)).ok_or(FactoryError::Unauthorized)?;
 
         storage.paused = true;
         storage::set_factory_storage(&env, &storage);
@@ -193,15 +194,12 @@ impl Factory {
     pub fn unpause(env: Env, signers: Vec<Address>) -> Result<(), FactoryError> {
         let mut storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
 
-        let threshold = (storage.signers.len() + 1) / 2;
+        let threshold = storage.signers.len().div_ceil(2);
         governance::verify_multisig(&env, &signers, threshold)?;
 
         // See the matching comment in `pause()` — membership check only,
         // `verify_multisig` already required auth from every provided signer.
-        signers
-            .iter()
-            .find(|s| storage.signers.contains(s))
-            .ok_or(FactoryError::Unauthorized)?;
+        signers.iter().find(|s| storage.signers.contains(s)).ok_or(FactoryError::Unauthorized)?;
 
         storage.paused = false;
         storage::set_factory_storage(&env, &storage);
@@ -338,7 +336,7 @@ impl Factory {
     ) -> Result<(), FactoryError> {
         let factory_storage =
             storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
-        let threshold = (factory_storage.signers.len() + 1) / 2;
+        let threshold = factory_storage.signers.len().div_ceil(2);
         governance::verify_multisig(&env, &signers, threshold)?;
         upgrade::propose_upgrade(&env, new_wasm_hash)
     }
@@ -352,7 +350,7 @@ impl Factory {
     pub fn cancel_upgrade(env: Env, signers: Vec<Address>) -> Result<(), FactoryError> {
         let factory_storage =
             storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
-        let threshold = (factory_storage.signers.len() + 1) / 2;
+        let threshold = factory_storage.signers.len().div_ceil(2);
         governance::verify_multisig(&env, &signers, threshold)?;
         upgrade::cancel_upgrade(&env)
     }

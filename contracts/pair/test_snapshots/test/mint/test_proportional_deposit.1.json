@@ -702,6 +702,14 @@
                           },
                           {
                             "key": {
+                              "symbol": "stale_threshold"
+                            },
+                            "val": {
+                              "u32": 100
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "vol_accumulator"
                             },
                             "val": {

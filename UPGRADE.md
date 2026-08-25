@@ -59,7 +59,7 @@ Ensure the new WASM has been audited or peer-reviewed before proposing an upgrad
 
 ```bash
 NEW_WASM_HASH=$(stellar contract install \
-  --wasm target/wasm32-unknown-unknown/release/coralswap_factory.wasm \
+  --wasm target/wasm32v1-none/release/coralswap_factory.wasm \
   --source deployer \
   --network mainnet)
 

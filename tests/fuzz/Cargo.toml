@@ -2,6 +2,7 @@
 name = "coralswap-fuzz"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 [features]
 fuzz = ["dep:proptest"]

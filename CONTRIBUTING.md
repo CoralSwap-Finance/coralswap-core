@@ -5,7 +5,7 @@ Thank you for your interest in contributing. This document covers the setup, sta
 ## Prerequisites
 
 - **Rust** (stable) -- install via [rustup](https://rustup.rs/)
-- **wasm32-unknown-unknown target** -- `rustup target add wasm32-unknown-unknown`
+- **wasm32v1-none target** -- `rustup target add wasm32v1-none`
 - **Soroban CLI** -- `cargo install soroban-cli`
 - **Git** with commit signing recommended
 

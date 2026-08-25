@@ -30,7 +30,6 @@ const MAX_PAYLOAD_SIZE: u32 = 256;
 /// # Arguments
 /// * `amount`          – Loan principal in stroops (must be > 0).
 /// * `current_fee_bps` – Pool's current dynamic fee in basis points.
-/// Computes the flash-loan fee for `amount` stroops.
 ///
 /// Returns `Err(PairError::FeeOverflow)` when the multiplication overflows
 /// (i.e., the loan amount is astronomically large).  Callers must propagate
@@ -160,10 +159,12 @@ pub fn execute_flash_loan(
     // `on_flash_loan` returns.  We pass the pair contract address as
     // `initiator` so the receiver knows the repayment destination.
     //
-    // `try_on_flash_loan` returns a `Result`; we propagate any error so that
-    // a callback failure halts execution before the repayment balance check.
-    // This prevents a silently-failing callback from being mistaken for a
-    // successful repayment via an out-of-band token deposit.
+    // `try_on_flash_loan` returns a nested `Result`: the outer layer covers
+    // invocation errors, the inner one carries the receiver's own error.
+    // Both are propagated so that a callback failure halts execution before
+    // the repayment balance check. This prevents a silently-failing callback
+    // from being mistaken for a successful repayment via an out-of-band
+    // token deposit.
     FlashReceiverClient::new(env, receiver)
         .try_on_flash_loan(
             &contract, // initiator = pair address (repayment destination)
@@ -175,6 +176,7 @@ pub fn execute_flash_loan(
             &fee_b,
             data,
         )
+        .map_err(|_| PairError::FlashCallbackFailed)?
         .map_err(|_| PairError::FlashCallbackFailed)?;
 
     // -----------------------------------------------------------------------

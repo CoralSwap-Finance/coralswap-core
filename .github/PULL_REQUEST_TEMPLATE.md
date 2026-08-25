@@ -22,7 +22,7 @@ Closes #
 - [ ] Code follows project coding standards
 - [ ] `cargo fmt --all -- --check` passes
 - [ ] `cargo clippy --all-targets -- -D warnings` passes
-- [ ] WASM builds successfully (`cargo build --release --target wasm32-unknown-unknown`)
+- [ ] WASM builds successfully (`cargo build --release --target wasm32v1-none`)
 - [ ] Public functions have doc comments
 - [ ] Commit messages follow conventional format
 - [ ] No unrelated changes included

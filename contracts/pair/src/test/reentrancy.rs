@@ -1,7 +1,6 @@
 #![cfg(test)]
 
-use soroban_sdk::{contract, contractimpl, Address, Env};
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::{contract, contractimpl, Env};
 
 use crate::{errors::PairError, reentrancy};
 
@@ -19,7 +18,7 @@ impl ReentrancyTest {}
 #[test]
 fn test_guard_acquire_succeeds_on_first_call() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, ReentrancyTest);
+    let contract_id = env.register(ReentrancyTest, ());
 
     env.as_contract(&contract_id, || {
         let _guard = reentrancy::ReentrancyGuard::acquire(&env);
@@ -30,7 +29,7 @@ fn test_guard_acquire_succeeds_on_first_call() {
 #[test]
 fn test_guard_returns_locked_if_already_held() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, ReentrancyTest);
+    let contract_id = env.register(ReentrancyTest, ());
 
     env.as_contract(&contract_id, || {
         let _first = reentrancy::ReentrancyGuard::acquire(&env);
@@ -47,7 +46,7 @@ fn test_guard_returns_locked_if_already_held() {
 #[test]
 fn test_guard_releases_automatically_on_drop() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, ReentrancyTest);
+    let contract_id = env.register(ReentrancyTest, ());
 
     env.as_contract(&contract_id, || {
         {
@@ -67,11 +66,11 @@ fn test_guard_releases_automatically_on_drop() {
 #[test]
 fn test_guard_releases_on_early_return() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, ReentrancyTest);
+    let contract_id = env.register(ReentrancyTest, ());
 
     fn operation_that_fails(env: &Env) -> Result<(), PairError> {
         let _guard = reentrancy::ReentrancyGuard::acquire(env)?;
-        return Err(PairError::InsufficientLiquidity);
+        Err(PairError::InsufficientLiquidity)
     }
 
     env.as_contract(&contract_id, || {
@@ -93,7 +92,7 @@ fn test_guard_releases_on_early_return() {
 #[test]
 fn test_lock_state_persists_while_guard_held() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, ReentrancyTest);
+    let contract_id = env.register(ReentrancyTest, ());
 
     env.as_contract(&contract_id, || {
         let _guard = reentrancy::ReentrancyGuard::acquire(&env).unwrap();
@@ -118,7 +117,7 @@ fn test_lock_state_persists_while_guard_held() {
 #[test]
 fn test_guard_lock_error_autorelease_relock_cycle() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, ReentrancyTest);
+    let contract_id = env.register(ReentrancyTest, ());
 
     env.as_contract(&contract_id, || {
         {
@@ -152,10 +151,10 @@ fn test_guard_lock_error_autorelease_relock_cycle() {
 #[test]
 fn test_separate_envs_have_independent_locks() {
     let env1 = Env::default();
-    let contract_id1 = env1.register_contract(None, ReentrancyTest);
+    let contract_id1 = env1.register(ReentrancyTest, ());
 
     let env2 = Env::default();
-    let contract_id2 = env2.register_contract(None, ReentrancyTest);
+    let contract_id2 = env2.register(ReentrancyTest, ());
 
     env1.as_contract(&contract_id1, || {
         let _guard1 = reentrancy::ReentrancyGuard::acquire(&env1);
@@ -183,7 +182,7 @@ fn test_separate_envs_have_independent_locks() {
 #[test]
 fn test_default_state_is_unlocked() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, ReentrancyTest);
+    let contract_id = env.register(ReentrancyTest, ());
 
     env.as_contract(&contract_id, || {
         let _guard1 = reentrancy::ReentrancyGuard::acquire(&env);
@@ -201,7 +200,7 @@ fn test_default_state_is_unlocked() {
 #[test]
 fn test_guard_automatic_cleanup() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, ReentrancyTest);
+    let contract_id = env.register(ReentrancyTest, ());
 
     env.as_contract(&contract_id, || {
         {
@@ -224,7 +223,7 @@ fn test_guard_automatic_cleanup() {
 #[test]
 fn test_guard_releases_even_on_panic_simulation() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, ReentrancyTest);
+    let contract_id = env.register(ReentrancyTest, ());
 
     fn operation_that_might_panic(env: &Env, should_fail: bool) -> Result<(), PairError> {
         let _guard = reentrancy::ReentrancyGuard::acquire(env)?;
@@ -255,7 +254,7 @@ fn test_guard_releases_even_on_panic_simulation() {
 #[test]
 fn test_concurrent_operation_rejected() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, ReentrancyTest);
+    let contract_id = env.register(ReentrancyTest, ());
 
     env.as_contract(&contract_id, || {
         let _guard1 = reentrancy::ReentrancyGuard::acquire(&env).unwrap();
@@ -280,7 +279,7 @@ fn test_concurrent_operation_rejected() {
 #[test]
 fn test_burn_reentrancy_attack_was_blocked() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, ReentrancyTest);
+    let contract_id = env.register(ReentrancyTest, ());
 
     env.as_contract(&contract_id, || {
         let first_acquire = reentrancy::ReentrancyGuard::acquire(&env);
@@ -297,7 +296,7 @@ fn test_burn_reentrancy_attack_was_blocked() {
 #[test]
 fn test_mint_reentrancy_attack_was_blocked() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, ReentrancyTest);
+    let contract_id = env.register(ReentrancyTest, ());
 
     env.as_contract(&contract_id, || {
         let first_acquire = reentrancy::ReentrancyGuard::acquire(&env);
@@ -318,7 +317,7 @@ fn test_mint_reentrancy_attack_was_blocked() {
 #[test]
 fn test_guard_present_in_burn() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, ReentrancyTest);
+    let contract_id = env.register(ReentrancyTest, ());
 
     env.as_contract(&contract_id, || {
         let guard = reentrancy::ReentrancyGuard::acquire(&env);
@@ -335,7 +334,7 @@ fn test_guard_present_in_burn() {
 #[test]
 fn test_guard_present_in_mint() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, ReentrancyTest);
+    let contract_id = env.register(ReentrancyTest, ());
 
     env.as_contract(&contract_id, || {
         let guard = reentrancy::ReentrancyGuard::acquire(&env);
@@ -359,7 +358,7 @@ fn test_burn_reentrancy_guard_prevents_attack() {
     // This test verifies that burn() acquires the guard before any transfers
     // and that a reentrant call during burn() is blocked
     let env = Env::default();
-    let contract_id = env.register_contract(None, ReentrancyTest);
+    let contract_id = env.register(ReentrancyTest, ());
 
     env.as_contract(&contract_id, || {
         // Simulate burn() entry: acquire the guard
@@ -381,7 +380,7 @@ fn test_mint_reentrancy_guard_prevents_attack() {
     // This test verifies that mint() acquires the guard before any transfers
     // and that a reentrant call during mint() is blocked
     let env = Env::default();
-    let contract_id = env.register_contract(None, ReentrancyTest);
+    let contract_id = env.register(ReentrancyTest, ());
 
     env.as_contract(&contract_id, || {
         // Simulate mint() entry: acquire the guard

@@ -1,4 +1,6 @@
-use crate::dynamic_fee::{compute_fee_bps, decay_stale_ema, update_volatility, DEFAULT_STALE_LEDGER_THRESHOLD};
+use crate::dynamic_fee::{
+    compute_fee_bps, decay_stale_ema, update_volatility, DEFAULT_STALE_LEDGER_THRESHOLD,
+};
 use crate::storage::FeeState;
 use soroban_sdk::{testutils::Ledger, Env};
 
@@ -29,9 +31,9 @@ fn test_update_volatility_zero_reserve_returns_error() {
     let env = Env::default();
     let mut fee_state = default_fee_state();
 
-    update_volatility(&env, &mut fee_state, 1000, 100, 0);
+    assert!(update_volatility(&env, &mut fee_state, 1000, 100, 0).is_err());
 
-    // Should not panic and accumulator should remain unchanged
+    // Accumulator should remain unchanged after the rejected update
     assert_eq!(fee_state.vol_accumulator, 0);
 }
 
@@ -44,7 +46,7 @@ fn test_update_volatility_increases_accumulator() {
     let trade_size = 1_000_000;
     let total_reserve = 10_000_000;
 
-    update_volatility(&env, &mut fee_state, price_delta, trade_size, total_reserve);
+    update_volatility(&env, &mut fee_state, price_delta, trade_size, total_reserve).unwrap();
 
     // Accumulator should increase from 0
     assert!(fee_state.vol_accumulator > 0);
@@ -60,10 +62,10 @@ fn test_update_volatility_small_trade_has_less_impact() {
     let total_reserve = 10_000_000;
 
     // Small trade: 1% of reserves
-    update_volatility(&env, &mut fee_state_small, price_delta, 100_000, total_reserve);
+    update_volatility(&env, &mut fee_state_small, price_delta, 100_000, total_reserve).unwrap();
 
     // Large trade: 10% of reserves
-    update_volatility(&env, &mut fee_state_large, price_delta, 1_000_000, total_reserve);
+    update_volatility(&env, &mut fee_state_large, price_delta, 1_000_000, total_reserve).unwrap();
 
     // Large trade should have more impact
     assert!(fee_state_large.vol_accumulator > fee_state_small.vol_accumulator);
@@ -100,7 +102,7 @@ fn test_update_volatility_prevents_manipulation_by_tiny_trades() {
     let tiny_trade = 1; // Extremely small trade
     let total_reserve = 10_000_000;
 
-    update_volatility(&env, &mut fee_state, price_delta, tiny_trade, total_reserve);
+    update_volatility(&env, &mut fee_state, price_delta, tiny_trade, total_reserve).unwrap();
 
     // Impact should be minimal due to size weighting
     assert!(fee_state.vol_accumulator < price_delta / 1000);
@@ -368,7 +370,7 @@ fn test_large_trade_increases_fee() {
     let trade_size = 2_000_000;
     let total_reserve = 10_000_000;
 
-    update_volatility(&env, &mut fee_state, price_delta, trade_size, total_reserve);
+    update_volatility(&env, &mut fee_state, price_delta, trade_size, total_reserve).unwrap();
 
     let new_fee = compute_fee_bps(&fee_state);
 
@@ -403,7 +405,8 @@ fn test_fee_stays_within_bounds_under_extreme_conditions() {
 
     // Extreme volatility updates
     for _ in 0..100 {
-        update_volatility(&env, &mut fee_state, 100_000_000_000_000, 10_000_000, 10_000_000);
+        update_volatility(&env, &mut fee_state, 100_000_000_000_000, 10_000_000, 10_000_000)
+            .unwrap();
     }
 
     let fee = compute_fee_bps(&fee_state);
@@ -573,10 +576,10 @@ fn test_swap_updates_volatility_accumulator() {
     env.mock_all_auths_allowing_non_root_auth();
 
     // Deploy contracts
-    let token_a_id = env.register_contract(None, MockToken);
-    let token_b_id = env.register_contract(None, MockToken);
-    let lp_id = env.register_contract(None, LpToken);
-    let pair_id = env.register_contract(None, Pair);
+    let token_a_id = env.register(MockToken, ());
+    let token_b_id = env.register(MockToken, ());
+    let lp_id = env.register(LpToken, ());
+    let pair_id = env.register(Pair, ());
 
     let token_a = MockTokenClient::new(&env, &token_a_id);
     let token_b = MockTokenClient::new(&env, &token_b_id);
@@ -614,7 +617,7 @@ fn test_swap_updates_volatility_accumulator() {
     token_a.transfer(&user, &pair_id, &swap_amount);
 
     // Request a reasonable output amount (less than what's available)
-    let (reserve_a, reserve_b, _) = pair_client.get_reserves();
+    let (_reserve_a, reserve_b, _) = pair_client.get_reserves();
     let amount_out = reserve_b / 20; // Request 5% of reserve_b
 
     pair_client.swap(&0, &amount_out, &user);
@@ -624,7 +627,7 @@ fn test_swap_updates_volatility_accumulator() {
 
     // Perform another large swap in opposite direction
     token_b.transfer(&user, &pair_id, &swap_amount);
-    let (reserve_a2, reserve_b2, _) = pair_client.get_reserves();
+    let (reserve_a2, _reserve_b2, _) = pair_client.get_reserves();
     let amount_out2 = reserve_a2 / 20; // Request 5% of reserve_a
     pair_client.swap(&amount_out2, &0, &user);
 
@@ -662,10 +665,10 @@ fn test_multiple_swaps_accumulate_volatility() {
     env.mock_all_auths_allowing_non_root_auth();
 
     // Deploy contracts
-    let token_a_id = env.register_contract(None, MockToken);
-    let token_b_id = env.register_contract(None, MockToken);
-    let lp_id = env.register_contract(None, LpToken);
-    let pair_id = env.register_contract(None, Pair);
+    let token_a_id = env.register(MockToken, ());
+    let token_b_id = env.register(MockToken, ());
+    let lp_id = env.register(LpToken, ());
+    let pair_id = env.register(Pair, ());
 
     let token_a = MockTokenClient::new(&env, &token_a_id);
     let token_b = MockTokenClient::new(&env, &token_b_id);
@@ -703,13 +706,13 @@ fn test_multiple_swaps_accumulate_volatility() {
         if i % 2 == 0 {
             // Swap A for B
             token_a.transfer(&user, &pair_id, &swap_amount);
-            let (reserve_a, reserve_b, _) = pair_client.get_reserves();
+            let (_reserve_a, reserve_b, _) = pair_client.get_reserves();
             let amount_out = reserve_b / 30; // Request ~3% of reserve
             pair_client.swap(&0, &amount_out, &user);
         } else {
             // Swap B for A
             token_b.transfer(&user, &pair_id, &swap_amount);
-            let (reserve_a, reserve_b, _) = pair_client.get_reserves();
+            let (reserve_a, _reserve_b, _) = pair_client.get_reserves();
             let amount_out = reserve_a / 30; // Request ~3% of reserve
             pair_client.swap(&amount_out, &0, &user);
         }
@@ -857,10 +860,10 @@ fn test_stale_threshold_boundary_1() {
     fee_state.vol_accumulator = 1_000_000_000_000;
     fee_state.last_fee_update = 0;
     fee_state.stale_threshold = 1; // Minimum valid threshold
-    // Isolate the stale_threshold gate from decay_threshold_blocks (a
-    // separate field governing how many decay periods elapsed time buys) —
-    // without this, decay_periods = elapsed / decay_threshold_blocks = 2/100
-    // rounds down to 0, so the gate fires but no decay is visible.
+                                   // Isolate the stale_threshold gate from decay_threshold_blocks (a
+                                   // separate field governing how many decay periods elapsed time buys) —
+                                   // without this, decay_periods = elapsed / decay_threshold_blocks = 2/100
+                                   // rounds down to 0, so the gate fires but no decay is visible.
     fee_state.decay_threshold_blocks = 1;
 
     let initial_vol = fee_state.vol_accumulator;
@@ -958,4 +961,3 @@ fn test_stale_threshold_affects_fee_persistence() {
     // Pool with high threshold should NOT have decayed (same fee)
     assert_eq!(fee_high_after, fee_high_before);
 }
-

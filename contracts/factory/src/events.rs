@@ -3,7 +3,9 @@ use soroban_sdk::{Address, Env};
 #[allow(dead_code)]
 pub struct FactoryEvents;
 
-#[allow(dead_code)]
+// `deprecated`: Events::publish is superseded by the #[contractevent] macro;
+// migration pending.
+#[allow(dead_code, deprecated)]
 impl FactoryEvents {
     pub fn pair_created(
         env: &Env,

@@ -124,11 +124,3 @@ pub fn consult_twap(env: &Env, window_ledgers: u32) -> Result<(i128, i128), Orac
 
     Ok((price_a_avg, price_b_avg))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    // Mock tests to satisfy rustc
-    #[test]
-    fn dummy() {}
-}

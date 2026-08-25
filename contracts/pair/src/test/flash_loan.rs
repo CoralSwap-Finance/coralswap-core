@@ -11,7 +11,7 @@ fn create_token_contract<'a>(
     e: &Env,
     admin: &Address,
 ) -> (Address, StellarAssetClient<'a>, TokenClient<'a>) {
-    let contract_id = e.register_stellar_asset_contract(admin.clone());
+    let contract_id = e.register_stellar_asset_contract_v2(admin.clone()).address();
     (
         contract_id.clone(),
         StellarAssetClient::new(e, &contract_id),
@@ -20,16 +20,16 @@ fn create_token_contract<'a>(
 }
 
 fn create_pair_contract<'a>(e: &Env) -> (Address, PairClient<'a>) {
-    let contract_id = e.register_contract(None, Pair);
+    let contract_id = e.register(Pair, ());
     (contract_id.clone(), PairClient::new(e, &contract_id))
 }
 
 fn register_honest_receiver(e: &Env) -> Address {
-    e.register_contract(None, MockFlashReceiver)
+    e.register(MockFlashReceiver, ())
 }
 
 fn register_malicious_receiver(e: &Env) -> Address {
-    e.register_contract(None, MaliciousFlashReceiver)
+    e.register(MaliciousFlashReceiver, ())
 }
 
 struct Setup<'a> {
@@ -143,6 +143,37 @@ fn flash_loan_reentrancy_nested_flash_attack_reverts() {
     let result = setup.pair_client.try_flash_loan(&setup.malicious_receiver, &10_000, &0, &attack);
 
     assert!(is_reentrancy_error(result), "nested flash_loan during callback must revert cleanly");
+}
+
+// Scenario C2 — receiver's callback reverts on its own; the pair must
+// propagate the failure instead of treating the callback as successful
+#[test]
+fn flash_loan_failing_callback_reverts_with_flash_callback_failed() {
+    let setup = Setup::new();
+    setup.fund_pool(1_000_000);
+    let (reserve_a_before, reserve_b_before, _) = setup.pair_client.get_reserves();
+
+    let attack = Bytes::from_slice(&setup.env, b"attack_fail");
+    let result = setup.pair_client.try_flash_loan(&setup.malicious_receiver, &10_000, &0, &attack);
+
+    match result {
+        Err(Ok(PairError::FlashCallbackFailed)) => {}
+        other => panic!("expected FlashCallbackFailed, got {:?}", other),
+    }
+
+    // Reserves must be untouched: a failed callback is not a repaid loan
+    let (reserve_a_after, reserve_b_after, _) = setup.pair_client.get_reserves();
+    assert_eq!(reserve_a_after, reserve_a_before);
+    assert_eq!(reserve_b_after, reserve_b_before);
+
+    // The guard must be released; an honest loan still works afterwards
+    let fee = crate::flash_loan::compute_flash_fee(1_000, 30).unwrap();
+    setup.token_a_admin.mint(&setup.honest_receiver, &(1_000 + fee));
+    let repay_action = Bytes::from_slice(&setup.env, b"repay");
+    assert_eq!(
+        setup.pair_client.try_flash_loan(&setup.honest_receiver, &1_000, &0, &repay_action),
+        Ok(Ok(()))
+    );
 }
 
 #[test]

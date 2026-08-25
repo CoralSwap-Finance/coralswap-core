@@ -8,10 +8,10 @@ fn setup_pair(env: &Env) -> (PairClient<'static>, Address, Address, Address, Add
     env.mock_all_auths_allowing_non_root_auth();
 
     // Create mock token contracts (use Pair as mock since we only need Address)
-    let token_a_id = env.register_contract(None, Pair);
-    let token_b_id = env.register_contract(None, Pair);
-    let lp_id = env.register_contract(None, LpToken);
-    let pair_id = env.register_contract(None, Pair);
+    let token_a_id = env.register(Pair, ());
+    let token_b_id = env.register(Pair, ());
+    let lp_id = env.register(LpToken, ());
+    let pair_id = env.register(Pair, ());
 
     let lp_client = LpTokenClient::new(env, &lp_id);
     let pair_client = PairClient::new(env, &pair_id);
@@ -48,7 +48,7 @@ fn test_set_stale_threshold_default_value() {
 #[test]
 fn test_set_stale_threshold_updates_value() {
     let env = Env::default();
-    let (pair_client, factory, _, _, _) = setup_pair(&env);
+    let (pair_client, _factory, _, _, _) = setup_pair(&env);
 
     env.mock_all_auths_allowing_non_root_auth();
 
@@ -121,11 +121,11 @@ fn test_set_stale_threshold_boundary_max() {
 #[test]
 fn test_set_stale_threshold_requires_factory_auth() {
     let env = Env::default();
-    let (pair_client, factory, _, _, _) = setup_pair(&env);
+    let (pair_client, _factory, _, _, _) = setup_pair(&env);
 
     // Do NOT mock all auths — try to call without proper auth
-    // Create a non-factory address
-    let unauthorized = Address::generate(&env);
+    // Any address other than the factory must not be able to authorize
+    let _unauthorized = Address::generate(&env);
 
     // Mock auth for the unauthorized address
     env.mock_all_auths_allowing_non_root_auth();
@@ -222,4 +222,3 @@ fn test_set_stale_threshold_invalid_values() {
         }
     }
 }
-

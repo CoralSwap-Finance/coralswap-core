@@ -102,8 +102,8 @@ impl MockPair {
 use crate::Router;
 
 fn deploy_router(env: &Env) -> (Address, Address) {
-    let router_id = env.register_contract(None, Router);
-    let factory_id = env.register_contract(None, MockFactory);
+    let router_id = env.register(Router, ());
+    let factory_id = env.register(MockFactory, ());
     let router = RouterClient::new(env, &router_id);
     router.initialize(&factory_id, &Vec::new(env));
     (router_id, factory_id)
@@ -125,7 +125,7 @@ fn setup_pair(
     reserve_a: i128,
     reserve_b: i128,
 ) -> Address {
-    let pair_id = env.register_contract(None, MockPair);
+    let pair_id = env.register(MockPair, ());
     let pair = MockPairClient::new(env, &pair_id);
     pair.set_reserves(&reserve_a, &reserve_b);
 
@@ -259,7 +259,7 @@ fn test_get_best_path_zero_amount() {
 #[test]
 fn test_get_best_path_no_factory_set() {
     let env = Env::default();
-    let router_id = env.register_contract(None, Router);
+    let router_id = env.register(Router, ());
     let router = RouterClient::new(&env, &router_id);
     let a = Address::generate(&env);
     let b = Address::generate(&env);
@@ -583,8 +583,8 @@ fn make_commit_hash(
 fn deploy_router_with_pair(env: &Env) -> (Address, Address, Address, Address, Address) {
     let (router_id, factory_id) = deploy_router(env);
 
-    let token_in_id = env.register_contract(None, MockToken);
-    let token_out_id = env.register_contract(None, MockToken);
+    let token_in_id = env.register(MockToken, ());
+    let token_out_id = env.register(MockToken, ());
 
     let pair_id = setup_pair(env, &factory_id, &token_in_id, &token_out_id, 1_000_000, 1_000_000);
 

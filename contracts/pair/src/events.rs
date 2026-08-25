@@ -2,6 +2,10 @@ use soroban_sdk::{symbol_short, Address, Env, Symbol};
 
 pub struct PairEvents;
 
+// `deprecated`: Events::publish is superseded by the #[contractevent] macro;
+// migration pending. `dead_code`: reward_* emitters are wired to their
+// feature in an upcoming change and exercised by tests only.
+#[allow(dead_code, deprecated)]
 impl PairEvents {
     /// Emits a `swap` event after a successful token swap.
     ///

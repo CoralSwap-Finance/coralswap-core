@@ -15,6 +15,9 @@ use storage::{AllowanceEntry, LpTokenKey, TokenMetadata};
 #[contract]
 pub struct LpToken;
 
+// `deprecated`: Events::publish is superseded by the #[contractevent] macro;
+// migration pending.
+#[allow(deprecated)]
 #[contractimpl]
 impl LpToken {
     /// Initialize the LP token with metadata and admin

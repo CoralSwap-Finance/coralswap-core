@@ -34,26 +34,17 @@ jobs:
       matrix:
         include:
           # Currently pinned version in Cargo.toml — must pass.
-          # soroban-sdk 21.x predates the reference-types/multi-value features
-          # modern rustc enables by default on wasm32-unknown-unknown, so it
-          # still builds fine on that target.
-          - name: stable
-            soroban_sdk: "21.7.7"
-            soroban_token_sdk: "21.7.7"
-            experimental: false
-            wasm_target: wasm32-unknown-unknown
-          # Latest published stable line — warn-only.
           # 26.x+ rejects wasm32-unknown-unknown on Rust 1.82+ (its build.rs
           # panics) and requires wasm32v1-none instead.
-          - name: latest-stable
-            soroban_sdk: "26.1.0"
-            soroban_token_sdk: "26.1.0"
-            experimental: true
+          - name: stable
+            soroban_sdk: "27.0.2"
+            soroban_token_sdk: "27.0.2"
+            experimental: false
             wasm_target: wasm32v1-none
-          # Next preview / release candidate — warn-only.
-          - name: preview
-            soroban_sdk: "27.0.0-rc.1"
-            soroban_token_sdk: "27.0.0-rc.1"
+          # Latest published stable version — warn-only.
+          - name: latest-stable
+            soroban_sdk: "27.0.6"
+            soroban_token_sdk: "27.0.6"
             experimental: true
             wasm_target: wasm32v1-none
     steps:
@@ -61,7 +52,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown,wasm32v1-none
+          targets: wasm32v1-none
 
       - uses: Swatinem/rust-cache@v2
         with:

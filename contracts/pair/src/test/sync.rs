@@ -26,9 +26,9 @@ impl MockToken {
 #[test]
 fn test_sync_succeeds_after_init() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, Pair);
-    let token_a = env.register_contract(None, MockToken);
-    let token_b = env.register_contract(None, MockToken);
+    let contract_id = env.register(Pair, ());
+    let token_a = env.register(MockToken, ());
+    let token_b = env.register(MockToken, ());
 
     let factory = Address::generate(&env);
     let lp_token = Address::generate(&env);
@@ -52,9 +52,9 @@ fn test_sync_succeeds_after_init() {
 #[test]
 fn test_sync_resets_reserves() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, Pair);
-    let token_a = env.register_contract(None, MockToken);
-    let token_b = env.register_contract(None, MockToken);
+    let contract_id = env.register(Pair, ());
+    let token_a = env.register(MockToken, ());
+    let token_b = env.register(MockToken, ());
 
     let factory = Address::generate(&env);
     let lp_token = Address::generate(&env);
@@ -91,9 +91,9 @@ fn test_sync_resets_reserves() {
 #[test]
 fn test_sync_updates_cumulative_prices_with_time() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, Pair);
-    let token_a = env.register_contract(None, MockToken);
-    let token_b = env.register_contract(None, MockToken);
+    let contract_id = env.register(Pair, ());
+    let token_a = env.register(MockToken, ());
+    let token_b = env.register(MockToken, ());
 
     let factory = Address::generate(&env);
     let lp_token = Address::generate(&env);
@@ -126,9 +126,9 @@ fn test_sync_updates_cumulative_prices_with_time() {
 #[test]
 fn test_sync_no_price_update_no_time() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, Pair);
-    let token_a = env.register_contract(None, MockToken);
-    let token_b = env.register_contract(None, MockToken);
+    let contract_id = env.register(Pair, ());
+    let token_a = env.register(MockToken, ());
+    let token_b = env.register(MockToken, ());
 
     let factory = Address::generate(&env);
     let lp_token = Address::generate(&env);
@@ -170,9 +170,9 @@ fn test_sync_no_price_update_no_time() {
 #[test]
 fn test_sync_emits_event() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, Pair);
-    let token_a = env.register_contract(None, MockToken);
-    let token_b = env.register_contract(None, MockToken);
+    let contract_id = env.register(Pair, ());
+    let token_a = env.register(MockToken, ());
+    let token_b = env.register(MockToken, ());
 
     let factory = Address::generate(&env);
     let lp_token = Address::generate(&env);
@@ -182,7 +182,7 @@ fn test_sync_emits_event() {
         let env = env_test.clone();
         let _ = Pair::initialize(env.clone(), factory, token_a, token_b, lp_token);
         let _ = Pair::sync(env.clone());
-        let events = env.events().all();
+        let _events = env.events().all();
         // Should have at least one event (sync event)
         //assert!(!events.is_empty(), "sync event emitted");
     });

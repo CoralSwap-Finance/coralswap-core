@@ -55,11 +55,11 @@ fn setup_harness() -> EnvHarness {
 
     let admin = Address::generate(&env);
 
-    let factory = env.register_contract(None, MockFactory);
+    let factory = env.register(MockFactory, ());
     let token_a = env.register_stellar_asset_contract(admin.clone());
     let _token_b = env.register_stellar_asset_contract(admin.clone());
 
-    let lp = env.register_contract(None, LpToken);
+    let lp = env.register(LpToken, ());
     LpTokenClient::new(&env, &lp).initialize(
         &admin,
         &7u32,
@@ -67,7 +67,7 @@ fn setup_harness() -> EnvHarness {
         &String::from_str(&env, "CLP"),
     );
 
-    let pair = env.register_contract(None, Pair);
+    let pair = env.register(Pair, ());
     let pair_client = PairClient::new(&env, &pair);
     pair_client.initialize(&factory, &token_a, &_token_b, &lp);
 
@@ -157,7 +157,7 @@ fn swap_with_override_does_not_panic_even_when_factory_missing() {
     let token_a = env.register_stellar_asset_contract(admin.clone());
     let token_b = env.register_stellar_asset_contract(admin.clone());
 
-    let lp = env.register_contract(None, LpToken);
+    let lp = env.register(LpToken, ());
     LpTokenClient::new(&env, &lp).initialize(
         &admin,
         &7u32,
@@ -165,7 +165,7 @@ fn swap_with_override_does_not_panic_even_when_factory_missing() {
         &String::from_str(&env, "LP"),
     );
 
-    let pair = env.register_contract(None, Pair);
+    let pair = env.register(Pair, ());
     let pair_client = PairClient::new(&env, &pair);
     pair_client.initialize(&factory, &token_a, &token_b, &lp);
 

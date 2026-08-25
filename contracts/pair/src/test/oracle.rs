@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{Address, Env};
 
 use crate::errors::OracleError;
 use crate::oracle::{consult_twap, update_cumulative_prices, MAX_TWAP_WINDOW};
@@ -8,7 +8,7 @@ use crate::Pair;
 
 fn setup_env() -> (Env, Address) {
     let env = Env::default();
-    let contract_id = env.register_contract(None, Pair);
+    let contract_id = env.register(Pair, ());
     (env, contract_id)
 }
 
