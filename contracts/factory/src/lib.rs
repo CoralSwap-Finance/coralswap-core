@@ -14,7 +14,7 @@ mod test;
 
 use errors::FactoryError;
 use soroban_sdk::xdr::ToXdr;
-use soroban_sdk::{contract, contractclient, contractimpl, Address, Bytes, BytesN, Env, Vec};
+use soroban_sdk::{contract, contractclient, contractimpl, Address, Bytes, BytesN, Env, Symbol, Vec};
 use storage::FactoryStorage;
 
 #[contractclient(name = "PairClient")]
@@ -207,6 +207,11 @@ impl Factory {
         Ok(())
     }
 
+    /// Sets the protocol fee recipient and the protocol fee in basis points.
+    ///
+    /// `fee_bps` is the portion of each swap input that pairs must transfer to
+    /// `fee_to` on every swap. When `fee_to` is `None`, no protocol fee is
+    /// collected.
     pub fn set_fee_to(
         env: Env,
         setter: Address,
@@ -314,6 +319,72 @@ impl Factory {
     /// their effective fee.
     pub fn get_pair_fee_override(env: Env, pair: Address) -> Option<u32> {
         storage::get_pair_fee_override(&env, &pair)
+    }
+
+    /// Records protocol fees collected by a pair.
+    ///
+    /// The pair computes the protocol's share of the swap fee, transfers it to
+    /// `fee_to`, and then calls this method so the factory can keep a
+    /// per-token balance and emit an event. Only pairs deployed by this
+    /// factory are allowed to record fees.
+    pub fn deposit_protocol_fee(
+        env: Env,
+        token: Address,
+        amount: i128,
+    ) -> Result<(), FactoryError> {
+        let factory_storage =
+            storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+
+        if factory_storage.fee_to.is_none() || factory_storage.fee_bps == 0 {
+            return Err(FactoryError::InvalidFeeRecipient);
+        }
+
+        let caller = env.caller();
+        let pair_list = storage::get_pair_list(&env);
+        let mut is_pair = false;
+        for i in 0..pair_list.len() {
+            if pair_list.get(i).unwrap() == caller.clone() {
+                is_pair = true;
+                break;
+            }
+        }
+        if !is_pair {
+            return Err(FactoryError::Unauthorized);
+        }
+
+        if amount <= 0 {
+            return Err(FactoryError::Unauthorized);
+        }
+
+        let mut key = Bytes::new(&env);
+        key.append(&Symbol::new(&env, "protocol_fee_balance").to_xdr(&env));
+        key.append(&token.clone().to_xdr(&env));
+        let balance: i128 = env.storage().instance().get(&key).unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&key, &(balance + amount));
+
+        env.events().publish(
+            (Symbol::new(&env, "protocol_fee_collected"), token),
+            (amount,),
+        );
+
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Returns the total protocol fees accumulated for `token`.
+    pub fn get_protocol_fee_balance(env: Env, token: Address) -> i128 {
+        let mut key = Bytes::new(&env);
+        key.append(&Symbol::new(&env, "protocol_fee_balance").to_xdr(&env));
+        key.append(&token.to_xdr(&env));
+        env.storage().instance().get(&key).unwrap_or(0)
+    }
+
+    /// Returns the protocol fee configured on the factory, in basis points.
+    pub fn fee_bps(env: Env) -> u32 {
+        storage::get_factory_storage(&env).map(|s| s.fee_bps).unwrap_or(0)
     }
 
     pub fn fee_to(env: Env) -> Option<Address> {
