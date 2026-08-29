@@ -1,6 +1,6 @@
 use soroban_sdk::{contracttype, Address, Env};
 
-#[contracttype]
+#contracttype
 #[derive(Clone, Debug)]
 pub struct PairStorage {
     pub factory: Address,
@@ -15,7 +15,7 @@ pub struct PairStorage {
     pub k_last: i128,
 }
 
-#[contracttype]
+#contracttype
 #[derive(Clone, Debug)]
 pub struct FeeState {
     pub vol_accumulator: i128,
@@ -27,51 +27,41 @@ pub struct FeeState {
     pub cooldown_divisor: u32,
     pub last_fee_update: u64,
     pub decay_threshold_blocks: u64,
-    /// Configurable staleness threshold in ledgers.
-    ///
-    /// The EMA volatility accumulator begins time-based exponential decay
-    /// when the pool has been idle (no trades) for this many ledgers.
-    /// This prevents idle pools from charging inflated fees.
-    ///
-    /// # Valid Range
-    /// - Minimum: 1 ledger
-    /// - Maximum: 100,000 ledgers (~11.6 days at 5s/ledger)
-    /// - Default: 100 ledgers (~8.3 minutes)
-    ///
-    /// This threshold can only be updated by calling `Pair::set_stale_threshold()`
-    /// with factory admin authorization.
     pub stale_threshold: u32,
 }
 
-#[contracttype]
+#contracttype
 #[derive(Clone, Debug)]
 pub struct ReentrancyGuard {
     pub locked: bool,
 }
 
-#[contracttype]
+#contracttype
 #[derive(Clone, Debug)]
 pub struct OracleState {
-    pub observations: soroban_sdk::Vec<(u64, i128, i128)>,
+    pub observations: soroban_sdk::Vec<(u64, i128, i128)>
 }
 
-/// Storage keys for all persistent contract state.
-#[contracttype]
+#contracttype
+#[derive(Clone, Debug)]
+pub struct ProtocolFeeState {
+    pub fee_a: i128,
+    pub fee_b: i128,
+}
+
+### Storage keys for all persistent contract state.
+#contracttype
 pub enum DataKey {
-    /// Core pair configuration and reserve state.
     PairState,
-    /// Dynamic fee EMA accumulator state.
     FeeState,
-    /// Reentrancy lock for flash loan guard.
     Guard,
-    /// Oracle ring buffer.
     OracleState,
+    ProtocolFeeState,
 }
 
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------
 // OracleState helpers
-// ---------------------------------------------------------------------------
-
+// -----------------------------------------------------------------------
 pub fn get_oracle_state(env: &Env) -> OracleState {
     env.storage()
         .instance()
@@ -83,10 +73,9 @@ pub fn set_oracle_state(env: &Env, state: &OracleState) {
     env.storage().instance().set(&DataKey::OracleState, state);
 }
 
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------
 // PairStorage helpers
-// ---------------------------------------------------------------------------
-
+// -----------------------------------------------------------------------
 pub fn get_pair_state(env: &Env) -> Option<PairStorage> {
     env.storage().instance().get(&DataKey::PairState)
 }
@@ -95,10 +84,9 @@ pub fn set_pair_state(env: &Env, state: &PairStorage) {
     env.storage().instance().set(&DataKey::PairState, state);
 }
 
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------
 // FeeState helpers
-// ---------------------------------------------------------------------------
-
+// -----------------------------------------------------------------------
 pub fn get_fee_state(env: &Env) -> Option<FeeState> {
     env.storage().instance().get(&DataKey::FeeState)
 }
@@ -107,14 +95,24 @@ pub fn set_fee_state(env: &Env, state: &FeeState) {
     env.storage().instance().set(&DataKey::FeeState, state);
 }
 
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------
 // Reentrancy helpers
-// ---------------------------------------------------------------------------
-
+// -----------------------------------------------------------------------
 pub fn get_reentrancy_guard(env: &Env) -> ReentrancyGuard {
     env.storage().instance().get(&DataKey::Guard).unwrap_or(ReentrancyGuard { locked: false })
 }
 
 pub fn set_reentrancy_guard(env: &Env, guard: &ReentrancyGuard) {
     env.storage().instance().set(&DataKey::Guard, guard);
+}
+
+// -----------------------------------------------------------------------
+// ProtocolFeeState helpers
+// -----------------------------------------------------------------------
+pub fn get_protocol_fee_state(env: &Env) -> ProtocolFeeState {
+    env.storage().instance().get(&DataKey::ProtocolFeeState).unwrap_or(ProtocolFeeState { fee_a: 0, fee_b: 0 })
+}
+
+pub fn set_protocol_fee_state(env: &Env, state: &ProtocolFeeState) {
+    env.storage().instance().set(&DataKey::ProtocolFeeState, state);
 }
