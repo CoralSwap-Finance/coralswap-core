@@ -164,6 +164,11 @@ impl Factory {
         pair_list.push_back(pair_address.clone());
         storage::set_pair_list(&env, &pair_list);
 
+        // Keep total_pairs counter in strict lockstep with the list length.
+        // This is the canonical source of truth for off-chain pagination:
+        // a single u32 read vs a full Vec deserialisation.
+        storage::set_total_pairs(&env, pair_list.len());
+
         // 5. Emit event
         events::FactoryEvents::pair_created(&env, &token_0, &token_1, &pair_address, pair_index);
 
@@ -195,6 +200,17 @@ impl Factory {
     pub fn get_pair_count(env: Env) -> u32 {
         let storage = storage::get_factory_storage(&env);
         storage.map(|s| s.pair_count).unwrap_or(0)
+    }
+
+    /// Returns the total number of pairs ever created by this factory.
+    ///
+    /// This counter is stored under its own dedicated storage key and updated
+    /// in strict lockstep with the `PairList` inside [`Factory::create_pair`].
+    /// Reading it costs a single instance-storage lookup (one `u32`) rather
+    /// than deserialising the full `FactoryStorage` blob, making it the
+    /// preferred source for off-chain "count-before-batch" pagination.
+    pub fn total_pairs(env: Env) -> u32 {
+        storage::get_total_pairs(&env)
     }
 
     pub fn pause(env: Env, signers: Vec<Address>) -> Result<(), FactoryError> {

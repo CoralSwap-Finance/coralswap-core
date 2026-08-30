@@ -762,4 +762,50 @@ mod factory_tests {
         let all = env.events().all();
         assert_eq!(all.events().len(), 1, "set_pair_fee must emit exactly one event on success");
     }
+
+    // ── Issue: total_pairs counter synced with list length ───────────────────
+
+    /// Asserts that `total_pairs()` equals `get_all_pairs(0, 50).len()` after
+    /// **each individual** `create_pair` call. This is the canonical acceptance
+    /// criterion: the cached counter must never drift from the authoritative
+    /// list, regardless of how many pairs have been created.
+    #[test]
+    fn test_total_pairs_synced_with_list() {
+        let (env, client, token_a, token_b, _, _, _) = setup_env();
+
+        // Before any pair is created both values must be zero.
+        assert_eq!(
+            client.total_pairs(),
+            client.get_all_pairs(&0, &50).len(),
+            "before first create: total_pairs must equal list length (both 0)"
+        );
+
+        // --- Create #1 (token_a / token_b) ---
+        client.create_pair(&token_a, &token_b);
+        assert_eq!(
+            client.total_pairs(),
+            client.get_all_pairs(&0, &50).len(),
+            "after create #1: total_pairs must equal list length"
+        );
+
+        // --- Create #2 (token_a / token_c) ---
+        let token_c = Address::generate(&env);
+        client.create_pair(&token_a, &token_c);
+        assert_eq!(
+            client.total_pairs(),
+            client.get_all_pairs(&0, &50).len(),
+            "after create #2: total_pairs must equal list length"
+        );
+
+        // --- Create #3 (token_b / token_c) ---
+        client.create_pair(&token_b, &token_c);
+        assert_eq!(
+            client.total_pairs(),
+            client.get_all_pairs(&0, &50).len(),
+            "after create #3: total_pairs must equal list length"
+        );
+
+        // Explicit value check: 3 creates → counter and list must both be 3.
+        assert_eq!(client.total_pairs(), 3, "total_pairs must be 3 after three creates");
+    }
 }
