@@ -60,6 +60,37 @@ are determined by the bounty listing or campaign terms. A report is not eligible
 when it is public before maintainers have had a reasonable chance to remediate
 it, duplicates a known issue, or falls outside the scope above.
 
+## Reentrancy & Cross-Contract Calls
+
+See [ARCHITECTURE.md § Soroban Reentrancy Model](ARCHITECTURE.md#soroban-reentrancy-model)
+for an authoritative explanation of how Soroban's execution model differs from
+Solidity and why a storage-based reentrancy guard is still required in CoralSwap.
+
+The residual attack surface exists because the Pair contract makes cross-contract
+calls during the flash-loan callback window while holding partially-mutated state
+(tokens transferred out, reserves not yet updated). A reentrant `swap` or nested
+`flash_loan` call during this window can observe stale reserve values and
+potentially extract value at an artificially favorable price.
+
+The following invariants are enforced by the `ReentrancyGuard` in
+`contracts/pair/src/reentrancy.rs` and **must not be relaxed** without a full
+security review:
+
+- The lock is acquired before the first `TokenClient::transfer` call in
+  `flash_loan`, `swap`, and `burn`.
+- The lock is released by a Rust `Drop` implementation, not by explicit calls,
+  ensuring release on every exit path including early `Err(...)` returns.
+- A reentrant call to any guarded function returns `PairError::Locked`
+  (error code 106) rather than panicking, preserving the ability of the outer
+  call to handle the error gracefully.
+- Host abort atomically rolls back the guard's storage entry alongside all
+  other writes, so the lock cannot become permanently stuck.
+
+Vulnerability reports that demonstrate a bypass of the reentrancy guard,
+an exploit of intermediate reserve state during the flash-loan callback window,
+or any k-invariant manipulation are considered **critical severity** and should
+be reported privately per the process above.
+
 ## Safe Harbor
 
 Good-faith research that follows this policy, avoids privacy violations, avoids
