@@ -97,11 +97,15 @@ impl Pair {
         set_reentrancy_guard(&env, &ReentrancyGuard { locked: false });
 
         // 6. Extend instance storage TTL (~7 days at 5s/ledger)
+        Self::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    fn extend_instance_ttl(env: &Env) {
         const TTL_THRESHOLD: u32 = 60_480;
         const TTL_EXTEND_TO: u32 = 120_960;
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
-
-        Ok(())
     }
 
     // ─────────────────────────────────────────
@@ -155,6 +159,7 @@ impl Pair {
         state.block_timestamp_last = env.ledger().timestamp();
 
         set_pair_state(&env, &state);
+        Self::extend_instance_ttl(&env);
 
         PairEvents::mint(&env, &to, amount_a, amount_b);
 
@@ -370,6 +375,7 @@ impl Pair {
         updated_state.block_timestamp_last = env.ledger().timestamp();
 
         set_pair_state(&env, &updated_state);
+        Self::extend_instance_ttl(&env);
 
         // ── 9. Emit event ─────────────────────────────────────────────────────
         PairEvents::mint_single_side(&env, &to, &token_in, amount, swap_in, lp_minted);
@@ -419,6 +425,7 @@ impl Pair {
         state.block_timestamp_last = env.ledger().timestamp();
 
         set_pair_state(&env, &state);
+        Self::extend_instance_ttl(&env);
 
         PairEvents::burn(&env, &to, amount_a, amount_b, &to);
 
@@ -564,6 +571,7 @@ impl Pair {
         state.block_timestamp_last = env.ledger().timestamp();
 
         set_pair_state(&env, &state);
+        Self::extend_instance_ttl(&env);
 
         PairEvents::burn_single_side(&env, &to, lp_amount, &preferred_token, total_out);
 
@@ -597,7 +605,9 @@ impl Pair {
         amount_b: i128,
         data: Bytes,
     ) -> Result<(), PairError> {
-        flash_loan::execute_flash_loan(&env, &receiver, amount_a, amount_b, &data)
+        flash_loan::execute_flash_loan(&env, &receiver, amount_a, amount_b, &data)?;
+        Self::extend_instance_ttl(&env);
+        Ok(())
     }
 
     // ─────────────────────────────────────────
@@ -651,6 +661,7 @@ impl Pair {
         state.k_last = balance_a.checked_mul(balance_b).ok_or(PairError::Overflow)?;
 
         set_pair_state(&env, &state);
+        Self::extend_instance_ttl(&env);
 
         PairEvents::sync(&env, balance_a, balance_b);
 
@@ -794,6 +805,7 @@ impl Pair {
 
         set_pair_state(env, &pair);
         set_fee_state(env, &fee_state);
+        Self::extend_instance_ttl(env);
 
         PairEvents::swap(
             env,
@@ -861,6 +873,7 @@ impl Pair {
         // Update the stale threshold.
         fee_state.stale_threshold = new_threshold;
         set_fee_state(&env, &fee_state);
+        Self::extend_instance_ttl(&env);
 
         // Emit event for off-chain indexing.
         PairEvents::stale_threshold_updated(&env, new_threshold);

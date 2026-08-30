@@ -23,6 +23,9 @@ use storage::{
     set_hubs, set_nonce_used, CommitEntry,
 };
 
+const TTL_THRESHOLD: u32 = 50_000;
+const TTL_EXTEND_TO: u32 = 120_960;
+
 /// Computes `sha256(sender || token_in || token_out || amount_in || min_out || nonce || salt)`.
 ///
 /// Fields are concatenated in XDR/big-endian encoding so the result is deterministic
@@ -57,11 +60,13 @@ impl Router {
     pub fn initialize(env: Env, factory: Address, hubs: Vec<Address>) {
         set_factory(&env, &factory);
         set_hubs(&env, &hubs);
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     /// Stores the hub token addresses used for multi-hop path discovery.
     pub fn set_hubs(env: Env, hubs: Vec<Address>) {
         set_hubs(&env, &hubs);
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     /// Returns the current list of hub token addresses.
@@ -452,6 +457,7 @@ impl Router {
     pub fn commit_swap(env: Env, sender: Address, hash: BytesN<32>) {
         sender.require_auth();
         set_commit(&env, &sender, &CommitEntry { hash, ledger: env.ledger().sequence() });
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     /// Reveals a previously committed swap and executes it atomically.
@@ -506,6 +512,7 @@ impl Router {
 
         clear_commit(&env, &sender);
         set_nonce_used(&env, &sender, nonce);
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
 
         let (path, _) = Self::get_best_path(env.clone(), token_in, token_out, amount_in)?;
         Self::swap_exact_tokens_multi_hop(env, path, amount_in, min_out, sender, u64::MAX)

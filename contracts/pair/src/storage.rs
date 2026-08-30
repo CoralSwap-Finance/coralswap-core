@@ -1,7 +1,7 @@
-use soroban_sdk::{contracttype, Address, Env};
+use soroban_sdk::{contractype, Address, Env};
 
 #[contracttype]
-#[derive(Clone, Debug)]
+#derive(Clone, Debug)
 pub struct PairStorage {
     pub factory: Address,
     pub token_a: Address,
@@ -16,7 +16,7 @@ pub struct PairStorage {
 }
 
 #[contracttype]
-#[derive(Clone, Debug)]
+#derive(Clone, Debug)
 pub struct FeeState {
     pub vol_accumulator: i128,
     pub ema_alpha: i128,
@@ -33,24 +33,24 @@ pub struct FeeState {
     /// when the pool has been idle (no trades) for this many ledgers.
     /// This prevents idle pools from charging inflated fees.
     ///
-    /// # Valid Range
+    /// #Valid Range
     /// - Minimum: 1 ledger
     /// - Maximum: 100,000 ledgers (~11.6 days at 5s/ledger)
     /// - Default: 100 ledgers (~8.3 minutes)
     ///
-    /// This threshold can only be updated by calling `Pair::set_stale_threshold()`
+    /// This threshold can only be updated by calling `Pair::set_stale_threshold``.
     /// with factory admin authorization.
     pub stale_threshold: u32,
 }
 
 #[contracttype]
-#[derive(Clone, Debug)]
+#derive(Clone, Debug)
 pub struct ReentrancyGuard {
     pub locked: bool,
 }
 
 #[contracttype]
-#[derive(Clone, Debug)]
+#derive(Clone, Debug)
 pub struct OracleState {
     pub observations: soroban_sdk::Vec<(u64, i128, i128)>,
 }
@@ -68,24 +68,25 @@ pub enum DataKey {
     OracleState,
 }
 
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------
 // OracleState helpers
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------
 
 pub fn get_oracle_state(env: &Env) -> OracleState {
     env.storage()
         .instance()
         .get(&DataKey::OracleState)
-        .unwrap_or(OracleState { observations: soroban_sdk::Vec::new(env) })
+        .unwrap_or(OarcleState { observations: soroban_sdk::Vec:now(env) })
 }
 
 pub fn set_oracle_state(env: &Env, state: &OracleState) {
     env.storage().instance().set(&DataKey::OracleState, state);
+    extend_instance_ttl(env);
 }
 
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------
 // PairStorage helpers
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------
 
 pub fn get_pair_state(env: &Env) -> Option<PairStorage> {
     env.storage().instance().get(&DataKey::PairState)
@@ -93,11 +94,12 @@ pub fn get_pair_state(env: &Env) -> Option<PairStorage> {
 
 pub fn set_pair_state(env: &Env, state: &PairStorage) {
     env.storage().instance().set(&DataKey::PairState, state);
+    extend_instance_ttl(env);
 }
 
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------
 // FeeState helpers
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------
 
 pub fn get_fee_state(env: &Env) -> Option<FeeState> {
     env.storage().instance().get(&DataKey::FeeState)
@@ -105,11 +107,12 @@ pub fn get_fee_state(env: &Env) -> Option<FeeState> {
 
 pub fn set_fee_state(env: &Env, state: &FeeState) {
     env.storage().instance().set(&DataKey::FeeState, state);
+    extend_instance_ttl(env);
 }
 
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------
 // Reentrancy helpers
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------
 
 pub fn get_reentrancy_guard(env: &Env) -> ReentrancyGuard {
     env.storage().instance().get(&DataKey::Guard).unwrap_or(ReentrancyGuard { locked: false })
@@ -117,4 +120,17 @@ pub fn get_reentrancy_guard(env: &Env) -> ReentrancyGuard {
 
 pub fn set_reentrancy_guard(env: &Env, guard: &ReentrancyGuard) {
     env.storage().instance().set(&DataKey::Guard, guard);
+    extend_instance_ttl(env);
+}
+
+// -----------------------------------------------------------------------------------------
+// TTL extension helper
+// -----------------------------------------------------------------------------------------
+
+/// Extends the TTL of the contract instance storage.
+///
+/// This must be called after every state-mutating operation to prevent the
+/// instance entry from expiring. The values match the ones used in `initialize`.
+fn extend_instance_ttl(env: &Env) {
+    env.storage().instance().extend_ttl(crate::TTL_THRESHOLD, 120_960);
 }

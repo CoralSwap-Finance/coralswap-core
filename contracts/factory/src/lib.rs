@@ -163,6 +163,7 @@ impl Factory {
         let mut pair_list = storage::get_pair_list(&env);
         pair_list.push_back(pair_address.clone());
         storage::set_pair_list(&env, &pair_list);
+        storage::extend_instance_ttl(&env);
 
         // 5. Emit event
         events::FactoryEvents::pair_created(&env, &token_0, &token_1, &pair_address, pair_index);
@@ -214,6 +215,7 @@ impl Factory {
 
         storage.paused = true;
         storage::set_factory_storage(&env, &storage);
+        storage::extend_instance_ttl(&env);
         events::FactoryEvents::paused(&env);
         Ok(())
     }
@@ -230,6 +232,7 @@ impl Factory {
 
         storage.paused = false;
         storage::set_factory_storage(&env, &storage);
+        storage::extend_instance_ttl(&env);
         events::FactoryEvents::unpaused(&env);
         Ok(())
     }
@@ -260,6 +263,7 @@ impl Factory {
         storage.fee_to = fee_to.clone();
         storage.fee_bps = fee_bps;
         storage::set_factory_storage(&env, &storage);
+        storage::extend_instance_ttl(&env);
 
         events::FactoryEvents::fee_to_set(&env, &fee_to);
         events::FactoryEvents::protocol_fee_updated(&env, old_fee_bps, fee_bps, &fee_to);
@@ -282,6 +286,7 @@ impl Factory {
 
         storage.fee_to_setter = new_setter.clone();
         storage::set_factory_storage(&env, &storage);
+        storage::extend_instance_ttl(&env);
 
         events::FactoryEvents::fee_to_setter_set(&env, &new_setter);
 
@@ -324,6 +329,7 @@ impl Factory {
 
         let old_fee_bps = storage::get_pair_fee_override(&env, &pair).unwrap_or(0);
         storage::set_pair_fee_override(&env, &pair, fee_bps);
+        storage::extend_instance_ttl(&env);
 
         events::FactoryEvents::pair_fee_override_set(
             &env,
@@ -365,12 +371,16 @@ impl Factory {
             storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
         let threshold = factory_storage.signers.len().div_ceil(2);
         governance::verify_multisig(&env, &signers, threshold)?;
-        upgrade::propose_upgrade(&env, new_wasm_hash)
+        upgrade::propose_upgrade(&env, new_wasm_hash)?;
+        storage::extend_instance_ttl(&env);
+        Ok(())
     }
 
     /// Executes a pending upgrade after the 72-hour timelock has elapsed.
     pub fn execute_upgrade(env: Env) -> Result<(), FactoryError> {
-        upgrade::execute_upgrade(&env)
+        upgrade::execute_upgrade(&env)?;
+        storage::extend_instance_ttl(&env);
+        Ok(())
     }
 
     /// Cancels a pending upgrade. Gated by multisig.
@@ -379,6 +389,8 @@ impl Factory {
             storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
         let threshold = factory_storage.signers.len().div_ceil(2);
         governance::verify_multisig(&env, &signers, threshold)?;
-        upgrade::cancel_upgrade(&env)
+        upgrade::cancel_upgrade(&env)?;
+        storage::extend_instance_ttl(&env);
+        Ok(())
     }
 }
