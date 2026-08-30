@@ -26,7 +26,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: Build
-        run: cargo build --release --target wasm32v1-none
+        run: cargo build --workspace --exclude coralswap-fuzz --exclude coralswap-integration-tests --release --target wasm32v1-none
       - name: Test
         run: cargo test
       - name: Fuzz tests

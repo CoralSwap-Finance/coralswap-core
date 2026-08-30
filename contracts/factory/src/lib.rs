@@ -14,7 +14,9 @@ mod test;
 
 use errors::FactoryError;
 use soroban_sdk::xdr::ToXdr;
-use soroban_sdk::{contract, contractclient, contractimpl, Address, Bytes, BytesN, Env, Vec};
+use soroban_sdk::{
+    contract, contractclient, contractimpl, Address, Bytes, BytesN, Env, String, Vec,
+};
 use storage::FactoryStorage;
 
 #[contractclient(name = "PairClient")]
@@ -25,6 +27,17 @@ pub trait PairInterface {
         token_a: Address,
         token_b: Address,
         lp_token: Address,
+    ) -> Result<(), FactoryError>;
+}
+
+#[contractclient(name = "LpTokenClient")]
+pub trait LpTokenInterface {
+    fn initialize(
+        env: Env,
+        admin: Address,
+        decimals: u32,
+        name: String,
+        symbol: String,
     ) -> Result<(), FactoryError>;
 }
 
@@ -114,6 +127,20 @@ impl Factory {
             .deployer()
             .with_current_contract(lp_salt)
             .deploy_v2(factory_storage.lp_token_wasm_hash.clone(), ());
+
+        // The pair is the sole LP token minter. Initialize the freshly
+        // deployed token before exposing the pair so the first liquidity mint
+        // cannot fail with an uninitialized-token error.
+        let lp_token_client = LpTokenClient::new(&env, &lp_token_address);
+        lp_token_client
+            .try_initialize(
+                &pair_address,
+                &7,
+                &String::from_str(&env, "Coral LP"),
+                &String::from_str(&env, "CLP"),
+            )
+            .map_err(|_| FactoryError::NotInitialized)?
+            .map_err(|_| FactoryError::NotInitialized)?;
 
         // 3. Initialize Pair — propagate any error; do NOT store if this fails
         // `try_initialize` returns a nested `Result`: outer layer covers
