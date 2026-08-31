@@ -23,7 +23,7 @@ use events::PairEvents;
 use factory_client::FactoryClient;
 use math::MINIMUM_LIQUIDITY;
 use soroban_sdk::{
-    contract, contractclient, contractimpl, token::TokenClient, Address, Bytes, Env,
+    contract, contractclient, contractimpl, token::TokenClient, Address, Bytes, Env, Symbol,
 };
 use storage::{
     get_fee_state, get_pair_state, set_fee_state, set_pair_state, set_reentrancy_guard, FeeState,
@@ -632,6 +632,26 @@ impl Pair {
         }
     }
 
+    /// Returns the cumulative protocol fee collected by this pair as
+    /// `(token_a_amount, token_b_amount)`.
+    ///
+    /// Protocol fees are a share of the existing swap fee and are forwarded to
+    /// the factory's `fee_to` at swap time. This view exposes the cumulative
+    /// amounts for accounting and acceptance testing.
+    pub fn get_protocol_fee_balance(env: Env) -> (i128, i128) {
+        let fee_a = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "ProtocolFeeA"))
+            .unwrap_or(0);
+        let fee_b = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "ProtocolFeeB"))
+            .unwrap_or(0);
+        (fee_a, fee_b)
+    }
+
     // ─────────────────────────────────────────
     // Sync
     // ─────────────────────────────────────────
@@ -740,9 +760,79 @@ impl Pair {
             return Err(PairError::InvalidK);
         }
 
-        pair.reserve_a = balance_a;
-        pair.reserve_b = balance_b;
-        pair.k_last = balance_a.checked_mul(balance_b).ok_or(PairError::Overflow)?;
+        // Protocol fee model: the factory's fee_bps is the protocol's share of
+        // the swap fee already charged by this pair (not an additional fee).
+        // It is expressed in basis points of that fee: 0 = no protocol cut,
+        // 10000 = the entire swap fee goes to the protocol.
+        let protocol_fee_to = match FactoryClient::new(env, &pair.factory).try_get_fee_to() {
+            Ok(Ok(Some(fee_to))) => Some(fee_to),
+            _ => None,
+        };
+        let protocol_fee_bps = match FactoryClient::new(env, &pair.factory).try_get_fee_bps() {
+            Ok(Ok(bps)) => bps.min(10_000),
+            _ => 0,
+        };
+
+        let protocol_fee_a = if protocol_fee_to.is_some() && protocol_fee_bps > 0 && amount_a_in > 0
+        {
+            amount_a_in
+                .saturating_mul(fee)
+                .saturating_mul(protocol_fee_bps as i128)
+                / 100_000_000
+        } else {
+            0
+        };
+        let protocol_fee_b = if protocol_fee_to.is_some() && protocol_fee_bps > 0 && amount_b_in > 0
+        {
+            amount_b_in
+                .saturating_mul(fee)
+                .saturating_mul(protocol_fee_bps as i128)
+                / 100_000_000
+        } else {
+            0
+        };
+
+        if let Some(fee_to) = protocol_fee_to {
+            if protocol_fee_a > 0 {
+                TokenClient::new(env, &pair.token_a)
+                    .transfer(&contract_address, &fee_to, &protocol_fee_a);
+            }
+            if protocol_fee_b > 0 {
+                TokenClient::new(env, &pair.token_b)
+                    .transfer(&contract_address, &fee_to, &protocol_fee_b);
+            }
+
+            if protocol_fee_a > 0 || protocol_fee_b > 0 {
+                let fee_a_key = Symbol::new(env, "ProtocolFeeA");
+                let fee_b_key = Symbol::new(env, "ProtocolFeeB");
+                let total_a = env
+                    .storage()
+                    .instance()
+                    .get(&fee_a_key)
+                    .unwrap_or(0)
+                    .saturating_add(protocol_fee_a);
+                let total_b = env
+                    .storage()
+                    .instance()
+                    .get(&fee_b_key)
+                    .unwrap_or(0)
+                    .saturating_add(protocol_fee_b);
+                env.storage().instance().set(&fee_a_key, &total_a);
+                env.storage().instance().set(&fee_b_key, &total_b);
+
+                env.events().publish(
+                    (Symbol::new(env, "protocol_fee_collected"),),
+                    (fee_to, protocol_fee_a, protocol_fee_b, fee_bps),
+                );
+            }
+        }
+
+        pair.reserve_a = balance_a.checked_sub(protocol_fee_a).ok_or(PairError::Overflow)?;
+        pair.reserve_b = balance_b.checked_sub(protocol_fee_b).ok_or(PairError::Overflow)?;
+        pair.k_last = pair
+            .reserve_a
+            .checked_mul(pair.reserve_b)
+            .ok_or(PairError::Overflow)?;
 
         pair.block_timestamp_last = env.ledger().timestamp();
 
