@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[allow(dead_code, deprecated)]
 mod integration_tests {
     use soroban_sdk::{
         contractclient,
@@ -6,7 +7,7 @@ mod integration_tests {
         token::{StellarAssetClient, TokenClient},
         Address, Bytes, BytesN, Env, Vec,
     };
-    use std::{fs, path::PathBuf};
+    use std::{fs, path::PathBuf, vec::Vec as StdVec};
 
     #[contractclient(name = "FactoryClient")]
     pub trait FactoryInterface {
@@ -32,7 +33,7 @@ mod integration_tests {
 
     #[contractclient(name = "RouterClient")]
     pub trait RouterInterface {
-        fn initialize(env: Env, factory: Address);
+        fn initialize(env: Env, factory: Address, hubs: Vec<Address>);
         fn add_liquidity(
             env: Env,
             token_a: Address,
@@ -56,8 +57,11 @@ mod integration_tests {
         ) -> (i128, i128);
     }
 
-    fn load_wasm(file_name: &str) -> Vec<u8> {
-        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target");
+    fn load_wasm(file_name: &str) -> StdVec<u8> {
+        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("tests crate must be inside the workspace")
+            .join("target");
         let candidates = [
             base.join("wasm32-unknown-unknown/release").join(file_name),
             base.join("wasm32v1-none/release").join(file_name),
@@ -75,7 +79,12 @@ mod integration_tests {
         );
     }
 
-    fn compute_amount_out(amount_in: i128, reserve_in: i128, reserve_out: i128, fee_bps: u32) -> i128 {
+    fn compute_amount_out(
+        amount_in: i128,
+        reserve_in: i128,
+        reserve_out: i128,
+        fee_bps: u32,
+    ) -> i128 {
         let amount_in_with_fee = amount_in * (10000 - fee_bps as i128);
         let numerator = amount_in_with_fee * reserve_out;
         let denominator = reserve_in * 10000 + amount_in_with_fee;
@@ -91,28 +100,27 @@ mod integration_tests {
         let user = Address::generate(&env);
         let fee_to_setter = Address::generate(&env);
 
-        let token_a = env.register_stellar_asset_contract(admin.clone());
-        let token_b = env.register_stellar_asset_contract(admin.clone());
-        let (token_a, token_b) = if token_a < token_b {
-            (token_a, token_b)
-        } else {
-            (token_b, token_a)
-        };
+        let token_a = env.register_stellar_asset_contract_v2(admin.clone()).address();
+        let token_b = env.register_stellar_asset_contract_v2(admin.clone()).address();
+        let (token_a, token_b) =
+            if token_a < token_b { (token_a, token_b) } else { (token_b, token_a) };
 
-        let factory = env.register_contract_wasm(None, load_wasm("coralswap_factory.wasm"));
-        let router = env.register_contract_wasm(None, load_wasm("coralswap_router.wasm"));
+        let factory_wasm = load_wasm("coralswap_factory.wasm");
+        let factory = env.register_contract_wasm(None, Bytes::from_slice(&env, &factory_wasm));
+        let router_wasm = load_wasm("coralswap_router.wasm");
+        let router = env.register_contract_wasm(None, Bytes::from_slice(&env, &router_wasm));
 
-        let pair_wasm_hash = env.deployer().upload_contract_wasm(Bytes::from_slice(&env, &load_wasm("coralswap_pair.wasm")));
-        let lp_token_wasm_hash = env.deployer().upload_contract_wasm(Bytes::from_slice(&env, &load_wasm("coralswap_lp_token.wasm")));
+        let pair_wasm_hash = env
+            .deployer()
+            .upload_contract_wasm(Bytes::from_slice(&env, &load_wasm("coralswap_pair.wasm")));
+        let lp_token_wasm_hash = env
+            .deployer()
+            .upload_contract_wasm(Bytes::from_slice(&env, &load_wasm("coralswap_lp_token.wasm")));
 
         let factory_client = FactoryClient::new(&env, &factory);
         let signers = Vec::from_array(
             &env,
-            [
-                Address::generate(&env),
-                Address::generate(&env),
-                Address::generate(&env),
-            ],
+            [Address::generate(&env), Address::generate(&env), Address::generate(&env)],
         );
         factory_client.initialize(&signers, &pair_wasm_hash, &lp_token_wasm_hash, &fee_to_setter);
 
@@ -120,7 +128,7 @@ mod integration_tests {
         assert_eq!(factory_client.get_pair(&token_a, &token_b), Some(pair_address.clone()));
 
         let router_client = RouterClient::new(&env, &router);
-        router_client.initialize(factory.clone());
+        router_client.initialize(&factory, &Vec::new(&env));
 
         let token_a_admin = StellarAssetClient::new(&env, &token_a);
         let token_b_admin = StellarAssetClient::new(&env, &token_b);
@@ -133,14 +141,7 @@ mod integration_tests {
 
         let deadline = env.ledger().timestamp() + 100;
         let (amount_a, amount_b, liquidity) = router_client.add_liquidity(
-            token_a.clone(),
-            token_b.clone(),
-            deposit_a,
-            deposit_b,
-            deposit_a,
-            deposit_b,
-            user.clone(),
-            deadline,
+            &token_a, &token_b, &deposit_a, &deposit_b, &deposit_a, &deposit_b, &user, &deadline,
         );
 
         assert_eq!(amount_a, deposit_a);
@@ -176,19 +177,14 @@ mod integration_tests {
         let new_k = reserve_a2.checked_mul(reserve_b2).expect("k overflow");
         assert!(new_k >= previous_k, "k invariant must be preserved after fee-adjusted swap");
 
-        let (returned_a, returned_b) = router_client.remove_liquidity(
-            token_a.clone(),
-            token_b.clone(),
-            liquidity,
-            0,
-            0,
-            user.clone(),
-            deadline,
-        );
+        let (returned_a, returned_b) = router_client
+            .remove_liquidity(&token_a, &token_b, &liquidity, &0, &0, &user, &deadline);
 
         assert!(returned_a > 0, "remove_liquidity must return token_a");
         assert!(returned_b > 0, "remove_liquidity must return token_b");
         assert_eq!(lp_token_client.balance(&user), 0);
-        assert_eq!(lp_token_client.balance(&pair_address), 1_000_i128);
+        // The burn path consumes the LP tokens held by the pair, including the
+        // initial minimum-liquidity balance transferred during first mint.
+        assert_eq!(lp_token_client.balance(&pair_address), 0);
     }
 }

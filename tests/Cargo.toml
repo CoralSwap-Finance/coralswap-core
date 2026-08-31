@@ -1,0 +1,16 @@
+[package]
+name = "coralswap-integration-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[test]]
+name = "integration"
+path = "integration.rs"
+
+[[test]]
+name = "reward_integration"
+path = "reward_integration.rs"
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
