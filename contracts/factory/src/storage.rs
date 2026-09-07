@@ -27,6 +27,10 @@ pub enum DataKey {
     /// Per-pair fee override (see `Factory::set_pair_fee`, issue #132).
     /// Stored as `u32` basis points; absence means "use the pair's dynamic fee".
     PairFeeOverride(Address),
+    /// Dedicated pair counter kept in strict lockstep with `PairList`.
+    /// A single `u32` read is significantly cheaper than deserialising the
+    /// full `FactoryStorage` blob just to obtain the count.
+    TotalPairs,
 }
 
 pub fn get_pair_list(env: &Env) -> Vec<Address> {
@@ -35,6 +39,22 @@ pub fn get_pair_list(env: &Env) -> Vec<Address> {
 
 pub fn set_pair_list(env: &Env, list: &Vec<Address>) {
     env.storage().instance().set(&DataKey::PairList, list);
+}
+
+// ---------------------------------------------------------------------------
+// Total-pairs counter (kept in strict lockstep with PairList)
+// ---------------------------------------------------------------------------
+
+/// Returns the cached total-pairs counter. Returns `0` before any pair is
+/// created (i.e. when the key has never been written).
+pub fn get_total_pairs(env: &Env) -> u32 {
+    env.storage().instance().get(&DataKey::TotalPairs).unwrap_or(0u32)
+}
+
+/// Persists the total-pairs counter. Must only be called immediately after
+/// pushing to `PairList` so the two values remain in lockstep.
+pub fn set_total_pairs(env: &Env, count: u32) {
+    env.storage().instance().set(&DataKey::TotalPairs, &count);
 }
 
 #[contracttype]

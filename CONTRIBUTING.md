@@ -90,6 +90,31 @@ refactor(router): extracted deadline validation helper
 - Report vulnerabilities privately via GitHub Security Advisories
 - All token math must use checked arithmetic or validated `i128` ranges
 
+### Soroban Security Model
+
+> **Important:** If you are contributing to any state-mutating function in the
+> `pair` contract — especially functions that make cross-contract calls — read
+> [ARCHITECTURE.md § Soroban Reentrancy Model](ARCHITECTURE.md#soroban-reentrancy-model)
+> before writing or reviewing code.
+
+Soroban's single-frame, copy-on-write execution model is **not** equivalent to
+Solidity's shared mutable world state. Key differences that affect how you
+write safe contract code:
+
+- **No ETH-style implicit callbacks.** Token transfers are explicit
+  cross-contract calls; there is no fallback function to exploit.
+- **Host abort rolls back atomically.** A panicking sub-call discards all
+  writes in the current invocation frame — there is no partial commit to
+  ledger state.
+- **Storage-based reentrancy guard is still required.** Within a single
+  invocation, sub-calls to the same contract observe its current working-set
+  writes. A reentrant call during the flash-loan callback window can observe
+  and exploit intermediate, not-yet-validated state.
+- **RAII lock pattern.** The `ReentrancyGuard` in
+  `contracts/pair/src/reentrancy.rs` uses Rust's `Drop` trait to guarantee
+  unconditional lock release — do not call `release_lock` manually and do not
+  bypass the guard with raw storage writes to `DataKey::Guard`.
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the project's MIT License.
