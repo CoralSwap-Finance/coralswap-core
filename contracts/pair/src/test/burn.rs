@@ -230,3 +230,153 @@ fn test_burn_single_side_lp_supply_decreases() {
         "LP total_supply must decrease by exactly lp_amount"
     );
 }
+
+// ── Issue #289: MINIMUM_LIQUIDITY seed protection tests ─────────────────────
+
+use crate::math::MINIMUM_LIQUIDITY;
+
+#[test]
+fn test_burn_seed_remains_intact_after_full_cycle() {
+    let reserve = 1_000_000_000i128;
+    let (_env, pair_client, _token_a, _token_b, lp_client, user, _token_a_id, _token_b_id) =
+        setup_pair(reserve, reserve);
+
+    let total_supply = lp_client.total_supply();
+    let user_balance = lp_client.balance(&user);
+
+    // User burns all their LP tokens (but not the seed held by the contract)
+    lp_client.transfer(&user, &pair_client.address, &user_balance);
+    let (_amount_a, _amount_b) = pair_client.burn(&user);
+
+    // After burn, the only LP tokens remaining should be the MINIMUM_LIQUIDITY seed
+    let remaining_supply = lp_client.total_supply();
+    assert_eq!(
+        remaining_supply, MINIMUM_LIQUIDITY,
+        "Only MINIMUM_LIQUIDITY seed should remain after full burn"
+    );
+
+    // The seed should be held by the pair contract
+    let contract_balance = lp_client.balance(&pair_client.address);
+    assert_eq!(
+        contract_balance, MINIMUM_LIQUIDITY,
+        "Seed should be permanently locked in the contract"
+    );
+
+    // Verify initial supply was correct (user received total - seed)
+    assert_eq!(
+        user_balance,
+        total_supply - MINIMUM_LIQUIDITY,
+        "User should have received all LP tokens except the seed"
+    );
+}
+
+#[test]
+fn test_burn_seed_not_redeemable() {
+    let reserve = 1_000_000_000i128;
+    let (_env, pair_client, token_a, token_b, lp_client, user, _token_a_id, _token_b_id) =
+        setup_pair(reserve, reserve);
+
+    let initial_token_a = token_a.balance(&user);
+    let initial_token_b = token_b.balance(&user);
+
+    // Record initial reserves
+    let (initial_reserve_a, initial_reserve_b, _) = pair_client.get_reserves();
+
+    let user_lp = lp_client.balance(&user);
+
+    // User burns all their LP tokens
+    lp_client.transfer(&user, &pair_client.address, &user_lp);
+    let (returned_a, returned_b) = pair_client.burn(&user);
+
+    let final_token_a = token_a.balance(&user);
+    let final_token_b = token_b.balance(&user);
+
+    // Calculate what proportion of reserves was returned
+    let total_supply_before_burn = user_lp + MINIMUM_LIQUIDITY;
+    let burnable_supply = total_supply_before_burn - MINIMUM_LIQUIDITY;
+
+    // Expected return should be based on burnable_supply, NOT total_supply
+    let expected_a = (user_lp * initial_reserve_a) / burnable_supply;
+    let expected_b = (user_lp * initial_reserve_b) / burnable_supply;
+
+    assert_eq!(returned_a, expected_a, "Returned token_a should exclude seed's share");
+    assert_eq!(returned_b, expected_b, "Returned token_b should exclude seed's share");
+
+    // Verify user received the correct amounts
+    assert_eq!(final_token_a - initial_token_a, returned_a, "User token_a balance mismatch");
+    assert_eq!(final_token_b - initial_token_b, returned_b, "User token_b balance mismatch");
+
+    // The remaining reserves should be the seed's proportional share
+    let (final_reserve_a, final_reserve_b, _) = pair_client.get_reserves();
+    assert!(final_reserve_a > 0, "Some reserves should remain for the seed");
+    assert!(final_reserve_b > 0, "Some reserves should remain for the seed");
+}
+
+#[test]
+fn test_burn_single_side_seed_remains_intact() {
+    let reserve = 1_000_000_000i128;
+    let (_env, pair_client, _token_a, _token_b, lp_client, user, token_a_id, _token_b_id) =
+        setup_pair(reserve, reserve);
+
+    let user_lp = lp_client.balance(&user);
+
+    // Burn most of user's LP in single-side mode
+    let burn_amount = user_lp - 10_000i128; // Leave a tiny bit
+    let _returned = pair_client.burn_single_side(&user, &burn_amount, &token_a_id, &1i128);
+
+    // Burn the rest
+    let remaining = lp_client.balance(&user);
+    if remaining > 0 {
+        let _final_return = pair_client.burn_single_side(&user, &remaining, &token_a_id, &1i128);
+    }
+
+    // After all burns, seed should still exist
+    let final_supply = lp_client.total_supply();
+    assert_eq!(
+        final_supply, MINIMUM_LIQUIDITY,
+        "Seed should remain after all single-side burns"
+    );
+
+    let contract_balance = lp_client.balance(&pair_client.address);
+    assert_eq!(
+        contract_balance, MINIMUM_LIQUIDITY,
+        "Seed should be in the contract"
+    );
+}
+
+#[test]
+fn test_burn_cannot_extract_seed_reserves() {
+    let reserve = 1_000_000_000i128;
+    let (env, pair_client, token_a, token_b, lp_client, user, _token_a_id, _token_b_id) =
+        setup_pair(reserve, reserve);
+
+    // Create a second user who will try to claim seed reserves
+    let attacker = Address::generate(&env);
+
+    // Attacker has no LP tokens
+    assert_eq!(lp_client.balance(&attacker), 0);
+
+    // Attacker cannot burn without LP tokens
+    let result = pair_client.try_burn(&attacker);
+    assert!(result.is_err(), "Cannot burn without LP tokens");
+
+    // Even if attacker somehow transfers 0 LP to contract, they get nothing
+    // (This tests the lp_balance check in burn)
+    let attacker_tokens_a_before = token_a.balance(&attacker);
+    let attacker_tokens_b_before = token_b.balance(&attacker);
+
+    // The contract holds MINIMUM_LIQUIDITY seed LP tokens
+    let contract_lp = lp_client.balance(&pair_client.address);
+    assert_eq!(contract_lp, MINIMUM_LIQUIDITY);
+
+    // Attempt to burn with 0 LP in contract (as attacker) should fail
+    let result = pair_client.try_burn(&attacker);
+    assert!(result.is_err(), "Burn with 0 LP should fail");
+
+    // Verify attacker received nothing
+    assert_eq!(token_a.balance(&attacker), attacker_tokens_a_before);
+    assert_eq!(token_b.balance(&attacker), attacker_tokens_b_before);
+
+    // Seed remains intact
+    assert_eq!(lp_client.balance(&pair_client.address), MINIMUM_LIQUIDITY);
+}

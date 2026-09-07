@@ -12,6 +12,10 @@ use errors::LpTokenError;
 use soroban_sdk::{contract, contractimpl, xdr::ToXdr, Address, Bytes, BytesN, Env, String};
 use storage::{AllowanceEntry, LpTokenKey, TokenMetadata};
 
+// TTL policy constants for persistent storage entries
+const TTL_THRESHOLD: u32 = 518_400; // ~30 days at 5s/ledger
+const TTL_EXTEND_TO: u32 = 1_036_800; // ~60 days at 5s/ledger
+
 #[contract]
 pub struct LpToken;
 
@@ -169,7 +173,9 @@ impl LpToken {
         let ledgers_to_live = deadline.saturating_sub(env.ledger().sequence());
         env.storage().persistent().extend_ttl(&key, ledgers_to_live, ledgers_to_live);
 
-        env.storage().persistent().set(&LpTokenKey::Nonce(owner.clone()), &(nonce + 1));
+        let nonce_key = LpTokenKey::Nonce(owner.clone());
+        env.storage().persistent().set(&nonce_key, &(nonce + 1));
+        env.storage().persistent().extend_ttl(&nonce_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         Ok(())
     }
@@ -234,7 +240,14 @@ impl LpToken {
     /// Get the balance of an address
     pub fn balance(env: Env, id: Address) -> i128 {
         let key = LpTokenKey::Balance(id);
-        env.storage().persistent().get(&key).unwrap_or(0)
+        let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        
+        // Proactively extend TTL if balance exists
+        if balance > 0 {
+            env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        }
+        
+        balance
     }
 
     /// Transfer tokens from `from` to `to`
@@ -470,6 +483,7 @@ impl LpToken {
             storage.persistent().remove(key);
         } else {
             storage.persistent().set(key, &balance);
+            storage.persistent().extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
         }
     }
 }

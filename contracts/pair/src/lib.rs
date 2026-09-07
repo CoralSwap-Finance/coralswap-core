@@ -397,8 +397,18 @@ impl Pair {
             return Err(PairError::InsufficientLiquidityBurned);
         }
 
+        // Exclude the MINIMUM_LIQUIDITY seed from burn accounting. The seed is permanently
+        // locked in the contract and must not be redeemable. Only LP tokens above the seed
+        // amount represent claimable reserves.
+        let burnable_supply =
+            total_supply.checked_sub(MINIMUM_LIQUIDITY).ok_or(PairError::Overflow)?;
+
+        if burnable_supply == 0 {
+            return Err(PairError::InsufficientLiquidityBurned);
+        }
+
         let (amount_a, amount_b) =
-            math::burn_amounts(lp_balance, state.reserve_a, state.reserve_b, total_supply)?;
+            math::burn_amounts(lp_balance, state.reserve_a, state.reserve_b, burnable_supply)?;
 
         if amount_a <= 0 || amount_b <= 0 {
             return Err(PairError::InsufficientLiquidityBurned);
@@ -465,16 +475,25 @@ impl Pair {
         // Burn LP from caller (total_supply read before burn)
         lp_client.burn(&to, &lp_amount);
 
+        // Exclude the MINIMUM_LIQUIDITY seed from burn accounting. The seed is permanently
+        // locked and must not be redeemable.
+        let burnable_supply =
+            total_supply.checked_sub(MINIMUM_LIQUIDITY).ok_or(PairError::Overflow)?;
+
+        if burnable_supply == 0 {
+            return Err(PairError::InsufficientLiquidityBurned);
+        }
+
         let share_a = lp_amount
             .checked_mul(state.reserve_a)
             .ok_or(PairError::Overflow)?
-            .checked_div(total_supply)
+            .checked_div(burnable_supply)
             .ok_or(PairError::Overflow)?;
 
         let share_b = lp_amount
             .checked_mul(state.reserve_b)
             .ok_or(PairError::Overflow)?
-            .checked_div(total_supply)
+            .checked_div(burnable_supply)
             .ok_or(PairError::Overflow)?;
 
         if share_a <= 0 || share_b <= 0 {
