@@ -1,6 +1,6 @@
 use soroban_sdk::{contracttype, Address, Env};
 
-#contracttype
+#[contracttype]
 #[derive(Clone, Debug)]
 pub struct PairStorage {
     pub factory: Address,
@@ -15,7 +15,7 @@ pub struct PairStorage {
     pub k_last: i128,
 }
 
-#contracttype
+#[contracttype]
 #[derive(Clone, Debug)]
 pub struct FeeState {
     pub vol_accumulator: i128,
@@ -30,27 +30,27 @@ pub struct FeeState {
     pub stale_threshold: u32,
 }
 
-#contracttype
+#[contracttype]
 #[derive(Clone, Debug)]
 pub struct ReentrancyGuard {
     pub locked: bool,
 }
 
-#contracttype
+#[contracttype]
 #[derive(Clone, Debug)]
 pub struct OracleState {
     pub observations: soroban_sdk::Vec<(u64, i128, i128)>
 }
 
-#contracttype
+#[contracttype]
 #[derive(Clone, Debug)]
 pub struct ProtocolFeeState {
     pub fee_a: i128,
     pub fee_b: i128,
 }
 
-### Storage keys for all persistent contract state.
-#contracttype
+/// Storage keys for all persistent contract state.
+#[contracttype]
 pub enum DataKey {
     PairState,
     FeeState,
