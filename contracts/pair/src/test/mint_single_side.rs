@@ -388,3 +388,54 @@ fn test_mint_with_one_token_multiple_users() {
         assert_eq!(lp_client.total_supply() - supply_before, lp);
     }
 }
+
+// ── Regression: a single-sided deposit keeps (almost) its full value ─────────
+//
+// `mint_with_one_token` credits LP for the smaller side of the post-swap
+// deposit and adds BOTH sides to reserves, so any imbalance is donated to
+// existing LPs. A correct split leaves the deposit balanced and only pays the
+// swap fee on the half it swaps. The old split over-swapped: a 1%-of-pool
+// deposit received about 1.4% of the LP it was owed.
+//
+// The share is valued at the post-deposit price, where the pool is worth
+// `2 * reserve` of either token.
+
+/// 1%-of-pool deposit of token_a into a balanced pool keeps >= 99% of its value.
+#[test]
+fn test_mint_with_one_token_small_deposit_keeps_its_value() {
+    let reserve = 1_000_000_000i128;
+    let (env, pair_client, token_a, _, lp_client, _, token_a_id, _) = setup_pair(reserve, reserve);
+
+    let user = Address::generate(&env);
+    let deposit = reserve / 100;
+    token_a.mint(&user, &deposit);
+
+    let lp_minted = pair_client.mint_with_one_token(&user, &token_a_id, &deposit, &1i128);
+
+    let (reserve_a, _, _) = pair_client.get_reserves();
+    let value_in_a = 2 * lp_minted * reserve_a / lp_client.total_supply();
+    assert!(
+        value_in_a * 10_000 >= deposit * 9_900,
+        "deposit of {deposit} token_a came back as LP worth {value_in_a} token_a (< 99%)"
+    );
+}
+
+/// Same guarantee entering with token_b into a 1:4 pool.
+#[test]
+fn test_mint_with_one_token_small_deposit_keeps_its_value_asymmetric() {
+    let (env, pair_client, _, token_b, lp_client, _, _, token_b_id) =
+        setup_pair(1_000_000_000i128, 4_000_000_000i128);
+
+    let user = Address::generate(&env);
+    let deposit = 40_000_000i128; // 1% of reserve_b
+    token_b.mint(&user, &deposit);
+
+    let lp_minted = pair_client.mint_with_one_token(&user, &token_b_id, &deposit, &1i128);
+
+    let (_, reserve_b, _) = pair_client.get_reserves();
+    let value_in_b = 2 * lp_minted * reserve_b / lp_client.total_supply();
+    assert!(
+        value_in_b * 10_000 >= deposit * 9_900,
+        "deposit of {deposit} token_b came back as LP worth {value_in_b} token_b (< 99%)"
+    );
+}

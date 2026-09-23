@@ -29,6 +29,7 @@ mod oracle;
 mod pair_fee_override;
 mod reentrancy;
 mod set_stale_threshold;
+mod single_side_math;
 mod swap_math;
 mod sync;
 mod views;
