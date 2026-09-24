@@ -3,7 +3,7 @@ use soroban_sdk::Env;
 mod factory_tests {
     use super::*;
     use crate::{Factory, FactoryClient};
-    use soroban_sdk::{testutils::Address as _, testutils::Events, Address, Bytes, Vec};
+    use soroban_sdk::{testutils::Address as _, testutils::Events, Address, Bytes, BytesN, Vec};
     use std::fs;
     use std::path::PathBuf;
 
@@ -761,6 +761,30 @@ mod factory_tests {
 
         let all = env.events().all();
         assert_eq!(all.events().len(), 1, "set_pair_fee must emit exactly one event on success");
+    }
+
+    // ── Wasm hash views ──────────────────────────────────────────────────────
+
+    /// The wasm hash views must return exactly the hashes passed to `initialize`.
+    #[test]
+    fn test_wasm_hash_views_match_initialized_values() {
+        let env = Env::default();
+        let factory_address = env.register(Factory, ());
+        let client = FactoryClient::new(&env, &factory_address);
+
+        let pair_wasm_hash = BytesN::from_array(&env, &[1u8; 32]);
+        let lp_token_wasm_hash = BytesN::from_array(&env, &[2u8; 32]);
+        let signers = Vec::from_array(&env, [Address::generate(&env)]);
+
+        client.initialize(
+            &signers,
+            &pair_wasm_hash,
+            &lp_token_wasm_hash,
+            &Address::generate(&env),
+        );
+
+        assert_eq!(client.get_pair_wasm_hash(), pair_wasm_hash);
+        assert_eq!(client.get_lp_token_wasm_hash(), lp_token_wasm_hash);
     }
 
     // ── Issue: total_pairs counter synced with list length ───────────────────

@@ -13,7 +13,7 @@ mod test;
 use errors::RouterError;
 use helpers::{
     compute_optimal_amounts, get_amount_in, get_amount_out, get_pair_address,
-    get_pair_reserves_and_fee, get_path_amounts_out, sort_tokens, PairClient,
+    get_pair_reserves_and_fee, get_path_amounts_out, sort_tokens, FactoryClient, PairClient,
 };
 use soroban_sdk::{
     contract, contractimpl, token::TokenClient, xdr::ToXdr, Address, Bytes, BytesN, Env, Vec,
@@ -67,6 +67,28 @@ impl Router {
     pub fn set_hubs(env: Env, hubs: Vec<Address>) {
         set_hubs(&env, &hubs);
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Drains the router's entire balance of `token` to `recipient`, recovering
+    /// balances orphaned by a multi-hop path that failed after a transfer.
+    ///
+    /// Governance-only: requires authorization from the factory's
+    /// `fee_to_setter`. Returns the amount swept.
+    pub fn sweep(env: Env, token: Address, recipient: Address) -> Result<i128, RouterError> {
+        let factory = get_factory(&env).ok_or(RouterError::PairNotFound)?;
+        let governance =
+            FactoryClient::new(&env, &factory).fee_to_setter().ok_or(RouterError::InternalError)?;
+        governance.require_auth();
+
+        let router = env.current_contract_address();
+        let token_client = TokenClient::new(&env, &token);
+        let amount = token_client.balance(&router);
+        if amount <= 0 {
+            return Err(RouterError::ZeroAmount);
+        }
+        token_client.transfer(&router, &recipient, &amount);
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        Ok(amount)
     }
 
     /// Returns the current list of hub token addresses.

@@ -444,6 +444,20 @@ impl Factory {
         storage::get_factory_storage(&env).map(|s| s.fee_to_setter)
     }
 
+    /// Returns the WASM hash new pair contracts are deployed from.
+    pub fn get_pair_wasm_hash(env: Env) -> Result<BytesN<32>, FactoryError> {
+        storage::get_factory_storage(&env)
+            .map(|s| s.pair_wasm_hash)
+            .ok_or(FactoryError::NotInitialized)
+    }
+
+    /// Returns the WASM hash new LP token contracts are deployed from.
+    pub fn get_lp_token_wasm_hash(env: Env) -> Result<BytesN<32>, FactoryError> {
+        storage::get_factory_storage(&env)
+            .map(|s| s.lp_token_wasm_hash)
+            .ok_or(FactoryError::NotInitialized)
+    }
+
     pub fn is_paused(env: Env) -> bool {
         storage::get_factory_storage(&env).map(|s| s.paused).unwrap_or(false)
     }

@@ -23,7 +23,8 @@ use events::PairEvents;
 use factory_client::FactoryClient;
 use math::MINIMUM_LIQUIDITY;
 use soroban_sdk::{
-    contract, contractclient, contractimpl, token::TokenClient, Address, Bytes, Env, Symbol,
+    contract, contractclient, contractimpl, contracttype, token::TokenClient, Address, Bytes, Env,
+    Symbol,
 };
 use storage::{
     get_fee_state, get_pair_state, set_fee_state, set_pair_state, set_reentrancy_guard, FeeState,
@@ -35,6 +36,24 @@ pub trait LpTokenInterface {
     fn mint(env: Env, to: Address, amount: i128);
     fn burn(env: Env, from: Address, amount: i128);
     fn total_supply(env: Env) -> i128;
+}
+
+/// Version of the fee model reported by `Pair::get_fee_state`.
+///
+/// Version 1: every fee value is an integer number of basis points
+/// (1 bps = 0.01%).
+pub const FEE_MODEL_VERSION: u32 = 1;
+
+/// Fee configuration returned by `Pair::get_fee_state`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeStateView {
+    /// Fee model version; tells clients how to interpret the fee fields.
+    pub fee_model_version: u32,
+    pub current_fee_bps: u32,
+    pub baseline_fee_bps: u32,
+    pub min_fee_bps: u32,
+    pub max_fee_bps: u32,
 }
 
 #[contract]
@@ -659,6 +678,19 @@ impl Pair {
             Some(fs) => compute_fee_bps(&fs),
             None => 30,
         }
+    }
+
+    /// Returns the fee configuration together with the fee model version so
+    /// clients can interpret the values without off-chain config.
+    pub fn get_fee_state(env: Env) -> Result<FeeStateView, PairError> {
+        let fee_state = get_fee_state(&env).ok_or(PairError::NotInitialized)?;
+        Ok(FeeStateView {
+            fee_model_version: FEE_MODEL_VERSION,
+            current_fee_bps: compute_fee_bps(&fee_state),
+            baseline_fee_bps: fee_state.baseline_fee_bps,
+            min_fee_bps: fee_state.min_fee_bps,
+            max_fee_bps: fee_state.max_fee_bps,
+        })
     }
 
     /// Returns the cumulative protocol fee collected by this pair as
