@@ -1,5 +1,5 @@
 use crate::errors::PairError;
-use crate::storage::{get_fee_state, get_pair_state, get_reentrancy_guard};
+use crate::storage::{get_fee_state, get_oracle_state, get_pair_state, get_reentrancy_guard};
 use crate::{Pair, PairClient};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
@@ -102,5 +102,33 @@ fn pair_state_stores_correct_addresses() {
         assert_eq!(state.k_last, 0);
         assert_eq!(state.price_a_cumulative, 0);
         assert_eq!(state.price_b_cumulative, 0);
+    });
+}
+
+#[test]
+fn init_state_is_coherent() {
+    let (env, contract_id, factory, token_a, token_b, lp_token) = setup_env();
+    let client = PairClient::new(&env, &contract_id);
+
+    client.initialize(&factory, &token_a, &token_b, &lp_token);
+
+    env.as_contract(&contract_id, || {
+        let state = get_pair_state(&env).expect("PairStorage missing");
+        let fee = get_fee_state(&env).expect("FeeState missing");
+
+        // Reserves, k_last and cumulative prices all start empty together.
+        assert_eq!(state.reserve_a, 0);
+        assert_eq!(state.reserve_b, 0);
+        assert_eq!(state.k_last, state.reserve_a * state.reserve_b);
+        assert_eq!(state.price_a_cumulative, 0);
+        assert_eq!(state.price_b_cumulative, 0);
+        assert_eq!(state.block_timestamp_last, env.ledger().timestamp());
+        assert_eq!(get_oracle_state(&env).observations.len(), 0);
+
+        // Fee state starts with no accumulated volatility and a consistent range.
+        assert_eq!(fee.vol_accumulator, 0);
+        assert_eq!(fee.last_fee_update, 0);
+        assert!(fee.min_fee_bps <= fee.baseline_fee_bps);
+        assert!(fee.baseline_fee_bps <= fee.max_fee_bps);
     });
 }

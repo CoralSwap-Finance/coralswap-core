@@ -16,6 +16,7 @@ pub struct MockFactory;
 #[derive(Clone)]
 pub enum MFKey {
     Pair(Address, Address),
+    FeeToSetter,
 }
 
 #[contractimpl]
@@ -28,6 +29,14 @@ impl MockFactory {
     pub fn get_pair(env: Env, token_a: Address, token_b: Address) -> Option<Address> {
         let (t0, t1) = if token_a < token_b { (token_a, token_b) } else { (token_b, token_a) };
         env.storage().instance().get(&MFKey::Pair(t0, t1))
+    }
+
+    pub fn set_fee_to_setter(env: Env, setter: Address) {
+        env.storage().instance().set(&MFKey::FeeToSetter, &setter);
+    }
+
+    pub fn fee_to_setter(env: Env) -> Option<Address> {
+        env.storage().instance().get(&MFKey::FeeToSetter)
     }
 
     pub fn create_pair(_env: Env, _token_a: Address, _token_b: Address) -> Address {
@@ -152,6 +161,7 @@ pub trait RouterInterface {
     fn initialize(env: Env, factory: Address, hubs: Vec<Address>);
     fn set_hubs(env: Env, hubs: Vec<Address>);
     fn get_hubs(env: Env) -> Vec<Address>;
+    fn sweep(env: Env, token: Address, recipient: Address) -> i128;
     fn get_best_path(
         env: Env,
         token_in: Address,
@@ -784,4 +794,66 @@ fn test_commit_reveal_full_lifecycle() {
         );
     }));
     assert!(result.is_err(), "replayed nonce must be rejected");
+}
+
+// ===========================================================================
+// ============================== sweep tests ================================
+// ===========================================================================
+
+#[test]
+fn test_sweep_drains_stuck_balance_to_recipient() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (router_id, factory_id) = deploy_router(&env);
+    let router = RouterClient::new(&env, &router_id);
+
+    let governance = Address::generate(&env);
+    MockFactoryClient::new(&env, &factory_id).set_fee_to_setter(&governance);
+
+    // Simulate an orphaned balance left on the router after a failed path.
+    let token = env.register_stellar_asset_contract_v2(Address::generate(&env)).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&router_id, &500);
+
+    let recipient = Address::generate(&env);
+    let swept = router.sweep(&token, &recipient);
+
+    assert_eq!(swept, 500);
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
+    assert_eq!(token_client.balance(&recipient), 500);
+    assert_eq!(token_client.balance(&router_id), 0);
+    assert_eq!(env.auths()[0].0, governance, "sweep must be authorized by governance");
+}
+
+#[test]
+fn test_sweep_without_governance_auth_fails() {
+    // No mock_all_auths: the governance address never authorizes the call.
+    let env = Env::default();
+    let (router_id, factory_id) = deploy_router(&env);
+    let router = RouterClient::new(&env, &router_id);
+
+    MockFactoryClient::new(&env, &factory_id).set_fee_to_setter(&Address::generate(&env));
+
+    let token = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        router.sweep(&token, &recipient);
+    }));
+    assert!(result.is_err(), "sweep without governance authorization must fail");
+}
+
+#[test]
+fn test_sweep_zero_balance_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (router_id, factory_id) = deploy_router(&env);
+    let router = RouterClient::new(&env, &router_id);
+
+    MockFactoryClient::new(&env, &factory_id).set_fee_to_setter(&Address::generate(&env));
+
+    let token = env.register_stellar_asset_contract_v2(Address::generate(&env)).address();
+    let recipient = Address::generate(&env);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        router.sweep(&token, &recipient);
+    }));
+    assert!(result.is_err(), "sweeping an empty balance must fail (ZeroAmount)");
 }
