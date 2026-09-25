@@ -122,9 +122,9 @@ impl Pair {
     }
 
     fn extend_instance_ttl(env: &Env) {
-        const TTL_THRESHOLD: u32 = 60_480;
-        const TTL_EXTEND_TO: u32 = 120_960;
-        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        // Single source of truth: shared TTL policy (issue #390).
+        // INSTANCE_TTL_THRESHOLD = 60_480 (~3.5 days), EXTEND_TO = 120_960 (~7 days).
+        coralswap_shared::extend_instance_ttl(env);
     }
 
     // ─────────────────────────────────────────
@@ -145,6 +145,12 @@ impl Pair {
         let amount_a = balance_a.checked_sub(state.reserve_a).ok_or(PairError::InvalidInput)?;
 
         let amount_b = balance_b.checked_sub(state.reserve_b).ok_or(PairError::InvalidInput)?;
+
+        // Minimum-reserve / dust policy (issue 393): reject 1-stroop style
+        // deposits that fragment state. Both sides must meet MINIMUM_RESERVE.
+        if amount_a < coralswap_shared::MINIMUM_RESERVE || amount_b < coralswap_shared::MINIMUM_RESERVE {
+            return Err(PairError::DustAmount);
+        }
 
         let lp_client = LpTokenClient::new(&env, &state.lp_token);
         let total_supply = lp_client.total_supply();
@@ -167,6 +173,11 @@ impl Pair {
 
         if liquidity <= 0 {
             return Err(PairError::InsufficientLiquidityMinted);
+        }
+        // User-facing LP floor (issue 393): subsequent mints must issue at
+        // least MIN_LIQUIDITY_FOR_USER to avoid dust LP positions.
+        if liquidity < coralswap_shared::MIN_LIQUIDITY_FOR_USER {
+            return Err(PairError::DustAmount);
         }
 
         lp_client.mint(&to, &liquidity);
@@ -371,6 +382,10 @@ impl Pair {
         if lp_minted <= 0 {
             return Err(PairError::InsufficientLiquidityMinted);
         }
+        // Dust policy (issue 393): single-sided mints must also clear the LP floor.
+        if lp_minted < coralswap_shared::MIN_LIQUIDITY_FOR_USER {
+            return Err(PairError::DustAmount);
+        }
 
         // ── 7. Slippage protection ────────────────────────────────────────────
         if lp_minted < min_lp_out {
@@ -437,6 +452,16 @@ impl Pair {
 
         if amount_a <= 0 || amount_b <= 0 {
             return Err(PairError::InsufficientLiquidityBurned);
+        }
+        // Dust policy (issue 393): payouts below the reserve floor are rejected,
+        // and the pool must retain at least MINIMUM_RESERVE per side.
+        if amount_a < coralswap_shared::MINIMUM_RESERVE || amount_b < coralswap_shared::MINIMUM_RESERVE {
+            return Err(PairError::DustAmount);
+        }
+        let reserve_a_after = state.reserve_a.checked_sub(amount_a).ok_or(PairError::Overflow)?;
+        let reserve_b_after = state.reserve_b.checked_sub(amount_b).ok_or(PairError::Overflow)?;
+        if reserve_a_after < coralswap_shared::MINIMUM_RESERVE || reserve_b_after < coralswap_shared::MINIMUM_RESERVE {
+            return Err(PairError::DustAmount);
         }
 
         LpTokenClient::new(&env, &state.lp_token).burn(&contract, &lp_balance);
@@ -748,12 +773,20 @@ impl Pair {
         if amount_a_out <= 0 && amount_b_out <= 0 {
             return Err(PairError::InsufficientOutputAmount);
         }
-
         let mut pair = get_pair_state(env).ok_or(PairError::NotInitialized)?;
         let mut fee_state = get_fee_state(env).ok_or(PairError::NotInitialized)?;
 
         if amount_a_out >= pair.reserve_a || amount_b_out >= pair.reserve_b {
             return Err(PairError::InsufficientLiquidity);
+        }
+        // Reserve floor (issue 393): swaps must leave at least MINIMUM_RESERVE
+        // on each side.
+        let reserve_a_left = pair.reserve_a.checked_sub(amount_a_out).ok_or(PairError::Overflow)?;
+        let reserve_b_left = pair.reserve_b.checked_sub(amount_b_out).ok_or(PairError::Overflow)?;
+        if reserve_a_left < coralswap_shared::MINIMUM_RESERVE
+            || reserve_b_left < coralswap_shared::MINIMUM_RESERVE
+        {
+            return Err(PairError::DustAmount);
         }
 
         // Store pre-swap reserves for price delta calculation
@@ -794,6 +827,7 @@ impl Pair {
         if amount_a_in <= 0 && amount_b_in <= 0 {
             return Err(PairError::InsufficientInputAmount);
         }
+
 
         let fee = fee_bps as i128;
 

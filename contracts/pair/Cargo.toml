@@ -11,6 +11,7 @@ doctest = false
 [dependencies]
 soroban-sdk = { workspace = true }
 coralswap-flash-receiver-interface = { path = "../flash_receiver_interface" }
+coralswap-shared = { path = "../shared" }
 ethnum = { version = "*" }
 
 [dev-dependencies]
