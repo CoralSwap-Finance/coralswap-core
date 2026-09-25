@@ -93,7 +93,13 @@ pub fn get_amount_out(
     if denominator == 0 {
         return Err(PairError::InsufficientLiquidity);
     }
-    Ok(numerator / denominator)
+    let out = numerator / denominator;
+    // Dust policy (issue 393): truncated zero outputs are rejected with a
+    // typed error instead of silently returning 0.
+    if out <= 0 {
+        return Err(PairError::DustAmount);
+    }
+    Ok(out)
 }
 
 /// LP tokens minted for the very first deposit into an empty pool:

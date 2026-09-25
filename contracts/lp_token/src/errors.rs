@@ -14,4 +14,6 @@ pub enum LpTokenError {
     ContractPaused = 207,
     PermitExpired = 208,
     InvalidSignature = 209,
+    /// Metadata failed SAC-parity validation (issue 392).
+    InvalidMetadata = 210,
 }

@@ -19,12 +19,14 @@ use soroban_sdk::{
     contract, contractimpl, token::TokenClient, xdr::ToXdr, Address, Bytes, BytesN, Env, Vec,
 };
 use storage::{
-    clear_commit, get_commit, get_factory, get_hubs, is_nonce_used, set_commit, set_factory,
-    set_hubs, set_nonce_used, CommitEntry,
+    clear_commit, get_commit, get_commit_config, get_commit_count,
+    get_factory, get_hubs, is_nonce_used, set_commit, set_commit_config, set_commit_count,
+    set_factory, set_hubs, set_nonce_used, CommitEntry, RouterCommitConfig,
 };
 
-const TTL_THRESHOLD: u32 = 50_000;
-const TTL_EXTEND_TO: u32 = 120_960;
+// Shared TTL policy (issue #390): INSTANCE_TTL_THRESHOLD = 60_480 (~3.5d), EXTEND_TO = 120_960 (~7d).
+// Previously local magic 50_000 / 120_960 — now unified via coralswap-shared.
+use coralswap_shared::{INSTANCE_TTL_EXTEND_TO as TTL_EXTEND_TO, INSTANCE_TTL_THRESHOLD as TTL_THRESHOLD};
 
 /// Computes `sha256(sender || token_in || token_out || amount_in || min_out || nonce || salt)`.
 ///
@@ -464,27 +466,106 @@ impl Router {
     /// Commits to a future swap by storing a hash of the intended parameters.
     ///
     /// The caller computes the hash off-chain as:
-    /// `sha256(sender || token_in || token_out || amount_in || min_out || nonce || salt)`
+    /// sha256(sender || token_in || token_out || amount_in || min_out || nonce || salt)
     /// where addresses are XDR-encoded and integers are big-endian.
     ///
-    /// The commit records the current ledger sequence so that `reveal_swap` can
+    /// The commit records the current ledger sequence so that reveal_swap can
     /// enforce a minimum delay, preventing front-running by MEV searchers who
     /// observe the mempool.
     ///
-    /// An existing pending commit for `sender` is silently overwritten.
+    /// Bounded map with expiry (issue 389):
+    /// - At most max_commits live commits exist globally (default 32, see
+    ///   coralswap-shared). A new sender while at capacity fails with
+    ///   TooManyCommits. Overwriting your own pending commit does not change
+    ///   the count. Overwriting an expired commit reuses its slot.
+    /// - Commits expire after expiry_ledgers (default 1000). Expired commits
+    ///   are treated as absent on reveal (CommitExpired) and may be pruned.
     ///
     /// # Arguments
-    /// * `sender` - Address that will later call `reveal_swap`
-    /// * `hash`   - 32-byte SHA-256 commitment to the swap parameters
-    pub fn commit_swap(env: Env, sender: Address, hash: BytesN<32>) {
+    /// * sender - Address that will later call reveal_swap
+    /// * hash   - 32-byte SHA-256 commitment to the swap parameters
+    pub fn commit_swap(env: Env, sender: Address, hash: BytesN<32>) -> Result<(), RouterError> {
         sender.require_auth();
-        set_commit(&env, &sender, &CommitEntry { hash, ledger: env.ledger().sequence() });
+        let config = get_commit_config(&env);
+        let existing = get_commit(&env, &sender);
+        let now = env.ledger().sequence();
+        let is_live = match &existing {
+            Some(e) => now <= e.ledger.saturating_add(config.expiry_ledgers),
+            None => false,
+        };
+        if existing.is_none() || !is_live {
+            // New slot (or reuse of an expired slot): enforce the global bound.
+            let count = get_commit_count(&env);
+            if count >= config.max_commits {
+                return Err(RouterError::TooManyCommits);
+            }
+            if existing.is_none() {
+                set_commit_count(&env, count.saturating_add(1));
+            }
+        }
+        set_commit(&env, &sender, &CommitEntry { hash, ledger: now });
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        Ok(())
+    }
+
+    /// Sets the commit-reveal bounds (issue 389). Governance-only: requires
+    /// authorization from the factory fee_to_setter, mirroring sweep().
+    pub fn set_commit_config(
+        env: Env,
+        max_commits: u32,
+        expiry_ledgers: u32,
+    ) -> Result<(), RouterError> {
+        let factory = get_factory(&env).ok_or(RouterError::PairNotFound)?;
+        let governance =
+            FactoryClient::new(&env, &factory).fee_to_setter().ok_or(RouterError::InternalError)?;
+        governance.require_auth();
+        if max_commits == 0
+            || max_commits > coralswap_shared::MAX_COMMITS_HARD_CAP
+            || expiry_ledgers == 0
+            || expiry_ledgers > coralswap_shared::COMMIT_EXPIRY_HARD_CAP
+        {
+            return Err(RouterError::InvalidCommitConfig);
+        }
+        set_commit_config(&env, &RouterCommitConfig { max_commits, expiry_ledgers });
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        Ok(())
+    }
+
+    /// Returns the live commit for sender, if any.
+    pub fn get_commit(env: Env, sender: Address) -> Option<CommitEntry> {
+        get_commit(&env, &sender)
+    }
+
+    /// Returns the number of live commit slots currently held.
+    pub fn get_commit_count(env: Env) -> u32 {
+        get_commit_count(&env)
+    }
+
+    /// Returns the active commit-reveal bounds.
+    pub fn get_commit_config(env: Env) -> RouterCommitConfig {
+        get_commit_config(&env)
+    }
+
+    /// Evicts sender commit if it is expired. Returns true when a slot was
+    /// freed, false otherwise. Anyone may call; no auth required.
+    pub fn prune_expired_commit(env: Env, sender: Address) -> bool {
+        let config = get_commit_config(&env);
+        if let Some(entry) = get_commit(&env, &sender) {
+            let now = env.ledger().sequence();
+            if now > entry.ledger.saturating_add(config.expiry_ledgers) {
+                clear_commit(&env, &sender);
+                let count = get_commit_count(&env);
+                set_commit_count(&env, count.saturating_sub(1));
+                env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+                return true;
+            }
+        }
+        false
     }
 
     /// Reveals a previously committed swap and executes it atomically.
     ///
-    /// Validation steps (in order):
+    /// Validation steps (in order, issue 389 adds expiry):
     /// 1. A commit must exist for `sender` — prevents reveals without a prior commit.
     /// 2. At least one full ledger must have elapsed since the commit — enforces the
     ///    MEV-resistant delay window; the hash was already on-chain before searchers
@@ -516,9 +597,20 @@ impl Router {
         salt: BytesN<32>,
     ) -> Result<i128, RouterError> {
         let entry = get_commit(&env, &sender).ok_or(RouterError::CommitNotFound)?;
+        let config = get_commit_config(&env);
+        let now = env.ledger().sequence();
 
-        if env.ledger().sequence() <= entry.ledger {
+        if now <= entry.ledger {
             return Err(RouterError::CommitRevealTooEarly);
+        }
+        // Expiry (issue 389): commits older than ledger + expiry are dead.
+        // Free the slot so the global bound does not leak.
+        if now > entry.ledger.saturating_add(config.expiry_ledgers) {
+            clear_commit(&env, &sender);
+            let count = get_commit_count(&env);
+            set_commit_count(&env, count.saturating_sub(1));
+            env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+            return Err(RouterError::CommitExpired);
         }
 
         if is_nonce_used(&env, &sender, nonce) {
@@ -533,6 +625,8 @@ impl Router {
         }
 
         clear_commit(&env, &sender);
+        let count = get_commit_count(&env);
+        set_commit_count(&env, count.saturating_sub(1));
         set_nonce_used(&env, &sender, nonce);
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
 

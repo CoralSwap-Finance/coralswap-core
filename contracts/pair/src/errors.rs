@@ -25,6 +25,8 @@ pub enum PairError {
     FlashLoanFeeTooHigh = 118,
     SlippageExceeded = 119,
     InvalidStaleThreshold = 120,
+    /// Dust amount below minimum-reserve policy floor (issue 393).
+    DustAmount = 121,
 }
 
 #[contracterror]

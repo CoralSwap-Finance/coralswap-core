@@ -2,6 +2,19 @@
 //!
 //! This contract provides a standard-compliant LP token that can be
 //! minted/burned by the authorized CoralSwap Pair contract.
+//!
+//! SAC / SEP-41 parity (issue 392):
+//! - Metadata (decimals/name/symbol) is stored under a single Metadata key
+//!   holding TokenMetadata{decimals,name,symbol}. Reads match SAC expectations:
+//!   decimals/name/symbol return the pair-derived values written at init
+//!   (defaults 7 / Coral LP / CLP, see coralswap-shared). Getters are
+//!   fail-closed (NotInitialized) instead of trapping, which is stricter than SAC.
+//! - admin() view plus set_admin() alias are provided for SAC parity alongside
+//!   the legacy admin_transfer() entrypoint.
+//! - burn_from() is provided for SAC-style allowance-based burns; pair flows
+//!   continue to use burn() after holding LP.
+//! - Decimals default to 7 to match SAC Stellar-asset precision. Custom
+//!   decimals are validated to 0..=18 and name/symbol to 1..32 chars.
 
 #![no_std]
 
@@ -12,9 +25,8 @@ use errors::LpTokenError;
 use soroban_sdk::{contract, contractimpl, xdr::ToXdr, Address, Bytes, BytesN, Env, String};
 use storage::{AllowanceEntry, LpTokenKey, TokenMetadata};
 
-// TTL policy constants for persistent storage entries
-const TTL_THRESHOLD: u32 = 518_400; // ~30 days at 5s/ledger
-const TTL_EXTEND_TO: u32 = 1_036_800; // ~60 days at 5s/ledger
+// Shared LP persistent TTL policy (issue #390). See coralswap-shared for cadence math.
+use coralswap_shared::{LP_PERSISTENT_EXTEND_TO as TTL_EXTEND_TO, LP_PERSISTENT_THRESHOLD as TTL_THRESHOLD};
 
 #[contract]
 pub struct LpToken;
@@ -38,6 +50,16 @@ impl LpToken {
             return Err(LpTokenError::AlreadyInitialized);
         }
 
+        // SAC-parity metadata validation (issue 392): decimals 0..=18,
+        // name/symbol 1..32 chars. Factory defaults (7 / Coral LP / CLP)
+        // satisfy this; custom values outside fail with InvalidMetadata.
+        if decimals > 18 {
+            return Err(LpTokenError::InvalidMetadata);
+        }
+        if name.len() == 0 || name.len() > 32 || symbol.len() == 0 || symbol.len() > 32 {
+            return Err(LpTokenError::InvalidMetadata);
+        }
+
         // Store admin
         env.storage().instance().set(&LpTokenKey::Admin, &admin);
 
@@ -52,6 +74,11 @@ impl LpToken {
         env.storage().instance().set(&LpTokenKey::Paused, &false);
 
         Ok(())
+    }
+
+    /// Returns the current admin (SAC parity view, issue 392).
+    pub fn admin(env: Env) -> Result<Address, LpTokenError> {
+        env.storage().instance().get(&LpTokenKey::Admin).ok_or(LpTokenError::NotInitialized)
     }
 
     /// Transfer admin role to a new address
@@ -70,6 +97,12 @@ impl LpToken {
         env.events().publish((soroban_sdk::symbol_short!("adm_xfer"), old_admin, new_admin), ());
 
         Ok(())
+    }
+
+    /// SAC-style admin setter alias (issue 392). Identical semantics to
+    /// admin_transfer; provided so SAC tooling calling set_admin works.
+    pub fn set_admin(env: Env, new_admin: Address) -> Result<(), LpTokenError> {
+        Self::admin_transfer(env, new_admin)
     }
 
     /// Pause the contract - blocks all token operations
@@ -362,6 +395,30 @@ impl LpToken {
         // Emit burn event
         env.events().publish((soroban_sdk::symbol_short!("burn"), from), amount);
 
+        Ok(())
+    }
+
+    /// Burn via allowance (SAC parity, issue 392).
+    /// spender must authorize and hold sufficient allowance from holder.
+    pub fn burn_from(env: Env, spender: Address, from: Address, amount: i128) -> Result<(), LpTokenError> {
+        if Self::is_paused(env.clone()) {
+            return Err(LpTokenError::ContractPaused);
+        }
+        spender.require_auth();
+        Self::spend_allowance(&env, &from, &spender, amount)?;
+        let balance_key = LpTokenKey::Balance(from.clone());
+        let current_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
+        if current_balance < amount {
+            return Err(LpTokenError::InsufficientBalance);
+        }
+        let new_balance = current_balance - amount;
+        Self::write_balance(env.storage(), &balance_key, new_balance);
+        let total_supply: i128 =
+            env.storage().instance().get(&LpTokenKey::TotalSupply).unwrap_or(0);
+        let new_total_supply =
+            total_supply.checked_sub(amount).ok_or(LpTokenError::InsufficientBalance)?;
+        env.storage().instance().set(&LpTokenKey::TotalSupply, &new_total_supply);
+        env.events().publish((soroban_sdk::symbol_short!("burn"), from), amount);
         Ok(())
     }
 

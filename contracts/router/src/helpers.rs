@@ -59,7 +59,14 @@ pub fn get_amount_out(
         .checked_add(amount_in_with_fee)
         .ok_or(RouterError::InsufficientLiquidity)?;
 
-    Ok(numerator / denominator)
+    let out = numerator / denominator;
+    // Dust policy (issue 393): truncated zero outputs are typed errors.
+    // Note: small non-zero outputs are allowed so 1k-in/100k-pool quotes
+    // (~987 out) keep working; the pair enforces the reserve floor.
+    if out <= 0 {
+        return Err(RouterError::DustAmount);
+    }
+    Ok(out)
 }
 
 /// Computes input amount required for an exact output swap.
@@ -78,7 +85,6 @@ pub fn get_amount_in(
     if amount_out <= 0 {
         return Err(RouterError::ZeroAmount);
     }
-
     if reserve_in <= 0 || reserve_out <= 0 || amount_out >= reserve_out {
         return Err(RouterError::InsufficientLiquidity);
     }

@@ -1,7 +1,7 @@
 use soroban_sdk::{contracttype, Address, BytesN, Env, Vec};
 
-const INSTANCE_LIFETIME_THRESHOLD: u32 = 17280; // ~1 day in 5s ledgers
-const INSTANCE_BUMP_AMOUNT: u32 = 518400; // ~30 days in 5s ledgers
+// Shared factory TTL policy (issue #390). See coralswap-shared for cadence math.
+use coralswap_shared::{FACTORY_INSTANCE_BUMP_AMOUNT as INSTANCE_BUMP_AMOUNT, FACTORY_INSTANCE_THRESHOLD as INSTANCE_LIFETIME_THRESHOLD};
 
 #[contracttype]
 #[derive(Clone, Debug)]

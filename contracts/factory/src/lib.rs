@@ -131,13 +131,17 @@ impl Factory {
         // The pair is the sole LP token minter. Initialize the freshly
         // deployed token before exposing the pair so the first liquidity mint
         // cannot fail with an uninitialized-token error.
+        // LP metadata defaults from shared policy (issues 390/392):
+        // 7 decimals matches SAC Stellar-asset precision; name/symbol are
+        // intentionally shared across pairs (uniqueness comes from the contract
+        // address, not the symbol). Values are validated by LpToken::initialize.
         let lp_token_client = LpTokenClient::new(&env, &lp_token_address);
         lp_token_client
             .try_initialize(
                 &pair_address,
-                &7,
-                &String::from_str(&env, "Coral LP"),
-                &String::from_str(&env, "CLP"),
+                &coralswap_shared::LP_DECIMALS,
+                &String::from_str(&env, coralswap_shared::LP_NAME),
+                &String::from_str(&env, coralswap_shared::LP_SYMBOL),
             )
             .map_err(|_| FactoryError::NotInitialized)?
             .map_err(|_| FactoryError::NotInitialized)?;
