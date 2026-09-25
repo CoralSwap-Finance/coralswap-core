@@ -826,11 +826,11 @@ impl Pair {
         // the swap fee already charged by this pair (not an additional fee).
         // It is expressed in basis points of that fee: 0 = no protocol cut,
         // 10000 = the entire swap fee goes to the protocol.
-        let protocol_fee_to = match FactoryClient::new(env, &pair.factory).try_get_fee_to() {
+        let protocol_fee_to = match FactoryClient::new(env, &pair.factory).try_fee_to() {
             Ok(Ok(Some(fee_to))) => Some(fee_to),
             _ => None,
         };
-        let protocol_fee_bps = match FactoryClient::new(env, &pair.factory).try_get_fee_bps() {
+        let protocol_fee_bps = match FactoryClient::new(env, &pair.factory).try_fee_bps() {
             Ok(Ok(bps)) => bps.min(10_000),
             _ => 0,
         };
@@ -871,13 +871,13 @@ impl Pair {
                     .storage()
                     .instance()
                     .get(&fee_a_key)
-                    .unwrap_or(0)
+                    .unwrap_or(0_i128)
                     .saturating_add(protocol_fee_a);
                 let total_b = env
                     .storage()
                     .instance()
                     .get(&fee_b_key)
-                    .unwrap_or(0)
+                    .unwrap_or(0_i128)
                     .saturating_add(protocol_fee_b);
                 env.storage().instance().set(&fee_a_key, &total_a);
                 env.storage().instance().set(&fee_b_key, &total_b);
