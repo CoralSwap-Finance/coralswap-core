@@ -136,7 +136,7 @@ fn test_nonce_write_extends_ttl() {
     // Create a permit signature scenario (nonce gets incremented)
     let owner = Address::generate(&env);
     let _spender = Address::generate(&env);
-    
+
     // First, check initial nonce is 0
     let initial_nonce = client.nonce(&owner);
     assert_eq!(initial_nonce, 0);
@@ -144,14 +144,14 @@ fn test_nonce_write_extends_ttl() {
     // We can't easily test permit() without complex signature setup,
     // but we can verify the TTL extension mechanism by checking the storage
     // pattern. The actual permit flow will extend nonce TTL.
-    
+
     // For this test, we verify the nonce key structure is correct
     let nonce_key = LpTokenKey::Nonce(owner.clone());
     env.as_contract(&contract_id, || {
         // Manually set a nonce to verify the key works
         env.storage().persistent().set(&nonce_key, &1u64);
         env.storage().persistent().extend_ttl(&nonce_key, 518_400, 1_036_800);
-        
+
         let ttl = env.storage().persistent().get_ttl(&nonce_key);
         assert!(ttl >= 518_400, "Nonce TTL should be extendable");
     });
@@ -183,11 +183,11 @@ fn test_transfer_extends_ttl_for_both_parties() {
     // Verify TTL was extended for both sender and receiver
     let sender_key = LpTokenKey::Balance(sender.clone());
     let receiver_key = LpTokenKey::Balance(receiver.clone());
-    
+
     env.as_contract(&contract_id, || {
         let sender_ttl = env.storage().persistent().get_ttl(&sender_key);
         let receiver_ttl = env.storage().persistent().get_ttl(&receiver_key);
-        
+
         assert!(sender_ttl >= 518_400, "Sender balance TTL should be extended");
         assert!(receiver_ttl >= 518_400, "Receiver balance TTL should be extended");
     });
@@ -221,15 +221,9 @@ fn test_metadata_empty_values_fallback_to_defaults() {
     let client = LpTokenClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
 
-    client.initialize(
-        &admin,
-        &7,
-        &String::from_str(&env, ""),
-        &String::from_str(&env, ""),
-    );
+    client.initialize(&admin, &7, &String::from_str(&env, ""), &String::from_str(&env, ""));
 
     assert_eq!(client.decimals(), 7);
     assert_eq!(client.name(), String::from_str(&env, coralswap_shared::LP_NAME));
     assert_eq!(client.symbol(), String::from_str(&env, coralswap_shared::LP_SYMBOL));
 }
-

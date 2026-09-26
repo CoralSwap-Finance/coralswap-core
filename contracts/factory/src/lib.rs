@@ -139,16 +139,10 @@ impl Factory {
         // 7 decimals matches SAC Stellar-asset precision; name and symbol are
         // deterministically derived from canonical token pair addresses:
         // Name: CORAL-SWAP-LP-<HEX8>, Symbol: CLP-<HEX8>.
-        let (lp_name, lp_symbol) =
-            coralswap_shared::derive_lp_metadata(&env, &token_0, &token_1);
+        let (lp_name, lp_symbol) = coralswap_shared::derive_lp_metadata(&env, &token_0, &token_1);
         let lp_token_client = LpTokenClient::new(&env, &lp_token_address);
         lp_token_client
-            .try_initialize(
-                &pair_address,
-                &coralswap_shared::LP_DECIMALS,
-                &lp_name,
-                &lp_symbol,
-            )
+            .try_initialize(&pair_address, &coralswap_shared::LP_DECIMALS, &lp_name, &lp_symbol)
             .map_err(|_| FactoryError::NotInitialized)?
             .map_err(|_| FactoryError::NotInitialized)?;
 
@@ -294,7 +288,11 @@ impl Factory {
     }
 
     /// Unfreezes an individual pair, restoring operations on that pair.
-    pub fn unfreeze_pair(env: Env, signers: Vec<Address>, pair: Address) -> Result<(), FactoryError> {
+    pub fn unfreeze_pair(
+        env: Env,
+        signers: Vec<Address>,
+        pair: Address,
+    ) -> Result<(), FactoryError> {
         let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
         let threshold = storage.signers.len().div_ceil(2);
         governance::verify_multisig(&env, &signers, threshold)?;
@@ -468,15 +466,10 @@ impl Factory {
         key.append(&Symbol::new(&env, "protocol_fee_balance").to_xdr(&env));
         key.append(&token.clone().to_xdr(&env));
         let balance: i128 = env.storage().instance().get(&key).unwrap_or(0);
-        env.storage()
-            .instance()
-            .set(&key, &(balance + amount));
+        env.storage().instance().set(&key, &(balance + amount));
 
         #[allow(deprecated)]
-        env.events().publish(
-            (Symbol::new(&env, "protocol_fee_collected"), token),
-            (amount,),
-        );
+        env.events().publish((Symbol::new(&env, "protocol_fee_collected"), token), (amount,));
 
         storage::extend_instance_ttl(&env);
         Ok(())

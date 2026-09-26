@@ -32,24 +32,15 @@ impl FactoryEvents {
 
     /// Emits a heartbeat sync event for indexers with current pause state and pair count.
     pub fn sync(env: &Env, paused: bool, pair_count: u32) {
-        env.events().publish(
-            (soroban_sdk::symbol_short!("sync"),),
-            (paused, pair_count),
-        );
+        env.events().publish((soroban_sdk::symbol_short!("sync"),), (paused, pair_count));
     }
 
     pub fn pair_frozen(env: &Env, pair: &Address) {
-        env.events().publish(
-            (soroban_sdk::symbol_short!("frozen"), pair.clone()),
-            (),
-        );
+        env.events().publish((soroban_sdk::symbol_short!("frozen"), pair.clone()), ());
     }
 
     pub fn pair_unfrozen(env: &Env, pair: &Address) {
-        env.events().publish(
-            (soroban_sdk::symbol_short!("unfrozen"), pair.clone()),
-            (),
-        );
+        env.events().publish((soroban_sdk::symbol_short!("unfrozen"), pair.clone()), ());
     }
 
     pub fn upgrade_proposed(env: &Env, new_wasm_hash: &[u8; 32]) {

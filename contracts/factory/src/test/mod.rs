@@ -495,7 +495,11 @@ mod factory_tests {
 
         client.sync();
         let all_paused = env.events().all();
-        assert_eq!(all_paused.events().len(), 1, "sync while paused must publish a sync heartbeat event");
+        assert_eq!(
+            all_paused.events().len(),
+            1,
+            "sync while paused must publish a sync heartbeat event"
+        );
     }
 
     #[test]
@@ -841,12 +845,7 @@ mod factory_tests {
         let lp_token_wasm_hash = BytesN::from_array(&env, &[2u8; 32]);
         let signers = Vec::from_array(&env, [Address::generate(&env)]);
 
-        client.initialize(
-            &signers,
-            &pair_wasm_hash,
-            &lp_token_wasm_hash,
-            &Address::generate(&env),
-        );
+        client.initialize(&signers, &pair_wasm_hash, &lp_token_wasm_hash, &Address::generate(&env));
 
         assert_eq!(client.get_pair_wasm_hash(), pair_wasm_hash);
         assert_eq!(client.get_lp_token_wasm_hash(), lp_token_wasm_hash);
@@ -927,13 +926,13 @@ mod factory_tests {
         let (_env, client, token_a, token_b, _, _, _) = setup_env();
 
         // Snapshot CPU instruction budget before create_pair
-        let budget_before = _env.budget().cpu_instruction_cost();
+        let budget_before = _env.cost_estimate().budget().cpu_instruction_cost();
 
         // Execute create_pair (the operation under test)
         let _pair_addr = client.create_pair(&token_a, &token_b);
 
         // Snapshot CPU instruction budget after create_pair
-        let budget_after = _env.budget().cpu_instruction_cost();
+        let budget_after = _env.cost_estimate().budget().cpu_instruction_cost();
 
         // Compute actual CPU instructions consumed
         let cpu_used = budget_after - budget_before;
@@ -978,9 +977,9 @@ mod factory_tests {
     fn test_create_pair_baseline_cost() {
         let (_env, client, token_a, token_b, _, _, _) = setup_env();
 
-        let budget_before = _env.budget().cpu_instruction_cost();
+        let budget_before = _env.cost_estimate().budget().cpu_instruction_cost();
         let _pair_addr = client.create_pair(&token_a, &token_b);
-        let budget_after = _env.budget().cpu_instruction_cost();
+        let budget_after = _env.cost_estimate().budget().cpu_instruction_cost();
 
         let cpu_used = budget_after - budget_before;
 
@@ -994,9 +993,6 @@ mod factory_tests {
 
         // Sanity check: cost should be non-zero and reasonable
         assert!(cpu_used > 0, "create_pair must consume non-zero CPU");
-        assert!(
-            cpu_used < 100_000_000,
-            "create_pair baseline exceeds per-tx limit (100M)"
-        );
+        assert!(cpu_used < 100_000_000, "create_pair baseline exceeds per-tx limit (100M)");
     }
 }

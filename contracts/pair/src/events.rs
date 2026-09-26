@@ -83,10 +83,8 @@ impl PairEvents {
     }
 
     pub fn protocol_fee_collected(env: &Env, fee_to: &Address, amount_a: i128, amount_b: i128) {
-        env.events().publish(
-            (Symbol::new(env, "protocol_fee"), fee_to.clone()),
-            (amount_a, amount_b),
-        );
+        env.events()
+            .publish((Symbol::new(env, "protocol_fee"), fee_to.clone()), (amount_a, amount_b));
     }
 
     #[allow(dead_code)]

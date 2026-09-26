@@ -54,16 +54,8 @@ pub const LP_SYMBOL_PREFIX: &str = "CLP-";
 ///
 /// `<HEX8>` is the first 8 uppercase hexadecimal characters of the SHA-256 hash
 /// of the canonical token pair addresses (`token_0 || token_1` where `token_0 < token_1`).
-pub fn derive_lp_metadata(
-    env: &Env,
-    token_a: &Address,
-    token_b: &Address,
-) -> (String, String) {
-    let (t0, t1) = if token_a < token_b {
-        (token_a, token_b)
-    } else {
-        (token_b, token_a)
-    };
+pub fn derive_lp_metadata(env: &Env, token_a: &Address, token_b: &Address) -> (String, String) {
+    let (t0, t1) = if token_a < token_b { (token_a, token_b) } else { (token_b, token_a) };
 
     let mut salt_data = Bytes::new(env);
     salt_data.append(&t0.clone().to_xdr(env));
@@ -89,10 +81,7 @@ pub fn derive_lp_metadata(
     symbol_buf[4..12].copy_from_slice(&hex_bytes);
     let symbol_str = core::str::from_utf8(&symbol_buf).unwrap_or("CLP");
 
-    (
-        String::from_str(env, name_str),
-        String::from_str(env, symbol_str),
-    )
+    (String::from_str(env, name_str), String::from_str(env, symbol_str))
 }
 
 // ─────────────────────────────────────────────
@@ -110,9 +99,7 @@ pub const INSTANCE_TTL_EXTEND_TO: u32 = 120_960;
 
 /// Extend instance TTL using the canonical pair/router policy.
 pub fn extend_instance_ttl(env: &Env) {
-    env.storage()
-        .instance()
-        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+    env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
 }
 
 // ─────────────────────────────────────────────
@@ -128,10 +115,7 @@ pub const REENTRANCY_TTL_EXTEND_TO: u32 = 120_960;
 
 /// Extend instance TTL for reentrancy-guard lock flips.
 pub fn extend_reentrancy_ttl(env: &Env) {
-    env.storage().instance().extend_ttl(
-        REENTRANCY_TTL_THRESHOLD,
-        REENTRANCY_TTL_EXTEND_TO,
-    );
+    env.storage().instance().extend_ttl(REENTRANCY_TTL_THRESHOLD, REENTRANCY_TTL_EXTEND_TO);
 }
 
 // ─────────────────────────────────────────────
@@ -146,10 +130,7 @@ pub const FACTORY_INSTANCE_BUMP_AMOUNT: u32 = 518_400;
 
 /// Extend instance TTL using the factory policy.
 pub fn extend_factory_instance_ttl(env: &Env) {
-    env.storage().instance().extend_ttl(
-        FACTORY_INSTANCE_THRESHOLD,
-        FACTORY_INSTANCE_BUMP_AMOUNT,
-    );
+    env.storage().instance().extend_ttl(FACTORY_INSTANCE_THRESHOLD, FACTORY_INSTANCE_BUMP_AMOUNT);
 }
 
 // ─────────────────────────────────────────────
@@ -236,4 +217,3 @@ mod tests {
         assert_ne!(symbol_ab, symbol_ac);
     }
 }
-

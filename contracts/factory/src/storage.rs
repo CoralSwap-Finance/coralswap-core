@@ -1,7 +1,10 @@
 use soroban_sdk::{contracttype, Address, BytesN, Env, Vec};
 
 // Shared factory TTL policy (issue #390). See coralswap-shared for cadence math.
-use coralswap_shared::{FACTORY_INSTANCE_BUMP_AMOUNT as INSTANCE_BUMP_AMOUNT, FACTORY_INSTANCE_THRESHOLD as INSTANCE_LIFETIME_THRESHOLD};
+use coralswap_shared::{
+    FACTORY_INSTANCE_BUMP_AMOUNT as INSTANCE_BUMP_AMOUNT,
+    FACTORY_INSTANCE_THRESHOLD as INSTANCE_LIFETIME_THRESHOLD,
+};
 
 #[contracttype]
 #[derive(Clone, Debug)]

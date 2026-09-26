@@ -334,16 +334,10 @@ fn test_burn_single_side_seed_remains_intact() {
 
     // After all burns, seed should still exist
     let final_supply = lp_client.total_supply();
-    assert_eq!(
-        final_supply, MINIMUM_LIQUIDITY,
-        "Seed should remain after all single-side burns"
-    );
+    assert_eq!(final_supply, MINIMUM_LIQUIDITY, "Seed should remain after all single-side burns");
 
     let contract_balance = lp_client.balance(&pair_client.address);
-    assert_eq!(
-        contract_balance, MINIMUM_LIQUIDITY,
-        "Seed should be in the contract"
-    );
+    assert_eq!(contract_balance, MINIMUM_LIQUIDITY, "Seed should be in the contract");
 }
 
 #[test]

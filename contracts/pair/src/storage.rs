@@ -128,13 +128,15 @@ pub fn set_reentrancy_guard(env: &Env, guard: &ReentrancyGuard) {
     env.storage().instance().set(&DataKey::Guard, guard);
 }
 
-
- // -----------------------------------------------------------------------
+// -----------------------------------------------------------------------
 // ProtocolFeeState helpers
 // -----------------------------------------------------------------------
 #[allow(dead_code)]
 pub fn get_protocol_fee_state(env: &Env) -> ProtocolFeeState {
-    env.storage().instance().get(&DataKey::ProtocolFeeState).unwrap_or(ProtocolFeeState { fee_a: 0, fee_b: 0 })
+    env.storage()
+        .instance()
+        .get(&DataKey::ProtocolFeeState)
+        .unwrap_or(ProtocolFeeState { fee_a: 0, fee_b: 0 })
 }
 
 #[allow(dead_code)]

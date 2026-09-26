@@ -260,4 +260,3 @@ fn test_flash_loan_negative_amount_fails() {
     let result_neg_b = setup.pair_client.try_flash_loan(&setup.honest_receiver, &0, &-1, &data);
     assert_eq!(result_neg_b, Err(Ok(PairError::InsufficientInputAmount)));
 }
-
