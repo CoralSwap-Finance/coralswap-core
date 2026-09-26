@@ -94,6 +94,16 @@ pub const LP_PERSISTENT_THRESHOLD: u32 = 518_400;
 pub const LP_PERSISTENT_EXTEND_TO: u32 = 1_036_800;
 
 // ─────────────────────────────────────────────
+// Protocol version (issue #383)
+// ─────────────────────────────────────────────
+
+/// Protocol version reported by the pair's `version()` view and used as the
+/// factory's initial `protocol_version`. The factory bumps its stored version
+/// on every executed upgrade; the pair reports this constant so clients can
+/// verify they are talking to a known pair implementation.
+pub const PROTOCOL_VERSION: u32 = 1;
+
+// ─────────────────────────────────────────────
 // Minimum-reserve / dust policy (issue #393)
 // ─────────────────────────────────────────────
 

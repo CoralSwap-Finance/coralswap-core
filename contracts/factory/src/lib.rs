@@ -69,7 +69,7 @@ impl Factory {
             pair_wasm_hash,
             lp_token_wasm_hash,
             pair_count: 0,
-            protocol_version: 1,
+            protocol_version: coralswap_shared::PROTOCOL_VERSION,
             paused: false,
             fee_to: None,
             fee_to_setter,
@@ -182,6 +182,49 @@ impl Factory {
 
     pub fn get_pair(env: Env, token_a: Address, token_b: Address) -> Option<Address> {
         storage::get_pair(&env, token_a, token_b)
+    }
+
+    /// Deterministically derives the pair address for `(token_a, token_b)`
+    /// without deploying anything (issue #383).
+    ///
+    /// Mirrors the salt derivation in [`Factory::create_pair`] exactly:
+    /// tokens are canonically sorted, the salt is
+    /// `sha256(xdr(token_0) || xdr(token_1))`, and the address is derived
+    /// from the current contract as deployer. Soroban contract addresses are
+    /// deterministic in (deployer, salt), so the returned address equals the
+    /// address `create_pair` will deploy (or has deployed) for the same
+    /// token pair — enabling off-chain pool discovery without a factory call.
+    ///
+    /// Errors with `IdenticalTokens` when both arguments are equal, matching
+    /// `create_pair`.
+    pub fn get_pair_address(
+        env: Env,
+        token_a: Address,
+        token_b: Address,
+    ) -> Result<Address, FactoryError> {
+        if token_a == token_b {
+            return Err(FactoryError::IdenticalTokens);
+        }
+
+        let (token_0, token_1) =
+            if token_a < token_b { (token_a, token_b) } else { (token_b, token_a) };
+
+        let mut salt_data = Bytes::new(&env);
+        salt_data.append(&token_0.to_xdr(&env));
+        salt_data.append(&token_1.to_xdr(&env));
+        let salt = env.crypto().sha256(&salt_data);
+
+        Ok(env.deployer().with_current_contract(salt).deployed_address())
+    }
+
+    /// Returns the factory's protocol version (issue #383).
+    ///
+    /// Initialized to [`coralswap_shared::PROTOCOL_VERSION`] and bumped by
+    /// one on every executed WASM upgrade.
+    pub fn protocol_version(env: Env) -> Result<u32, FactoryError> {
+        storage::get_factory_storage(&env)
+            .map(|s| s.protocol_version)
+            .ok_or(FactoryError::NotInitialized)
     }
 
     pub fn get_all_pairs(env: Env, offset: u32, limit: u32) -> Result<Vec<Address>, FactoryError> {
