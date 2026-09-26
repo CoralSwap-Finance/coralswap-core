@@ -31,6 +31,20 @@ pub enum DataKey {
     /// A single `u32` read is significantly cheaper than deserialising the
     /// full `FactoryStorage` blob just to obtain the count.
     TotalPairs,
+    /// Per-pair frozen flag.
+    PairFrozen(Address),
+}
+
+pub fn is_pair_frozen(env: &Env, pair: &Address) -> bool {
+    env.storage().instance().get(&DataKey::PairFrozen(pair.clone())).unwrap_or(false)
+}
+
+pub fn set_pair_frozen(env: &Env, pair: &Address, frozen: bool) {
+    if frozen {
+        env.storage().instance().set(&DataKey::PairFrozen(pair.clone()), &true);
+    } else {
+        env.storage().instance().remove(&DataKey::PairFrozen(pair.clone()));
+    }
 }
 
 pub fn get_pair_list(env: &Env) -> Vec<Address> {

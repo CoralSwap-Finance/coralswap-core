@@ -464,6 +464,61 @@ mod factory_tests {
     }
 
     #[test]
+    fn test_resume_authorized_signers_succeeds_and_emits_resumed_event() {
+        let (env, client, _, _, _, _, signers) = setup_env();
+        let s1 = signers.get(0).unwrap();
+        let s2 = signers.get(1).unwrap();
+        let auth_signers = Vec::from_array(&env, [s1, s2]);
+
+        client.pause(&auth_signers);
+        assert!(client.is_paused());
+
+        client.resume(&auth_signers);
+        let all = env.events().all();
+        assert_eq!(all.events().len(), 2, "resume must emit unpaused and resumed events");
+        assert!(!client.is_paused());
+    }
+
+    #[test]
+    fn test_sync_emits_event_and_reports_state() {
+        let (env, client, token_a, token_b, _, _, signers) = setup_env();
+        client.create_pair(&token_a, &token_b);
+
+        client.sync();
+        let all = env.events().all();
+        assert_eq!(all.events().len(), 1, "sync must publish exactly one sync heartbeat event");
+
+        let s1 = signers.get(0).unwrap();
+        let s2 = signers.get(1).unwrap();
+        client.pause(&Vec::from_array(&env, [s1, s2]));
+        assert!(client.is_paused());
+
+        client.sync();
+        let all_paused = env.events().all();
+        assert_eq!(all_paused.events().len(), 1, "sync while paused must publish a sync heartbeat event");
+    }
+
+    #[test]
+    fn test_freeze_and_unfreeze_pair_succeeds_and_emits_events() {
+        let (env, client, token_a, token_b, _, _, signers) = setup_env();
+        let pair_addr = client.create_pair(&token_a, &token_b);
+
+        let s1 = signers.get(0).unwrap();
+        let s2 = signers.get(1).unwrap();
+        let auth_signers = Vec::from_array(&env, [s1, s2]);
+
+        assert!(!client.is_pair_frozen(&pair_addr));
+
+        client.freeze_pair(&auth_signers, &pair_addr);
+        assert_eq!(env.events().all().events().len(), 1, "freeze_pair must emit frozen event");
+        assert!(client.is_pair_frozen(&pair_addr));
+
+        client.unfreeze_pair(&auth_signers, &pair_addr);
+        assert_eq!(env.events().all().events().len(), 1, "unfreeze_pair must emit unfrozen event");
+        assert!(!client.is_pair_frozen(&pair_addr));
+    }
+
+    #[test]
     fn test_pause_insufficient_signers_fails() {
         let env = Env::default();
         // Do NOT mock_all_auths — we want real auth enforcement.

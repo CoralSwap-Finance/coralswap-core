@@ -260,7 +260,55 @@ impl Factory {
         storage::set_factory_storage(&env, &storage);
         storage::extend_instance_ttl(&env);
         events::FactoryEvents::unpaused(&env);
+        events::FactoryEvents::resumed(&env);
         Ok(())
+    }
+
+    /// Resumes protocol trading operations (alias for `unpause`).
+    pub fn resume(env: Env, signers: Vec<Address>) -> Result<(), FactoryError> {
+        Self::unpause(env, signers)
+    }
+
+    /// Heartbeat sync entrypoint for indexers and off-chain pollers.
+    /// Emits a `sync` event with the current pause state and total pair count,
+    /// and extends factory instance TTL.
+    pub fn sync(env: Env) -> Result<(), FactoryError> {
+        let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+        let total_pairs = storage::get_total_pairs(&env);
+        storage::extend_instance_ttl(&env);
+        events::FactoryEvents::sync(&env, storage.paused, total_pairs);
+        Ok(())
+    }
+
+    /// Freezes an individual pair, preventing operations on that specific pair.
+    pub fn freeze_pair(env: Env, signers: Vec<Address>, pair: Address) -> Result<(), FactoryError> {
+        let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+        let threshold = storage.signers.len().div_ceil(2);
+        governance::verify_multisig(&env, &signers, threshold)?;
+        signers.iter().find(|s| storage.signers.contains(s)).ok_or(FactoryError::Unauthorized)?;
+
+        storage::set_pair_frozen(&env, &pair, true);
+        storage::extend_instance_ttl(&env);
+        events::FactoryEvents::pair_frozen(&env, &pair);
+        Ok(())
+    }
+
+    /// Unfreezes an individual pair, restoring operations on that pair.
+    pub fn unfreeze_pair(env: Env, signers: Vec<Address>, pair: Address) -> Result<(), FactoryError> {
+        let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+        let threshold = storage.signers.len().div_ceil(2);
+        governance::verify_multisig(&env, &signers, threshold)?;
+        signers.iter().find(|s| storage.signers.contains(s)).ok_or(FactoryError::Unauthorized)?;
+
+        storage::set_pair_frozen(&env, &pair, false);
+        storage::extend_instance_ttl(&env);
+        events::FactoryEvents::pair_unfrozen(&env, &pair);
+        Ok(())
+    }
+
+    /// Returns true if an individual pair is frozen.
+    pub fn is_pair_frozen(env: Env, pair: Address) -> bool {
+        storage::is_pair_frozen(&env, &pair)
     }
 
     /// Sets the protocol fee recipient and the protocol fee in basis points.
