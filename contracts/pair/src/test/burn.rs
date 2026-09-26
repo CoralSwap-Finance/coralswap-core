@@ -57,6 +57,8 @@ fn setup_pair(
     Address,
 ) {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): this fixture exercises burn arithmetic, not
+    // authorization. See `test::auth_matrix` for the scoped guard coverage.
     env.mock_all_auths_allowing_non_root_auth();
 
     let token_a_id = env.register(BurnMockToken, ());

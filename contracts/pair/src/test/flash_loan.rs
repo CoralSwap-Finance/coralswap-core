@@ -45,6 +45,11 @@ struct Setup<'a> {
 impl<'a> Setup<'a> {
     fn new() -> Self {
         let env = Env::default();
+        // BLANKET MOCK (issue #314): this fixture's purpose is flash-loan
+        // math and reentrancy, not authorization. A full tree cannot be built
+        // here because the pair is the LP token's admin and `mock_auths` would
+        // overwrite the pair contract with its mock checker. The guards
+        // themselves are covered by `test::auth_matrix`.
         env.mock_all_auths();
 
         let admin = Address::generate(&env);

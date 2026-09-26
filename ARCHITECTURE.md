@@ -62,6 +62,8 @@ The Factory is the registry and governance hub of the protocol.
 - **Pair creation**: Deploys a new Pair contract and its associated LP Token contract using deterministic salts derived from the token addresses. Stores the pair mapping in both directions (`(A,B)` and `(B,A)`).
 - **Governance**: Manages a multisig signer set (1–10 signers, threshold = `ceil(n/2)`). Multisig is required for pause/unpause and upgrade operations.
 - **Protocol fees**: The `fee_to_setter` address can set a protocol-wide fee recipient (`fee_to`) and fee rate (`fee_bps`, max 30 bps). Per-pair fee overrides (max 100 bps) are also supported.
+  - **Disabling fees is explicit.** A *disabled* protocol fee is `fee_to = None`, which may be combined with any `fee_bps`; the pair then charges nothing. `fee_to = Some(addr)` with `fee_bps = 0` is rejected with `FactoryError::FeeDisabled`, because a live recipient collecting zero is indistinguishable from the disabled state in downstream accounting. Clear a fee by clearing `fee_to`, not by setting the rate to zero.
+  - **A pair override of `0` means "no override"**, not "zero fee". `set_pair_fee(pair, 0, None)` removes the entry so the pair falls back to the dynamic/protocol fee; it must never be used to make a pool free, which would silently make every swap a zero-fee trade against the LPs' consent.
 - **Upgrades**: A timelocked upgrade mechanism (72-hour delay, ~51,840 ledgers) allows the Factory WASM to be replaced via `propose_upgrade` → `execute_upgrade`. Upgrades can be cancelled before execution.
 - **Pause, Resume & Freezing**: The protocol can be paused or resumed by multisig. Individual pairs can be frozen or unfrozen. Dedicated events (`paused`, `unpaused`, `resumed`, `frozen`, `unfrozen`) and a public heartbeat sync (`sync()`) ensure indexers maintain up-to-date state. See [docs/INDEXER.md](docs/INDEXER.md).
 
@@ -73,8 +75,22 @@ Each Pair contract holds reserves of two tokens and implements the constant-prod
 - **Mint**: Accepts token deposits and mints LP shares proportional to the deposit. On first mint, `MINIMUM_LIQUIDITY` shares are locked to the contract itself.
 - **Burn**: Burns LP tokens and returns pro-rata reserves. Supports standard two-sided burn and single-sided burn (with an internal swap leg).
 - **Flash Loans**: Lends reserve tokens to a receiver contract, requires repayment (principal + fee) in the same transaction.
-- **Oracle**: Tracks cumulative prices for TWAP queries (`consult_twap`).
+- **Oracle**: Tracks cumulative prices for TWAP queries (`consult_twap`). The accumulators live in a self-contained `OracleState` struct owned by the oracle module, rather than being duplicated on `PairStorage`; the pair only hands the oracle its reserves. The price history is a ring buffer capped at `MAX_OBSERVATIONS = 24`, so a pair's on-chain footprint is bounded no matter how often it is synced.
+- **LP token pause relay**: `Pair::set_lp_token_paused` and `Pair::is_lp_token_paused` proxy the pair's LP token. The pair is the LP token's `admin`, and it authorizes the relay from the factory's `fee_to_setter` role, so pausing a single pool's LP token does not require direct admin access to every LP token.
 - **Reentrancy Guard**: All state-mutating swap and burn paths are protected by a storage-based reentrancy lock.
+
+### Pause Layering
+
+Pausing is a two-level mechanism, and the levels are deliberately not equivalent:
+
+| Level | Flag | Effect | Reachable by |
+| --- | --- | --- | --- |
+| LP token operations | `LpToken::is_paused` | Blocks all `transfer` / `transfer_from` / `approve` / `permit` | LP token `admin` (the Pair) |
+| Liquidity provision | Pair-side pause flag | Blocks `mint` and `mint_with_one_token` and `burn`, but **not** transfers | factory `fee_to_setter` via the Pair relay |
+
+The liquidity-level flag is separate from the token-level one on purpose: freezing a pool's *liquidity* is a governance action, whereas halting *all* LP token movement is an incident-response action. A halted pool can still be unwound by holders who already hold LP tokens.
+
+Mints and burns that the pause rejects return typed errors — `LpTokenPaused` (122), `LpTokenUnavailable` (123), `LpTokenRejected` (124) — rather than a bare host abort, so indexers and callers can distinguish an intentional pause from a genuine authorization failure.
 
 ### LP Token
 
@@ -273,6 +289,45 @@ When adding new state-mutating functions to the Pair contract:
    `contracts/malicious_flash_receiver/` to exercise reentrant paths.
 
 > See also: [SECURITY.md](SECURITY.md) — Reentrancy & Cross-Contract Calls
+
+---
+
+## Authorization Testing
+
+Soroban tests have a convenient footgun: `Env::mock_all_auths()` authorizes *every* address in *every* invocation tree. A test written that way keeps passing after the contract deletes its `require_auth` call, so it cannot tell you whether a guard exists.
+
+The rules this repository follows:
+
+- **A guard is covered by a scoped tree, not a blanket mock.** Every authorized
+  function in the factory, pair, and LP token has a case in its contract's
+  `auth_matrix` module that installs an exact authorization tree. Any
+  `require_auth` the tree does not describe reverts, which is exactly what
+  happens if the guard is removed.
+- **The matrix asserts the negative, not just the positive.** Each gated
+  function is exercised with the wrong signer, the wrong function name, and the
+  wrong arguments, so a guard that is too loose fails the build. `require_auth()`
+  is argument-bound even though it is not spelled `require_auth_for_args(..)`.
+- **Permissionless functions are pinned too.** `swap`, `sync`, `flash_loan`, and
+  the view functions are run under `allow_nothing()` so that accidentally
+  adding a `require_auth` to a view or to the flash-loan callback is caught.
+- **Blanket mocks are allowed only for arithmetic, and must say so.** Tests
+  whose subject is invariant math, k-value behavior, or deployment wiring keep
+  `mock_all_auths*()` and carry a `// BLANKET MOCK (issue #314)` comment
+  naming the reason. Anything touching authorization belongs in the matrix.
+- **Known limitation.** `Env::mock_auths` installs a mock checker at each
+  authorizer address, replacing any contract already registered there. The pair
+  is its own LP token's `admin`, and a deployed pair is its own governance
+  signer, so those two paths cannot be expressed as a scoped tree. They use
+  `mock_all_auths()` plus an `Env::auths()` assertion on the authorizer,
+  address, and arguments — weaker than a scoped tree, still far stronger than
+  an unasserted blanket mock.
+
+Helpers for all of this live behind the dev-only `test-support` feature of the
+`coralswap-shared` crate (`contracts/shared/src/test_support.rs`): `allow`,
+`allow_with_sub_invocations`, `allow_nothing`, `auth_args!`, and the
+`assert_authorized` / `assert_unauthorized` assertions. The feature is never
+enabled by a normal or `wasm32v1-none` build, so no test code reaches production
+WASM.
 
 ---
 

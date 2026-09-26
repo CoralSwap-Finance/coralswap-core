@@ -19,4 +19,5 @@ pub enum FactoryError {
     LimitTooHigh = 13,
     FeeTooHigh = 14,
     InvalidFeeRecipient = 15,
+    FeeDisabled = 16,
 }

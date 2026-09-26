@@ -622,6 +622,8 @@ fn deploy_router_with_pair(env: &Env) -> (Address, Address, Address, Address, Ad
 #[test]
 fn test_commit_swap_stores_entry() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): router routing arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
     let (router_id, _) = deploy_router(&env);
     let router = RouterClient::new(&env, &router_id);
@@ -641,6 +643,8 @@ fn test_commit_swap_stores_entry() {
 #[test]
 fn test_reveal_without_commit_fails() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): router routing arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
     let (router_id, _) = deploy_router(&env);
     let router = RouterClient::new(&env, &router_id);
@@ -659,6 +663,8 @@ fn test_reveal_without_commit_fails() {
 #[test]
 fn test_reveal_same_ledger_fails() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): router routing arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
     let (router_id, _) = deploy_router(&env);
     let router = RouterClient::new(&env, &router_id);
@@ -682,6 +688,8 @@ fn test_reveal_same_ledger_fails() {
 #[test]
 fn test_reveal_wrong_hash_fails() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): router routing arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
     let (router_id, _) = deploy_router(&env);
     let router = RouterClient::new(&env, &router_id);
@@ -708,6 +716,8 @@ fn test_reveal_wrong_hash_fails() {
 #[test]
 fn test_reveal_nonce_replay_fails() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): router routing arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
     let (router_id, _) = deploy_router(&env);
     let router = RouterClient::new(&env, &router_id);
@@ -737,6 +747,8 @@ fn test_reveal_nonce_replay_fails() {
 #[test]
 fn test_commit_reveal_full_lifecycle() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): router routing arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
 
     let (router_id, _factory_id, token_in_id, token_out_id, _pair_id) =
@@ -813,6 +825,8 @@ fn test_commit_reveal_full_lifecycle() {
 #[test]
 fn test_sweep_drains_stuck_balance_to_recipient() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): router routing arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
     let (router_id, factory_id) = deploy_router(&env);
     let router = RouterClient::new(&env, &router_id);
@@ -853,6 +867,8 @@ fn test_sweep_without_governance_auth_fails() {
 #[test]
 fn test_sweep_zero_balance_fails() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): router routing arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
     let (router_id, factory_id) = deploy_router(&env);
     let router = RouterClient::new(&env, &router_id);

@@ -158,6 +158,17 @@ pub fn set_is_pair(env: &Env, pair: &Address, is_pair: bool) {
     }
 }
 
+/// Removes any per-pair fee override for `pair`, restoring the pair's dynamic
+/// fee. A no-op if no override is currently stored.
+///
+/// `0` is never persisted as an override: a stored `0` is indistinguishable
+/// from "set the swap fee to zero" at the read site, which would let a single
+/// governance call silently zero a pair's fees (issue #311). `None` is the
+/// single encoding for "no override".
+pub fn remove_pair_fee_override(env: &Env, pair: &Address) {
+    env.storage().instance().remove(&DataKey::PairFeeOverride(pair.clone()));
+}
+
 /// Extend instance storage TTL to keep contract alive.
 pub fn extend_instance_ttl(env: &Env) {
     env.storage().instance().extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);

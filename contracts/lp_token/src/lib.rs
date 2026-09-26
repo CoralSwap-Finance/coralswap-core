@@ -119,6 +119,35 @@ impl LpToken {
 
     /// Pause the contract - blocks all token operations
     /// Only callable by admin
+    ///
+    /// # What "pause" means here (issue #313)
+    ///
+    /// `pause` is a supply-and-transfer freeze scoped to *this* token. While
+    /// paused, every function that moves LP balances or changes supply returns
+    /// `LpTokenError::ContractPaused`:
+    ///
+    /// | Function            | Blocked while paused |
+    /// |---------------------|----------------------|
+    /// | `transfer`          | yes                  |
+    /// | `transfer_from`     | yes                  |
+    /// | `mint`              | yes                  |
+    /// | `burn`              | yes                  |
+    /// | `burn_from`         | yes                  |
+    /// | `approve` / `increase_allowance` | no (balances do not move) |
+    /// | views (`balance`, `allowance`, `total_supply`, `is_paused`) | no |
+    ///
+    /// Because the pair mints and burns LP supply through this contract, a
+    /// paused LP token also halts the pair's liquidity operations: `Pair::mint`,
+    /// `Pair::mint_with_one_token`, `Pair::burn` and `Pair::burn_single_side` all
+    /// refuse. The pair additionally checks this flag up front and reports
+    /// `PairError::LpTokenPaused`, so callers get a typed error from the pair
+    /// rather than an opaque failure from a nested call.
+    ///
+    /// A pause does **not** halt swaps, flash loans, or pair-level freezes; those
+    /// are governed by the factory's `pause` / `freeze_pair` and by each pair's
+    /// own reentrancy guard.
+    ///
+    /// `pause` is idempotent and reversible via `unpause`.
     pub fn pause(env: Env) -> Result<(), LpTokenError> {
         // Get admin and require authorization
         let admin: Address =

@@ -19,6 +19,15 @@ use soroban_sdk::{
 };
 use storage::FactoryStorage;
 
+/// Maximum protocol-wide swap fee, in basis points (0.30%).
+///
+/// A protocol fee is only ever collected when a recipient is configured, so
+/// this is the ceiling for `set_fee_to`.
+pub const MAX_PROTOCOL_FEE_BPS: u32 = 30;
+
+/// Maximum per-pair fee override, in basis points (1.00%).
+pub const MAX_PAIR_FEE_BPS: u32 = 100;
+
 #[contractclient(name = "PairClient")]
 pub trait PairInterface {
     fn initialize(
@@ -338,9 +347,45 @@ impl Factory {
 
     /// Sets the protocol fee recipient and the protocol fee in basis points.
     ///
-    /// `fee_bps` is the portion of each swap input that pairs must transfer to
-    /// `fee_to` on every swap. When `fee_to` is `None`, no protocol fee is
-    /// collected.
+    /// # Semantics (issue #311)
+    ///
+    /// The pair of values is validated so that exactly one unambiguous encoding
+    /// exists for each of the two protocol-fee states:
+    ///
+    /// | `fee_to`      | `fee_bps` | State                                              |
+    /// |---------------|-----------|----------------------------------------------------|
+    /// | `None`        | `0`       | Collection **disabled** (protocol takes nothing)     |
+    /// | `Some(..)`    | `1..=30`  | Collection **enabled** at `fee_bps`                 |
+    ///
+    /// The two rejected combinations are both footguns that let the protocol be
+    /// *configured* as if it were earning revenue while collecting nothing:
+    ///
+    /// - `None` + `fee_bps > 0` → `InvalidFeeRecipient`. Fees would be computed
+    ///   with nowhere to send them.
+    /// - `Some(fee_to)` + `fee_bps == 0` → `FeeDisabled`. A live recipient with
+    ///   a zero rate looks enabled to governance and to monitoring, yet every
+    ///   swap silently routes zero to it. Disabling is expressed *only* by
+    ///   clearing `fee_to`, so "disabled" never needs a second encoding.
+    ///
+    /// This mirrors the Uniswap V2 sentinel (`feeTo == address(0)` disables the
+    /// protocol fee) and keeps Balancer V3's property of emitting a
+    /// fee-change event for every state transition, including a zeroing.
+    ///
+    /// # Events
+    ///
+    /// Emits `fee_to_set` and `protocol_fee_updated { old_fee_bps, new_fee_bps,
+    /// fee_to }` on **every** successful change, so off-chain monitors can
+    /// detect both the rate and the enabled/disabled transition from a single
+    /// event.
+    ///
+    /// # Errors
+    /// | Error                   | Condition                                    |
+    /// |-------------------------|----------------------------------------------|
+    /// | `NotInitialized`        | Factory storage absent                       |
+    /// | `Unauthorized`          | `setter` is not the current `fee_to_setter`  |
+    /// | `FeeTooHigh`            | `fee_bps > 30`                               |
+    /// | `InvalidFeeRecipient`   | `fee_to == None && fee_bps > 0`              |
+    /// | `FeeDisabled`           | `fee_to == Some(..) && fee_bps == 0`         |
     pub fn set_fee_to(
         env: Env,
         setter: Address,
@@ -355,12 +400,17 @@ impl Factory {
             return Err(FactoryError::Unauthorized);
         }
 
-        if fee_bps > 30 {
+        if fee_bps > MAX_PROTOCOL_FEE_BPS {
             return Err(FactoryError::FeeTooHigh);
         }
 
-        if fee_to.is_none() && fee_bps > 0 {
-            return Err(FactoryError::InvalidFeeRecipient);
+        match (&fee_to, fee_bps) {
+            // A nonzero rate with nowhere to send the fees.
+            (None, bps) if bps > 0 => return Err(FactoryError::InvalidFeeRecipient),
+            // A live recipient wired to a zero rate: looks enabled, collects
+            // nothing. Disabling must be expressed by clearing `fee_to`.
+            (Some(_), 0) => return Err(FactoryError::FeeDisabled),
+            _ => {}
         }
 
         let old_fee_bps = storage.fee_bps;
@@ -406,13 +456,21 @@ impl Factory {
     /// # Authorization
     /// Caller must be the current `fee_to_setter` address.
     ///
-    /// # Validation
-    /// `fee_bps` must be in `0..=100` (max 1%). Returns
-    /// `FactoryError::FeeTooHigh` otherwise. A value of `0` is allowed and
-    /// effectively clears the override on the next swap.
+    /// # Validation (issue #311)
+    ///
+    /// `fee_bps` must be in `0..=MAX_PAIR_FEE_BPS` (max 1%). Returns
+    /// `FactoryError::FeeTooHigh` otherwise.
+    ///
+    /// `fee_bps == 0` **clears** the override rather than storing a zero rate:
+    /// the pair falls back to its dynamic fee and `get_pair_fee_override`
+    /// returns `None`. Persisting `0` would be read back as "charge nothing",
+    /// letting a single governance call silently zero a pair's fees while the
+    /// stored value still looked like a configured override. `None` is the only
+    /// encoding for "no override", so the two states can never be confused.
     ///
     /// # Event
-    /// Emits `PairFeeOverrideEvent { pair, old_fee_bps, new_fee_bps, ledger }`.
+    /// Emits `pair_fee_override_set { pair, old_fee_bps, new_fee_bps, ledger }`
+    /// on every successful call, including a clear (`new_fee_bps == 0`).
     pub fn set_pair_fee(
         env: Env,
         setter: Address,
@@ -427,12 +485,20 @@ impl Factory {
             return Err(FactoryError::Unauthorized);
         }
 
-        if fee_bps > 100 {
+        if fee_bps > MAX_PAIR_FEE_BPS {
             return Err(FactoryError::FeeTooHigh);
         }
 
         let old_fee_bps = storage::get_pair_fee_override(&env, &pair).unwrap_or(0);
-        storage::set_pair_fee_override(&env, &pair, fee_bps);
+
+        if fee_bps == 0 {
+            // Clear rather than persist a zero rate: a stored `0` is
+            // indistinguishable from "charge nothing" at the read site.
+            storage::remove_pair_fee_override(&env, &pair);
+        } else {
+            storage::set_pair_fee_override(&env, &pair, fee_bps);
+        }
+
         storage::extend_instance_ttl(&env);
 
         events::FactoryEvents::pair_fee_override_set(
@@ -448,7 +514,8 @@ impl Factory {
 
     /// Returns the per-pair fee override in basis points, or `None` if no
     /// override has been set. Pairs consult this on every swap to determine
-    /// their effective fee.
+    /// their effective fee: `None` (or, defensively, `Some(0)`) means "use the
+    /// pair's dynamic fee"; any `Some(bps)` with `bps > 0` replaces it.
     pub fn get_pair_fee_override(env: Env, pair: Address) -> Option<u32> {
         storage::get_pair_fee_override(&env, &pair)
     }

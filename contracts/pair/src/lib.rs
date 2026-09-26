@@ -23,19 +23,71 @@ use events::PairEvents;
 use factory_client::FactoryClient;
 use math::MINIMUM_LIQUIDITY;
 use soroban_sdk::{
-    contract, contractclient, contractimpl, contracttype, token::TokenClient, Address, Bytes, Env,
-    Symbol,
+    contract, contractclient, contracterror, contractimpl, contracttype, token::TokenClient,
+    Address, Bytes, Env, Symbol,
 };
 use storage::{
     get_fee_state, get_pair_state, set_fee_state, set_pair_state, set_reentrancy_guard, FeeState,
     ReentrancyGuard,
 };
 
+/// Error surface of the LP-token client declared above.
+///
+/// The pair never inspects these variants — [`set_lp_token_paused`] maps any
+/// inner error to [`PairError::LpTokenRejected`]. They exist only to satisfy the
+/// `contractclient` macro, and are declared separately from `PairError` so the
+/// two contracts' numeric codes can never be conflated at a call site.
+///
+/// The discriminants mirror `coralswap_lp_token::LpTokenError` for readability;
+/// the pair cannot depend on that crate's error type without importing the
+/// whole token contract into the pair's build graph.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum LpTokenClientError {
+    NotInitialized = 201,
+    Unauthorized = 202,
+    ContractPaused = 207,
+}
+
 #[contractclient(name = "LpTokenClient")]
 pub trait LpTokenInterface {
     fn mint(env: Env, to: Address, amount: i128);
     fn burn(env: Env, from: Address, amount: i128);
     fn total_supply(env: Env) -> i128;
+    fn is_paused(env: Env) -> bool;
+    fn pause(env: Env) -> Result<(), LpTokenClientError>;
+    fn unpause(env: Env) -> Result<(), LpTokenClientError>;
+}
+
+/// Returns `true` when the pair's LP token is currently paused (issue #313).
+///
+/// The LP token refuses `mint` / `burn` while paused, which already halts
+/// liquidity operations. This check exists so the pair reports that condition
+/// as its own typed [`PairError::LpTokenPaused`] instead of surfacing an opaque
+/// host error from a nested call — the pair's error surface is what clients and
+/// indexers decode, and "your liquidity op was refused because the LP token is
+/// paused" has to be distinguishable from a genuine arithmetic failure.
+///
+/// Fails open: an unreadable pause flag is treated as "not paused" and the
+/// nested `mint` / `burn` remains the authority. The LP token is written by the
+/// factory at `initialize`, and refusing liquidity because a status *read*
+/// failed would brick the pool, whereas the token itself still refuses to mint
+/// or burn.
+fn lp_token_is_paused(env: &Env, lp_token: &Address) -> bool {
+    LpTokenClient::new(env, lp_token).try_is_paused().unwrap_or(Ok(false)).unwrap_or(false)
+}
+
+/// Guard for every path that changes LP supply.
+///
+/// Call this before touching reserves so a paused LP token cannot leave the pair
+/// mid-operation: `mint` and `burn` are not atomic with the pair's own state
+/// writes, and a late failure would strand tokens in the pool.
+fn ensure_lp_token_not_paused(env: &Env, lp_token: &Address) -> Result<(), PairError> {
+    if lp_token_is_paused(env, lp_token) {
+        return Err(PairError::LpTokenPaused);
+    }
+    Ok(())
 }
 
 /// Version of the fee model reported by `Pair::get_fee_state`.
@@ -90,8 +142,6 @@ impl Pair {
             reserve_a: 0,
             reserve_b: 0,
             block_timestamp_last: env.ledger().timestamp(),
-            price_a_cumulative: 0,
-            price_b_cumulative: 0,
             k_last: 0,
         };
 
@@ -138,6 +188,9 @@ impl Pair {
 
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
         let contract = env.current_contract_address();
+
+        // A paused LP token must not be able to accept deposits (issue #313).
+        ensure_lp_token_not_paused(&env, &state.lp_token)?;
 
         let balance_a = TokenClient::new(&env, &state.token_a).balance(&contract);
         let balance_b = TokenClient::new(&env, &state.token_b).balance(&contract);
@@ -263,6 +316,10 @@ impl Pair {
         // ── 1. Load state ────────────────────────────────────────────────────
         let state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
         let fee_state = get_fee_state(&env).ok_or(PairError::NotInitialized)?;
+
+        // A paused LP token must not be able to accept deposits (issue #313).
+        // Checked before the swap and the transfer, so no user funds move.
+        ensure_lp_token_not_paused(&env, &state.lp_token)?;
 
         // ── 2. Validate inputs ────────────────────────────────────────────────
         if amount <= 0 {
@@ -431,6 +488,9 @@ impl Pair {
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
         let contract = env.current_contract_address();
 
+        // A paused LP token must not be able to release reserves (issue #313).
+        ensure_lp_token_not_paused(&env, &state.lp_token)?;
+
         let lp_balance = TokenClient::new(&env, &state.lp_token).balance(&contract);
 
         let total_supply = LpTokenClient::new(&env, &state.lp_token).total_supply();
@@ -517,6 +577,9 @@ impl Pair {
 
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
         let fee_state = get_fee_state(&env).ok_or(PairError::NotInitialized)?;
+
+        // A paused LP token must not be able to release reserves (issue #313).
+        ensure_lp_token_not_paused(&env, &state.lp_token)?;
 
         if lp_amount <= 0 || min_amount_out <= 0 {
             return Err(PairError::InvalidInput);
@@ -809,11 +872,15 @@ impl Pair {
         // installed for this pair, it takes precedence over the dynamic fee.
         // A failing or missing factory call must NOT revert the swap, so we
         // fall back to the dynamic fee in that case.
+        //
+        // `Some(0)` is treated as "no override" as well: the factory never
+        // persists a zero rate (issue #311), but a legacy value or a hostile
+        // factory must not be able to silently zero this pair's swap fee.
         let contract_address = env.current_contract_address();
         let fee_bps = match FactoryClient::new(env, &pair.factory)
             .try_get_pair_fee_override(&contract_address)
         {
-            Ok(Ok(Some(override_bps))) => override_bps,
+            Ok(Ok(Some(override_bps))) if override_bps > 0 => override_bps,
             _ => dynamic_fee_bps,
         };
 
@@ -1060,5 +1127,64 @@ impl Pair {
         PairEvents::stale_threshold_updated(&env, new_threshold);
 
         Ok(())
+    }
+
+    /// Pauses or unpauses this pair's LP token (issue #313).
+    ///
+    /// # Why this entry point exists
+    ///
+    /// The factory initializes each LP token with the **pair** as its admin, so
+    /// the pair is the only address authorized to `mint`, `burn` and `pause`
+    /// that token. Nothing on the pair forwarded to `LpToken::pause`, so the
+    /// flag was unreachable in production: it could only ever be observed as
+    /// `false`. This relays the factory's decision to the token, which is the
+    /// only place the flag can be honoured.
+    ///
+    /// # Authorization
+    /// The factory address (same channel as `set_stale_threshold`). Note this is
+    /// the pair's own factory-auth gate, not the factory's multisig: callers
+    /// should reach it through a factory-governed flow, and the factory is the
+    /// address that signs.
+    ///
+    /// # Effect
+    /// While paused, `mint`, `mint_with_one_token`, `burn` and
+    /// `burn_single_side` all fail with [`PairError::LpTokenPaused`]. Swaps,
+    /// flash loans and LP transfers are unaffected — see `LpToken::pause` for
+    /// the exact per-function scope.
+    ///
+    /// # Errors
+    /// | Error              | Condition                                    |
+    /// |--------------------|----------------------------------------------|
+    /// | `NotInitialized`   | Pair storage absent                           |
+    /// | `Unauthorized`     | LP token rejected the call (e.g. wrong admin) |
+    /// | `LpTokenUnavailable` | LP token could not be invoked              |
+    pub fn set_lp_token_paused(env: Env, paused: bool) -> Result<(), PairError> {
+        let pair = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+
+        pair.factory.require_auth();
+
+        let lp_client = LpTokenClient::new(&env, &pair.lp_token);
+        let result = if paused { lp_client.try_pause() } else { lp_client.try_unpause() };
+
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err(PairError::LpTokenRejected),
+            // A token that cannot even be invoked is a wiring failure, not an
+            // authorization one; report it distinctly.
+            Err(_) => Err(PairError::LpTokenUnavailable),
+        }
+    }
+
+    /// Returns `true` when this pair's LP token is paused.
+    ///
+    /// Fails closed to `false` only in the sense that an unreadable token is
+    /// reported as not paused; [`set_lp_token_paused`] is the write path and
+    /// [`PairError::LpTokenPaused`] remains the authority on every mint/burn.
+    pub fn is_lp_token_paused(env: Env) -> bool {
+        let pair = match get_pair_state(&env) {
+            Some(p) => p,
+            None => return false,
+        };
+        lp_token_is_paused(&env, &pair.lp_token)
     }
 }

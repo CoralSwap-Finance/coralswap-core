@@ -16,6 +16,8 @@ ethnum = { version = "*" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+# Scoped-authorization test helpers (issue #314); dev-only, never in release WASM.
+coralswap-shared = { path = "../shared", features = ["test-support"] }
 coralswap-lp-token = { path = "../lp_token" }
 coralswap-mock-flash-receiver = { path = "../mock_flash_receiver" }
 coralswap-malicious-flash-receiver = { path = "../malicious_flash_receiver" }

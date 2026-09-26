@@ -94,6 +94,8 @@ mod integration_tests {
     #[test]
     fn test_full_coral_swap_flow() {
         let env = Env::default();
+        // BLANKET MOCK (issue #314): end-to-end wiring test; the guards are
+        // covered by the per-contract `auth_matrix` modules.
         env.mock_all_auths_allowing_non_root_auth();
 
         let admin = Address::generate(&env);
