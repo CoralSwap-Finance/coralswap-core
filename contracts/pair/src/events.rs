@@ -3,7 +3,7 @@ use soroban_sdk::{symbol_short, Address, Env, Symbol};
 pub struct PairEvents;
 
 // `deprecated`: Events::publish is superseded by the [#contractevent] macro; migration pending. // `dead_code`: reward_* emitters are wired to their feature in an upcoming change and exercised by tests only.
-#[ollow(dead_code, deprecated)]
+#[allow(dead_code, deprecated)]
 impl PairEvents {
     pub fn swap(
         env: &Env,
@@ -61,7 +61,10 @@ impl PairEvents {
         lp_minted: i128,
     ) {
         env.events().publish(
-            (symbol_short!("mint_1t"), sender.clone()),
+            // "mint_single_side" exceeds the 9-char symbol_short! limit, so it
+            // is abbreviated with the same `_ss` ("single side") suffix as
+            // `burn_ss` (issue #382).
+            (symbol_short!("mint_ss"), sender.clone()),
             (token_in.clone(), amount_in, swap_amount, lp_minted),
         );
     }
@@ -89,7 +92,7 @@ impl PairEvents {
         );
     }
 
-    #allow(dead_code)
+    #[allow(dead_code)]
     pub fn flash_loan(
         env: &Env,
         receiver: &Address,
@@ -105,3 +108,44 @@ impl PairEvents {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Compile-time naming-convention checks (issue #382).
+//
+// Every emitted topic symbol must be lowercase snake_case. Names of ≤ 9
+// chars are emitted via `symbol_short!` (the macro itself enforces the
+// length limit); longer names use the full snake_case spelling via
+// `Symbol::new`. The list below mirrors every literal used by the emitters
+// above (plus the `protocol_fee` / `flash_loan` topics) — when a symbol is
+// added or renamed, update it here so the build fails if the convention
+// is broken. See docs/NAMING_CONVENTIONS.md for the full convention.
+// ─────────────────────────────────────────────────────────────────────────
+
+const fn is_convention_symbol(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if !(b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+const _: () = assert!(is_convention_symbol("swap"));
+const _: () = assert!(is_convention_symbol("mint"));
+const _: () = assert!(is_convention_symbol("burn"));
+const _: () = assert!(is_convention_symbol("sync"));
+const _: () = assert!(is_convention_symbol("burn_ss"));
+const _: () = assert!(is_convention_symbol("mint_ss"));
+const _: () = assert!(is_convention_symbol("rwd_added"));
+const _: () = assert!(is_convention_symbol("rwd_rate"));
+const _: () = assert!(is_convention_symbol("rwd_claim"));
+const _: () = assert!(is_convention_symbol("stl_thrsh"));
+const _: () = assert!(is_convention_symbol("protocol_fee"));
+const _: () = assert!(is_convention_symbol("flash_loan"));
