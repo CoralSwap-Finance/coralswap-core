@@ -2,8 +2,8 @@ use soroban_sdk::{symbol_short, Address, Env, Symbol};
 
 pub struct PairEvents;
 
-// `deprecated`: Events::publish is superseded by the [#contractevent] macro; migration pending. // `dead_code`: reward_* emitters are wired to their feature in an upcoming change and exercised by tests only.
-#[ollow(dead_code, deprecated)]
+// `deprecated`: Events::publish is superseded by the #[contractevent] macro; migration pending. // `dead_code`: reward_* emitters are wired to their feature in an upcoming change and exercised by tests only.
+#[allow(dead_code, deprecated)]
 impl PairEvents {
     pub fn swap(
         env: &Env,
@@ -89,7 +89,7 @@ impl PairEvents {
         );
     }
 
-    #allow(dead_code)
+    #[allow(dead_code)]
     pub fn flash_loan(
         env: &Env,
         receiver: &Address,

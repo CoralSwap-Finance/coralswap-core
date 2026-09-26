@@ -832,9 +832,6 @@ mod factory_tests {
         // Explicit value check: 3 creates → counter and list must both be 3.
         assert_eq!(client.total_pairs(), 3, "total_pairs must be 3 after three creates");
     }
-}
-
-
     // ── Issue #402: create_pair gas benchmark ───────────────────────────────
 
     /// Budget benchmark for create_pair operation.

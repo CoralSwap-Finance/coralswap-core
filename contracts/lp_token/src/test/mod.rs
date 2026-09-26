@@ -1,7 +1,9 @@
 use crate::errors::LpTokenError;
 use crate::storage::LpTokenKey;
 use crate::{LpToken, LpTokenClient};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::testutils::storage::Persistent;
+use soroban_sdk::testutils::Ledger as _;
+use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
 #[test]
 fn test_approve_rejects_current_ledger_expiration() {
@@ -62,7 +64,12 @@ fn test_write_balance_extends_ttl() {
     let admin = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    client.initialize(&admin, &7, &"Test LP".try_into_val(&env), &"TLP".try_into_val(&env));
+    client.initialize(
+        &admin,
+        &7,
+        &String::from_str(&env, "Test LP"),
+        &String::from_str(&env, "TLP"),
+    );
 
     // Mint tokens to recipient
     client.mint(&recipient, &1000_i128);
@@ -85,7 +92,12 @@ fn test_balance_read_extends_ttl() {
     let admin = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    client.initialize(&admin, &7, &"Test LP".try_into_val(&env), &"TLP".try_into_val(&env));
+    client.initialize(
+        &admin,
+        &7,
+        &String::from_str(&env, "Test LP"),
+        &String::from_str(&env, "TLP"),
+    );
 
     // Mint tokens to recipient
     client.mint(&recipient, &1000_i128);
@@ -114,11 +126,16 @@ fn test_nonce_write_extends_ttl() {
     let client = LpTokenClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
 
-    client.initialize(&admin, &7, &"Test LP".try_into_val(&env), &"TLP".try_into_val(&env));
+    client.initialize(
+        &admin,
+        &7,
+        &String::from_str(&env, "Test LP"),
+        &String::from_str(&env, "TLP"),
+    );
 
     // Create a permit signature scenario (nonce gets incremented)
     let owner = Address::generate(&env);
-    let spender = Address::generate(&env);
+    let _spender = Address::generate(&env);
     
     // First, check initial nonce is 0
     let initial_nonce = client.nonce(&owner);
@@ -150,7 +167,12 @@ fn test_transfer_extends_ttl_for_both_parties() {
     let sender = Address::generate(&env);
     let receiver = Address::generate(&env);
 
-    client.initialize(&admin, &7, &"Test LP".try_into_val(&env), &"TLP".try_into_val(&env));
+    client.initialize(
+        &admin,
+        &7,
+        &String::from_str(&env, "Test LP"),
+        &String::from_str(&env, "TLP"),
+    );
 
     // Mint tokens to sender
     client.mint(&sender, &1000_i128);

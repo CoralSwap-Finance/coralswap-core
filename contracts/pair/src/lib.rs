@@ -447,8 +447,16 @@ impl Pair {
             return Err(PairError::InsufficientLiquidityBurned);
         }
 
+        let burn_lp = lp_balance
+            .checked_sub(MINIMUM_LIQUIDITY)
+            .ok_or(PairError::InsufficientLiquidityBurned)?;
+
+        if burn_lp <= 0 {
+            return Err(PairError::InsufficientLiquidityBurned);
+        }
+
         let (amount_a, amount_b) =
-            math::burn_amounts(lp_balance, state.reserve_a, state.reserve_b, burnable_supply)?;
+            math::burn_amounts(burn_lp, state.reserve_a, state.reserve_b, burnable_supply)?;
 
         if amount_a <= 0 || amount_b <= 0 {
             return Err(PairError::InsufficientLiquidityBurned);
@@ -460,11 +468,13 @@ impl Pair {
         }
         let reserve_a_after = state.reserve_a.checked_sub(amount_a).ok_or(PairError::Overflow)?;
         let reserve_b_after = state.reserve_b.checked_sub(amount_b).ok_or(PairError::Overflow)?;
-        if reserve_a_after < coralswap_shared::MINIMUM_RESERVE || reserve_b_after < coralswap_shared::MINIMUM_RESERVE {
+        if (reserve_a_after > 0 && reserve_a_after < coralswap_shared::MINIMUM_RESERVE)
+            || (reserve_b_after > 0 && reserve_b_after < coralswap_shared::MINIMUM_RESERVE)
+        {
             return Err(PairError::DustAmount);
         }
 
-        LpTokenClient::new(&env, &state.lp_token).burn(&contract, &lp_balance);
+        LpTokenClient::new(&env, &state.lp_token).burn(&contract, &burn_lp);
 
         TokenClient::new(&env, &state.token_a).transfer(&contract, &to, &amount_a);
 
@@ -864,7 +874,7 @@ impl Pair {
             Ok(Ok(Some(fee_to))) => Some(fee_to),
             _ => None,
         };
-        let protocol_fee_bps = match FactoryClient::new(env, &pair.factory).try_get_fee_bps() {
+        let protocol_fee_bps: u32 = match FactoryClient::new(env, &pair.factory).try_get_fee_bps() {
             Ok(Ok(bps)) => bps.min(10_000),
             _ => 0,
         };
@@ -901,21 +911,22 @@ impl Pair {
             if protocol_fee_a > 0 || protocol_fee_b > 0 {
                 let fee_a_key = Symbol::new(env, "ProtocolFeeA");
                 let fee_b_key = Symbol::new(env, "ProtocolFeeB");
-                let total_a = env
+                let total_a: i128 = env
                     .storage()
                     .instance()
                     .get(&fee_a_key)
-                    .unwrap_or(0)
+                    .unwrap_or(0i128)
                     .saturating_add(protocol_fee_a);
-                let total_b = env
+                let total_b: i128 = env
                     .storage()
                     .instance()
                     .get(&fee_b_key)
-                    .unwrap_or(0)
+                    .unwrap_or(0i128)
                     .saturating_add(protocol_fee_b);
                 env.storage().instance().set(&fee_a_key, &total_a);
                 env.storage().instance().set(&fee_b_key, &total_b);
 
+                #[allow(deprecated)]
                 env.events().publish(
                     (Symbol::new(env, "protocol_fee_collected"),),
                     (fee_to, protocol_fee_a, protocol_fee_b, fee_bps),

@@ -816,12 +816,12 @@ fn test_sweep_drains_stuck_balance_to_recipient() {
 
     let recipient = Address::generate(&env);
     let swept = router.sweep(&token, &recipient);
-
     assert_eq!(swept, 500);
+    assert_eq!(env.auths()[0].0, governance, "sweep must be authorized by governance");
+
     let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
     assert_eq!(token_client.balance(&recipient), 500);
     assert_eq!(token_client.balance(&router_id), 0);
-    assert_eq!(env.auths()[0].0, governance, "sweep must be authorized by governance");
 }
 
 #[test]

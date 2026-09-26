@@ -382,9 +382,11 @@ impl Factory {
     /// factory are allowed to record fees.
     pub fn deposit_protocol_fee(
         env: Env,
+        pair: Address,
         token: Address,
         amount: i128,
     ) -> Result<(), FactoryError> {
+        pair.require_auth();
         let factory_storage =
             storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
 
@@ -392,11 +394,10 @@ impl Factory {
             return Err(FactoryError::InvalidFeeRecipient);
         }
 
-        let caller = env.caller();
         let pair_list = storage::get_pair_list(&env);
         let mut is_pair = false;
         for i in 0..pair_list.len() {
-            if pair_list.get(i).unwrap() == caller.clone() {
+            if pair_list.get(i).unwrap() == pair {
                 is_pair = true;
                 break;
             }
@@ -417,13 +418,13 @@ impl Factory {
             .instance()
             .set(&key, &(balance + amount));
 
+        #[allow(deprecated)]
         env.events().publish(
             (Symbol::new(&env, "protocol_fee_collected"), token),
             (amount,),
         );
 
         storage::extend_instance_ttl(&env);
-
         Ok(())
     }
 
@@ -440,8 +441,16 @@ impl Factory {
         storage::get_factory_storage(&env).map(|s| s.fee_bps).unwrap_or(0)
     }
 
+    pub fn get_fee_bps(env: Env) -> u32 {
+        Self::fee_bps(env)
+    }
+
     pub fn fee_to(env: Env) -> Option<Address> {
         storage::get_factory_storage(&env).map(|s| s.fee_to).unwrap_or(None)
+    }
+
+    pub fn get_fee_to(env: Env) -> Option<Address> {
+        Self::fee_to(env)
     }
 
     pub fn fee_to_setter(env: Env) -> Option<Address> {

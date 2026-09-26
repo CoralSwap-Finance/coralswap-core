@@ -183,8 +183,7 @@ mod integration_tests {
         assert!(returned_a > 0, "remove_liquidity must return token_a");
         assert!(returned_b > 0, "remove_liquidity must return token_b");
         assert_eq!(lp_token_client.balance(&user), 0);
-        // The burn path consumes the LP tokens held by the pair, including the
-        // initial minimum-liquidity balance transferred during first mint.
-        assert_eq!(lp_token_client.balance(&pair_address), 0);
+        // The MINIMUM_LIQUIDITY seed remains permanently locked in the pair.
+        assert_eq!(lp_token_client.balance(&pair_address), 1_000_i128);
     }
 }
