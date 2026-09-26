@@ -671,6 +671,9 @@ impl Pair {
 
     /// Borrows `amount_a` / `amount_b` from pool reserves, invokes `receiver.on_flash_loan`,
     /// then verifies repayment (principal + fee) before returning.
+    ///
+    /// When both `amount_a == 0` and `amount_b == 0`, this call completes as a clean
+    /// no-op: no tokens are transferred, no receiver callback is invoked, and `Ok(())` is returned.
     pub fn flash_loan(
         env: Env,
         receiver: Address,
