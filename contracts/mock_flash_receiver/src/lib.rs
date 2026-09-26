@@ -20,6 +20,7 @@ impl FlashReceiver for MockFlashReceiver {
         data: Bytes,
     ) {
         let repay_bytes = Bytes::from_slice(&env, b"repay");
+        let overpay_bytes = Bytes::from_slice(&env, b"overpay");
         let steal_bytes = Bytes::from_slice(&env, b"steal");
 
         if data == repay_bytes {
@@ -33,6 +34,21 @@ impl FlashReceiver for MockFlashReceiver {
             if amount_b > 0 {
                 let total_b = amount_b + fee_b;
                 TokenClient::new(&env, &token_b).transfer(&contract_address, &initiator, &total_b);
+            }
+        } else if data == overpay_bytes {
+            // Over-repay: return the receiver's ENTIRE balance of each
+            // borrowed token (principal + fee + whatever surplus the test
+            // pre-minted). The pair's repayment check is a floor, so the
+            // surplus is retained by the pool as a donation (issue #384).
+            let contract_address = env.current_contract_address();
+
+            if amount_a > 0 {
+                let full_a = TokenClient::new(&env, &token_a).balance(&contract_address);
+                TokenClient::new(&env, &token_a).transfer(&contract_address, &initiator, &full_a);
+            }
+            if amount_b > 0 {
+                let full_b = TokenClient::new(&env, &token_b).balance(&contract_address);
+                TokenClient::new(&env, &token_b).transfer(&contract_address, &initiator, &full_b);
             }
         } else if data == steal_bytes {
             // Do nothing, let the Pair invariant check fail

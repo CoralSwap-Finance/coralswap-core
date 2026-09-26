@@ -118,6 +118,68 @@ fn flash_loan_honest_receiver_repays() {
     assert_eq!(res_b, initial_reserve);
 }
 
+// Scenario D — receiver repays MORE than principal + fee (overpayment).
+// The repayment check is a floor (`new_balance >= reserve + fee`), so the
+// surplus must be accepted and retained by the pool as a donation. Locks
+// the donation behaviour in so a refactor cannot start rejecting it
+// (issue #384).
+#[test]
+fn flash_loan_overpayment_donates_surplus_to_pool() {
+    let setup = Setup::new();
+    let initial_reserve = 1_000_000_i128;
+    setup.fund_pool(initial_reserve);
+
+    let loan_amount = 10_000_i128;
+    let fee = crate::flash_loan::compute_flash_fee(loan_amount, 30).unwrap();
+    let surplus = 777_i128;
+
+    // The receiver holds principal (transferred by the pair) + fee + surplus,
+    // so it can return more than it borrowed.
+    setup
+        .token_a_admin
+        .mint(&setup.honest_receiver, &(fee + surplus));
+
+    let overpay_action = Bytes::from_slice(&setup.env, b"overpay");
+    setup
+        .pair_client
+        .flash_loan(&setup.honest_receiver, &loan_amount, &0, &overpay_action);
+
+    // The loan succeeds and the pool keeps principal + fee + surplus:
+    // the surplus is a donation to the pool.
+    let (res_a, res_b, _) = setup.pair_client.get_reserves();
+    assert_eq!(res_a, initial_reserve + fee + surplus);
+    assert_eq!(res_b, initial_reserve);
+}
+
+// Scenario D2 — an over-repaying receiver on token_a only, while token_b was
+// not borrowed at all: the b-side reserve must remain untouched.
+#[test]
+fn flash_loan_overpayment_single_sided_keeps_other_reserve_intact() {
+    let setup = Setup::new();
+    let initial_reserve = 1_000_000_i128;
+    setup.fund_pool(initial_reserve);
+
+    let loan_amount = 5_000_i128;
+    let fee = crate::flash_loan::compute_flash_fee(loan_amount, 30).unwrap();
+    let surplus = 123_i128;
+
+    setup
+        .token_a_admin
+        .mint(&setup.honest_receiver, &(fee + surplus));
+
+    let overpay_action = Bytes::from_slice(&setup.env, b"overpay");
+    assert_eq!(
+        setup
+            .pair_client
+            .try_flash_loan(&setup.honest_receiver, &loan_amount, &0, &overpay_action),
+        Ok(Ok(()))
+    );
+
+    let (res_a, res_b, _) = setup.pair_client.get_reserves();
+    assert_eq!(res_a, initial_reserve + fee + surplus);
+    assert_eq!(res_b, initial_reserve);
+}
+
 // Scenario A — malicious receiver calls pair::swap() during flash callback
 #[test]
 fn flash_loan_reentrancy_swap_attack_reverts() {
