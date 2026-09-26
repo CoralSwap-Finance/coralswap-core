@@ -1,7 +1,8 @@
 use crate::errors::LpTokenError;
 use crate::storage::LpTokenKey;
 use crate::{LpToken, LpTokenClient};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::testutils::{storage::Persistent as _, Address as _, Ledger as _};
+use soroban_sdk::{Address, Env, String};
 
 #[test]
 fn test_approve_rejects_current_ledger_expiration() {
@@ -44,6 +45,78 @@ fn test_approve_allows_future_expiration_and_transfer_from_deducts_allowance() {
     assert_eq!(client.balance(&owner), 75);
 }
 
+// ── Issue #386: Self-spend semantics tests ───────────────────────────────────
+
+#[test]
+fn test_transfer_from_self_spend_without_allowance_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let contract_id = env.register(LpToken, ());
+    let client = LpTokenClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let receiver = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        env.storage().persistent().set(&LpTokenKey::Balance(owner.clone()), &100_i128);
+    });
+
+    // Zero allowance between owner and owner
+    assert_eq!(client.allowance(&owner, &owner), 0);
+
+    // Self-spend: spender == from -> allowance check bypassed, direct transfer
+    client.transfer_from(&owner, &owner, &receiver, &40_i128);
+
+    assert_eq!(client.balance(&owner), 60);
+    assert_eq!(client.balance(&receiver), 40);
+    assert_eq!(client.allowance(&owner, &owner), 0);
+}
+
+#[test]
+fn test_transfer_from_self_spend_preserves_existing_allowance() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let contract_id = env.register(LpToken, ());
+    let client = LpTokenClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let current_ledger = env.ledger().sequence();
+
+    // Owner approves itself for 100 tokens
+    client.approve(&owner, &owner, &100_i128, &(current_ledger + 10));
+    assert_eq!(client.allowance(&owner, &owner), 100);
+
+    env.as_contract(&contract_id, || {
+        env.storage().persistent().set(&LpTokenKey::Balance(owner.clone()), &100_i128);
+    });
+
+    // Self-spend: spender == from -> does not consume allowance
+    client.transfer_from(&owner, &owner, &receiver, &30_i128);
+
+    assert_eq!(client.balance(&owner), 70);
+    assert_eq!(client.balance(&receiver), 30);
+    // Allowance remains 100 (unspent)
+    assert_eq!(client.allowance(&owner, &owner), 100);
+}
+
+#[test]
+fn test_transfer_from_third_party_requires_allowance() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let contract_id = env.register(LpToken, ());
+    let client = LpTokenClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let spender = Address::generate(&env);
+    let receiver = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        env.storage().persistent().set(&LpTokenKey::Balance(owner.clone()), &100_i128);
+    });
+
+    // Spender != owner with no allowance must fail
+    let result = client.try_transfer_from(&spender, &owner, &receiver, &25_i128);
+    assert_eq!(result, Err(Ok(LpTokenError::InsufficientAllowance)));
+}
+
 // Permit (SEP-41) tests removed: `Address::Account(BytesN<32>)` was removed in
 // soroban-sdk 21.x (`Address` is now opaque), and the contract's `permit()`
 // derives the verification key from `owner.to_xdr().slice(..32)` which no
@@ -62,7 +135,12 @@ fn test_write_balance_extends_ttl() {
     let admin = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    client.initialize(&admin, &7, &"Test LP".try_into_val(&env), &"TLP".try_into_val(&env));
+    client.initialize(
+        &admin,
+        &7,
+        &String::from_str(&env, "Test LP"),
+        &String::from_str(&env, "TLP"),
+    );
 
     // Mint tokens to recipient
     client.mint(&recipient, &1000_i128);
@@ -85,7 +163,12 @@ fn test_balance_read_extends_ttl() {
     let admin = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    client.initialize(&admin, &7, &"Test LP".try_into_val(&env), &"TLP".try_into_val(&env));
+    client.initialize(
+        &admin,
+        &7,
+        &String::from_str(&env, "Test LP"),
+        &String::from_str(&env, "TLP"),
+    );
 
     // Mint tokens to recipient
     client.mint(&recipient, &1000_i128);
@@ -114,12 +197,17 @@ fn test_nonce_write_extends_ttl() {
     let client = LpTokenClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
 
-    client.initialize(&admin, &7, &"Test LP".try_into_val(&env), &"TLP".try_into_val(&env));
+    client.initialize(
+        &admin,
+        &7,
+        &String::from_str(&env, "Test LP"),
+        &String::from_str(&env, "TLP"),
+    );
 
     // Create a permit signature scenario (nonce gets incremented)
     let owner = Address::generate(&env);
-    let spender = Address::generate(&env);
-    
+    let _spender = Address::generate(&env);
+
     // First, check initial nonce is 0
     let initial_nonce = client.nonce(&owner);
     assert_eq!(initial_nonce, 0);
@@ -127,14 +215,14 @@ fn test_nonce_write_extends_ttl() {
     // We can't easily test permit() without complex signature setup,
     // but we can verify the TTL extension mechanism by checking the storage
     // pattern. The actual permit flow will extend nonce TTL.
-    
+
     // For this test, we verify the nonce key structure is correct
     let nonce_key = LpTokenKey::Nonce(owner.clone());
     env.as_contract(&contract_id, || {
         // Manually set a nonce to verify the key works
         env.storage().persistent().set(&nonce_key, &1u64);
         env.storage().persistent().extend_ttl(&nonce_key, 518_400, 1_036_800);
-        
+
         let ttl = env.storage().persistent().get_ttl(&nonce_key);
         assert!(ttl >= 518_400, "Nonce TTL should be extendable");
     });
@@ -150,7 +238,12 @@ fn test_transfer_extends_ttl_for_both_parties() {
     let sender = Address::generate(&env);
     let receiver = Address::generate(&env);
 
-    client.initialize(&admin, &7, &"Test LP".try_into_val(&env), &"TLP".try_into_val(&env));
+    client.initialize(
+        &admin,
+        &7,
+        &String::from_str(&env, "Test LP"),
+        &String::from_str(&env, "TLP"),
+    );
 
     // Mint tokens to sender
     client.mint(&sender, &1000_i128);
@@ -161,11 +254,11 @@ fn test_transfer_extends_ttl_for_both_parties() {
     // Verify TTL was extended for both sender and receiver
     let sender_key = LpTokenKey::Balance(sender.clone());
     let receiver_key = LpTokenKey::Balance(receiver.clone());
-    
+
     env.as_contract(&contract_id, || {
         let sender_ttl = env.storage().persistent().get_ttl(&sender_key);
         let receiver_ttl = env.storage().persistent().get_ttl(&receiver_key);
-        
+
         assert!(sender_ttl >= 518_400, "Sender balance TTL should be extended");
         assert!(receiver_ttl >= 518_400, "Receiver balance TTL should be extended");
     });

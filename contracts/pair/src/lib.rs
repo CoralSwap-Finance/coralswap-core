@@ -148,7 +148,9 @@ impl Pair {
 
         // Minimum-reserve / dust policy (issue 393): reject 1-stroop style
         // deposits that fragment state. Both sides must meet MINIMUM_RESERVE.
-        if amount_a < coralswap_shared::MINIMUM_RESERVE || amount_b < coralswap_shared::MINIMUM_RESERVE {
+        if amount_a < coralswap_shared::MINIMUM_RESERVE
+            || amount_b < coralswap_shared::MINIMUM_RESERVE
+        {
             return Err(PairError::DustAmount);
         }
 
@@ -455,12 +457,16 @@ impl Pair {
         }
         // Dust policy (issue 393): payouts below the reserve floor are rejected,
         // and the pool must retain at least MINIMUM_RESERVE per side.
-        if amount_a < coralswap_shared::MINIMUM_RESERVE || amount_b < coralswap_shared::MINIMUM_RESERVE {
+        if amount_a < coralswap_shared::MINIMUM_RESERVE
+            || amount_b < coralswap_shared::MINIMUM_RESERVE
+        {
             return Err(PairError::DustAmount);
         }
         let reserve_a_after = state.reserve_a.checked_sub(amount_a).ok_or(PairError::Overflow)?;
         let reserve_b_after = state.reserve_b.checked_sub(amount_b).ok_or(PairError::Overflow)?;
-        if reserve_a_after < coralswap_shared::MINIMUM_RESERVE || reserve_b_after < coralswap_shared::MINIMUM_RESERVE {
+        if reserve_a_after < coralswap_shared::MINIMUM_RESERVE
+            || reserve_b_after < coralswap_shared::MINIMUM_RESERVE
+        {
             return Err(PairError::DustAmount);
         }
 
@@ -725,16 +731,8 @@ impl Pair {
     /// the factory's `fee_to` at swap time. This view exposes the cumulative
     /// amounts for accounting and acceptance testing.
     pub fn get_protocol_fee_balance(env: Env) -> (i128, i128) {
-        let fee_a = env
-            .storage()
-            .instance()
-            .get(&Symbol::new(&env, "ProtocolFeeA"))
-            .unwrap_or(0);
-        let fee_b = env
-            .storage()
-            .instance()
-            .get(&Symbol::new(&env, "ProtocolFeeB"))
-            .unwrap_or(0);
+        let fee_a = env.storage().instance().get(&Symbol::new(&env, "ProtocolFeeA")).unwrap_or(0);
+        let fee_b = env.storage().instance().get(&Symbol::new(&env, "ProtocolFeeB")).unwrap_or(0);
         (fee_a, fee_b)
     }
 
@@ -828,7 +826,6 @@ impl Pair {
             return Err(PairError::InsufficientInputAmount);
         }
 
-
         let fee = fee_bps as i128;
 
         let balance_a_adj = balance_a
@@ -864,54 +861,54 @@ impl Pair {
             Ok(Ok(Some(fee_to))) => Some(fee_to),
             _ => None,
         };
-        let protocol_fee_bps = match FactoryClient::new(env, &pair.factory).try_get_fee_bps() {
+        let protocol_fee_bps: u32 = match FactoryClient::new(env, &pair.factory).try_get_fee_bps() {
             Ok(Ok(bps)) => bps.min(10_000),
             _ => 0,
         };
 
         let protocol_fee_a = if protocol_fee_to.is_some() && protocol_fee_bps > 0 && amount_a_in > 0
         {
-            amount_a_in
-                .saturating_mul(fee)
-                .saturating_mul(protocol_fee_bps as i128)
-                / 100_000_000
+            amount_a_in.saturating_mul(fee).saturating_mul(protocol_fee_bps as i128) / 100_000_000
         } else {
             0
         };
         let protocol_fee_b = if protocol_fee_to.is_some() && protocol_fee_bps > 0 && amount_b_in > 0
         {
-            amount_b_in
-                .saturating_mul(fee)
-                .saturating_mul(protocol_fee_bps as i128)
-                / 100_000_000
+            amount_b_in.saturating_mul(fee).saturating_mul(protocol_fee_bps as i128) / 100_000_000
         } else {
             0
         };
 
         if let Some(fee_to) = protocol_fee_to {
             if protocol_fee_a > 0 {
-                TokenClient::new(env, &pair.token_a)
-                    .transfer(&contract_address, &fee_to, &protocol_fee_a);
+                TokenClient::new(env, &pair.token_a).transfer(
+                    &contract_address,
+                    &fee_to,
+                    &protocol_fee_a,
+                );
             }
             if protocol_fee_b > 0 {
-                TokenClient::new(env, &pair.token_b)
-                    .transfer(&contract_address, &fee_to, &protocol_fee_b);
+                TokenClient::new(env, &pair.token_b).transfer(
+                    &contract_address,
+                    &fee_to,
+                    &protocol_fee_b,
+                );
             }
 
             if protocol_fee_a > 0 || protocol_fee_b > 0 {
                 let fee_a_key = Symbol::new(env, "ProtocolFeeA");
                 let fee_b_key = Symbol::new(env, "ProtocolFeeB");
-                let total_a = env
+                let total_a: i128 = env
                     .storage()
                     .instance()
                     .get(&fee_a_key)
-                    .unwrap_or(0)
+                    .unwrap_or(0i128)
                     .saturating_add(protocol_fee_a);
-                let total_b = env
+                let total_b: i128 = env
                     .storage()
                     .instance()
                     .get(&fee_b_key)
-                    .unwrap_or(0)
+                    .unwrap_or(0i128)
                     .saturating_add(protocol_fee_b);
                 env.storage().instance().set(&fee_a_key, &total_a);
                 env.storage().instance().set(&fee_b_key, &total_b);
@@ -925,10 +922,7 @@ impl Pair {
 
         pair.reserve_a = balance_a.checked_sub(protocol_fee_a).ok_or(PairError::Overflow)?;
         pair.reserve_b = balance_b.checked_sub(protocol_fee_b).ok_or(PairError::Overflow)?;
-        pair.k_last = pair
-            .reserve_a
-            .checked_mul(pair.reserve_b)
-            .ok_or(PairError::Overflow)?;
+        pair.k_last = pair.reserve_a.checked_mul(pair.reserve_b).ok_or(PairError::Overflow)?;
 
         pair.block_timestamp_last = env.ledger().timestamp();
 
