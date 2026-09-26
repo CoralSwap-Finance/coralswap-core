@@ -62,7 +62,9 @@ pub fn compute_flash_fee(
 /// 4. **Callback** — call `receiver.on_flash_loan(...)`.  The receiver MUST
 ///    repay principal + fee before the callback returns.
 /// 5. **Repayment check** — `new_balance >= old_reserve + fee` for each
-///    borrowed token.
+///    borrowed token. This is a floor, not an equality: if the receiver
+///    returns MORE than principal + fee, the surplus is accepted and
+///    retained by the pool as a donation (issue #384).
 /// 6. **Reserve update** — set reserves to post-callback balances.
 /// 7. **k-invariant** — `post_k >= pre_k`; reverts on violation.
 /// 8. **Persist + emit** — write updated state, publish event.
@@ -188,6 +190,11 @@ pub fn execute_flash_loan(
 
     // Each borrowed token's new balance must be >= old_reserve + fee.
     // Net effect: the pool gains exactly `fee` per token (or more).
+    //
+    // This is deliberately a FLOOR check (`>=`), not an equality: if the
+    // receiver returns more than principal + fee, the surplus is accepted
+    // and retained by the pool as a donation (issue #384). A refactor must
+    // not start rejecting overpayments.
     if amount_a > 0 {
         let required_a = state.reserve_a.checked_add(fee_a).ok_or(PairError::Overflow)?;
         if new_balance_a < required_a {

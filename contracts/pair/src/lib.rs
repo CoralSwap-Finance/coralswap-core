@@ -677,6 +677,15 @@ impl Pair {
     // Views
     // ─────────────────────────────────────────
 
+    /// Returns the pair's protocol version (issue #383).
+    ///
+    /// The pair is deployed from a pinned WASM hash by the factory, so its
+    /// version is the implementation constant
+    /// [`coralswap_shared::PROTOCOL_VERSION`] rather than stored state.
+    pub fn version(_env: Env) -> u32 {
+        coralswap_shared::PROTOCOL_VERSION
+    }
+
     /// Returns (reserve_a, reserve_b, block_timestamp_last).
     pub fn get_reserves(env: Env) -> Result<(i128, i128, u64), PairError> {
         let state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;

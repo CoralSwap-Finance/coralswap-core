@@ -173,3 +173,23 @@ fn test_get_fee_state_reports_model_version_and_bps() {
     assert_eq!(view.min_fee_bps, 10);
     assert_eq!(view.max_fee_bps, 100);
 }
+
+#[test]
+fn test_version_returns_protocol_constant() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(Pair, ());
+    let pair_client = PairClient::new(&env, &contract_id);
+
+    pair_client.initialize(
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &Address::generate(&env),
+    );
+
+    // The pair's version is the shared implementation constant, not stored
+    // state (issue #383) — clients can verify it without any other view.
+    assert_eq!(pair_client.version(), coralswap_shared::PROTOCOL_VERSION);
+}

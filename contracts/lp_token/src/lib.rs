@@ -547,3 +547,36 @@ impl LpToken {
 
 #[cfg(test)]
 mod test;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Compile-time naming-convention checks (issue #382).
+//
+// Every emitted topic symbol must be lowercase snake_case and ≤ 9 chars for
+// `symbol_short!` topics. The list below mirrors every literal emitted by
+// this contract; update it when a symbol is added or renamed so the build
+// fails if the convention is broken. See docs/NAMING_CONVENTIONS.md.
+// ─────────────────────────────────────────────────────────────────────────
+
+const fn is_convention_symbol(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if !(b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+const _: () = assert!(is_convention_symbol("adm_xfer"));
+const _: () = assert!(is_convention_symbol("paused"));
+const _: () = assert!(is_convention_symbol("unpaused"));
+const _: () = assert!(is_convention_symbol("approve"));
+const _: () = assert!(is_convention_symbol("mint"));
+const _: () = assert!(is_convention_symbol("burn"));
+const _: () = assert!(is_convention_symbol("transfer"));

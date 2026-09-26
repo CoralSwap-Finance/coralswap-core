@@ -937,4 +937,73 @@ mod factory_tests {
             "create_pair baseline exceeds per-tx limit (100M)"
         );
     }
+
+    // ── Deterministic pair-address derivation (Issue #383) ───────────────────
+
+    #[test]
+    fn test_get_pair_address_matches_created_pair() {
+        let (_env, client, token_a, token_b, _, _, _) = setup_env();
+
+        let pair_addr = client.create_pair(&token_a, &token_b);
+
+        // The view must derive the same address create_pair deployed.
+        let predicted = client.get_pair_address(&token_a, &token_b);
+        assert_eq!(predicted, pair_addr);
+    }
+
+    #[test]
+    fn test_get_pair_address_reverse_order_matches() {
+        let (_env, client, token_a, token_b, _, _, _) = setup_env();
+
+        let pair_addr = client.create_pair(&token_a, &token_b);
+
+        // Reversed arguments canonicalise to the same salt, hence the same
+        // address — mirroring create_pair's sort.
+        let predicted_reverse = client.get_pair_address(&token_b, &token_a);
+        assert_eq!(predicted_reverse, pair_addr);
+    }
+
+    #[test]
+    fn test_get_pair_address_identical_tokens_fails() {
+        let (_env, client, token_a, _token_b, _, _, _) = setup_env();
+
+        let result = client.try_get_pair_address(&token_a, &token_a);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_pair_address_distinct_across_multiple_pairs() {
+        let (env, client, token_a, token_b, _, _, _) = setup_env();
+
+        let token_c = Address::generate(&env);
+        let token_d = Address::generate(&env);
+
+        // Predict before creating — discovery without create_pair.
+        let predicted_ab = client.get_pair_address(&token_a, &token_b);
+        let predicted_ac = client.get_pair_address(&token_a, &token_c);
+        let predicted_bc = client.get_pair_address(&token_b, &token_c);
+
+        assert_ne!(predicted_ab, predicted_ac);
+        assert_ne!(predicted_ab, predicted_bc);
+        assert_ne!(predicted_ac, predicted_bc);
+
+        // Every prediction matches the address create_pair actually deploys.
+        assert_eq!(client.create_pair(&token_a, &token_b), predicted_ab);
+        assert_eq!(client.create_pair(&token_a, &token_c), predicted_ac);
+        assert_eq!(client.create_pair(&token_b, &token_c), predicted_bc);
+
+        // The canonical order of the arguments must not matter.
+        assert_eq!(client.get_pair_address(&token_b, &token_a), predicted_ab);
+        assert_eq!(client.get_pair_address(&token_c, &token_a), predicted_ac);
+        assert_eq!(client.get_pair_address(&token_c, &token_b), predicted_bc);
+    }
+
+    // ── Protocol version view (Issue #383) ───────────────────────────────────
+
+    #[test]
+    fn test_protocol_version_matches_shared_constant_after_init() {
+        let (_env, client, _, _, _, _, _) = setup_env();
+
+        assert_eq!(client.try_protocol_version(), Ok(Ok(coralswap_shared::PROTOCOL_VERSION)));
+    }
 }
