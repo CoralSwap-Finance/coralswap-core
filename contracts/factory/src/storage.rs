@@ -36,6 +36,8 @@ pub enum DataKey {
     TotalPairs,
     /// Per-pair frozen flag.
     PairFrozen(Address),
+    /// Fast boolean lookup for pair membership (issue #391).
+    IsPair(Address),
 }
 
 pub fn is_pair_frozen(env: &Env, pair: &Address) -> bool {
@@ -129,6 +131,31 @@ pub fn get_pair_fee_override(env: &Env, pair: &Address) -> Option<u32> {
 /// for validating that `fee_bps <= 100` (enforced by `Factory::set_pair_fee`).
 pub fn set_pair_fee_override(env: &Env, pair: &Address, fee_bps: u32) {
     env.storage().instance().set(&DataKey::PairFeeOverride(pair.clone()), &fee_bps);
+}
+
+/// Returns true if the address is a pair created by this factory.
+pub fn is_pair(env: &Env, pair: &Address) -> bool {
+    if env.storage().instance().has(&DataKey::IsPair(pair.clone())) {
+        return env.storage().instance().get(&DataKey::IsPair(pair.clone())).unwrap_or(false);
+    }
+    // Fallback: check pair_list for backwards compatibility or tests
+    let pair_list = get_pair_list(env);
+    for i in 0..pair_list.len() {
+        if pair_list.get(i).unwrap() == *pair {
+            return true;
+        }
+    }
+    false
+}
+
+/// Sets the pair membership flag for an address.
+pub fn set_is_pair(env: &Env, pair: &Address, is_pair: bool) {
+    let key = DataKey::IsPair(pair.clone());
+    if is_pair {
+        env.storage().instance().set(&key, &true);
+    } else {
+        env.storage().instance().remove(&key);
+    }
 }
 
 /// Extend instance storage TTL to keep contract alive.

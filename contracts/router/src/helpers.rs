@@ -7,6 +7,7 @@ pub trait FactoryInterface {
     fn get_pair(env: Env, token_a: Address, token_b: Address) -> Option<Address>;
     fn create_pair(env: Env, token_a: Address, token_b: Address) -> Address;
     fn fee_to_setter(env: Env) -> Option<Address>;
+    fn is_pair(env: Env, pair: Address) -> bool;
 }
 
 #[contractclient(name = "PairClient")]
@@ -177,7 +178,7 @@ pub fn compute_optimal_amounts(
     }
 }
 
-/// Retrieves pair address from factory.
+/// Retrieves pair address from factory and validates that it is a registered pair.
 pub fn get_pair_address(
     env: &Env,
     factory: &Address,
@@ -185,7 +186,11 @@ pub fn get_pair_address(
     token_b: &Address,
 ) -> Result<Address, RouterError> {
     let factory_client = FactoryClient::new(env, factory);
-    factory_client.get_pair(token_a, token_b).ok_or(RouterError::PairNotFound)
+    let pair = factory_client.get_pair(token_a, token_b).ok_or(RouterError::PairNotFound)?;
+    if !factory_client.is_pair(&pair) {
+        return Err(RouterError::PairNotFound);
+    }
+    Ok(pair)
 }
 
 /// Returns (reserve_in, reserve_out, fee_bps) for a swap of token_in → token_out
