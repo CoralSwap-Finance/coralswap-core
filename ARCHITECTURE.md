@@ -63,7 +63,7 @@ The Factory is the registry and governance hub of the protocol.
 - **Governance**: Manages a multisig signer set (1–10 signers, threshold = `ceil(n/2)`). Multisig is required for pause/unpause and upgrade operations.
 - **Protocol fees**: The `fee_to_setter` address can set a protocol-wide fee recipient (`fee_to`) and fee rate (`fee_bps`, max 30 bps). Per-pair fee overrides (max 100 bps) are also supported.
 - **Upgrades**: A timelocked upgrade mechanism (72-hour delay, ~51,840 ledgers) allows the Factory WASM to be replaced via `propose_upgrade` → `execute_upgrade`. Upgrades can be cancelled before execution.
-- **Pause**: The protocol can be paused/unpaused by multisig, which blocks new pair creation.
+- **Pause, Resume & Freezing**: The protocol can be paused or resumed by multisig. Individual pairs can be frozen or unfrozen. Dedicated events (`paused`, `unpaused`, `resumed`, `frozen`, `unfrozen`) and a public heartbeat sync (`sync()`) ensure indexers maintain up-to-date state. See [docs/INDEXER.md](docs/INDEXER.md).
 
 ### Pair
 
