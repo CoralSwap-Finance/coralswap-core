@@ -733,7 +733,8 @@ impl Pair {
     /// Protocol fees are a share of the existing swap fee and are forwarded to
     /// the factory's `fee_to` at swap time. This view exposes the cumulative
     /// amounts for accounting and acceptance testing.
-    pub fn get_protocol_fee_balance(env: Env) -> (i128, i128) {        let fee_a = env
+    pub fn get_protocol_fee_balance(env: Env) -> (i128, i128) {
+        let fee_a = env
             .storage()
             .instance()
             .get(&Symbol::new(&env, "ProtocolFeeA"))
