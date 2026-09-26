@@ -92,6 +92,24 @@ The liquidity-level flag is separate from the token-level one on purpose: freezi
 
 Mints and burns that the pause rejects return typed errors — `LpTokenPaused` (122), `LpTokenUnavailable` (123), `LpTokenRejected` (124) — rather than a bare host abort, so indexers and callers can distinguish an intentional pause from a genuine authorization failure.
 
+**Enforcement lives in the LP token; the pair's copy is a hint.** The pair
+refuses mint/burn/swap up front so the caller gets `PairError::LpTokenPaused`
+instead of an opaque error from a nested call. To keep that check off the
+critical path, the pair reads a cached flag it writes itself in
+`set_lp_token_paused` rather than calling `is_paused` across a contract
+boundary — a nested sub-invocation on every `swap` is a measurable fraction of
+its budget, and getting that wrong makes the whole contract exceed the limit
+under a realistic auth tree.
+
+The cache can only go stale if the LP token's admin is transferred off the pair,
+since the pair is otherwise the only address that can pause it. Even then
+nothing unsafe happens: the LP token refuses the nested `mint`/`burn`
+independently, so the pool stays frozen. What degrades is diagnostics — the
+caller sees the token's `#207` instead of the pair's `LpTokenPaused`. A stale
+`true` is impossible, because only the pair writes the key.
+`Pair::is_lp_token_paused` reads through to the token, so the view is never
+stale.
+
 ### LP Token
 
 A SEP-41 compliant fungible token contract.

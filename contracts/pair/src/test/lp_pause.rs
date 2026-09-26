@@ -15,7 +15,8 @@
 use crate::{errors::PairError, Pair, PairClient};
 use coralswap_lp_token::{LpToken, LpTokenClient};
 use soroban_sdk::{
-    contract, contractimpl, contracttype, testutils::Address as _, Address, Env, String,
+    contract, contractimpl, contracttype, symbol_short, testutils::Address as _, Address, Env,
+    Error as SdkError, String, Vec as SdkVec,
 };
 
 // ── Minimal mock underlying token ────────────────────────────────────────────
@@ -318,4 +319,113 @@ fn non_pausable_lp_token_does_not_brick_the_pair() {
         Ok(PairError::LpTokenPaused),
         "an unreadable pause flag must not be reported as a pause"
     );
+}
+
+// ── The pair's cached hint is not the enforcement point ───────────────────────
+
+/// The pair caches the pause flag to keep a contract call off the `swap` /
+/// `mint` / `burn` path, since a nested sub-invocation on every swap is a
+/// measurable share of the Soroban budget. This pins down what that trade costs
+/// and, more importantly, what it does not.
+///
+/// The only way to desynchronise the cache is to pause the LP token without
+/// going through `Pair::set_lp_token_paused` — which requires the token's admin
+/// to have been transferred off the pair. The flag then still says `false`, and
+/// the pair cannot name the real reason. What must not happen is the deposit
+/// *succeeding*. The LP token refuses the nested mint independently, so the pool
+/// stays frozen; all that is lost is the typed `PairError::LpTokenPaused` in
+/// favour of the token's raw `#207`.
+#[test]
+fn a_pause_applied_behind_the_pairs_back_still_blocks_liquidity() {
+    let h = setup();
+
+    // Set up both a mint and a burn while the token is still usable: a paused
+    // token refuses `transfer` too, so the LP has to reach the user first.
+    h.token_a.mint(&h.user, &h.reserve);
+    h.token_b.mint(&h.user, &h.reserve);
+    h.token_a.transfer(&h.user, &h.pair_id, &h.reserve);
+    h.token_b.transfer(&h.user, &h.pair_id, &h.reserve);
+    h.pair.mint(&h.user);
+    // `setup`'s mint credited the LP to the user, so they already hold a real,
+    // redeemable position. Nothing to transfer: the pair only holds the locked
+    // `MINIMUM_LIQUIDITY`.
+    assert!(h.lp.balance(&h.user) > 0, "the user must hold LP for the burn to be meaningful");
+
+    // Pause the token directly, as a relocated admin would. The pair's cached
+    // hint is never told, so it still reads `false`.
+    h.lp.pause();
+    assert!(h.lp.is_paused(), "the token itself is paused");
+    assert!(
+        h.pair.is_lp_token_paused(),
+        "the view reads through to the token, so it is never stale"
+    );
+
+    // The important half: both operations are refused, and refused by the token.
+    // The pair calls `LpTokenClient::mint` directly, so a refusal from inside the
+    // token surfaces as the host's own error rather than a `PairError`. `#207` is
+    // `LpTokenError::ContractPaused`, which is how we can tell the token did the
+    // refusing. Had the pair's cached hint been consulted instead, the caller
+    // would have seen the typed `PairError::LpTokenPaused` (122) — that
+    // difference is the entire cost of the cache, and it is a diagnostics cost
+    // only.
+    //
+    h.token_a.mint(&h.user, &h.reserve);
+    h.token_b.mint(&h.user, &h.reserve);
+    h.token_a.transfer(&h.user, &h.pair_id, &h.reserve);
+    h.token_b.transfer(&h.user, &h.pair_id, &h.reserve);
+    assert_refused_by_paused_token(&h, symbol_short!("mint"), "mint");
+
+    // `burn` needs no counterpart here. It redeems the LP the *pair* custodies, so
+    // while the token is paused the user cannot even transfer LP to the pair, and
+    // the operation is blocked one step earlier than the nested call. The pair's
+    // guard is irrelevant to that case, which is exactly why the token is the
+    // only place the enforcement has to live.
+}
+
+/// `LpTokenError::ContractPaused`, the code the LP token raises while paused.
+const LP_TOKEN_PAUSED_CODE: u32 = 207;
+
+/// Asserts that `func` on the pair fails with the LP token's own pause error
+/// rather than with a `PairError` raised from the pair's cached hint.
+///
+/// The distinction is the whole point: a `PairError` here would mean the cache
+/// was consulted, and a raw contract error means the nested LP token call is
+/// what refused.
+fn assert_refused_by_paused_token(h: &Harness, func: soroban_sdk::Symbol, what: &str) {
+    let args = SdkVec::from_array(&h.env, [h.user.to_val()]);
+    match h.env.try_invoke_contract::<(), SdkError>(&h.pair_id, &func, args) {
+        Ok(_) => panic!("{what} must not succeed while the LP token is paused"),
+        Err(Ok(code)) => assert_eq!(
+            code,
+            SdkError::from_contract_error(LP_TOKEN_PAUSED_CODE),
+            "{what} must be refused by the LP token, not by the pair's stale hint"
+        ),
+        Err(Err(invoke_err)) => panic!("{what} could not be invoked at all: {invoke_err:?}"),
+    }
+}
+
+/// The mirror image: a stale `true` is impossible, because the pair is the only
+/// writer of its own cache. After a normal pause/unpause round trip the hot-path
+/// hint agrees with the token again.
+#[test]
+fn the_cached_hint_tracks_the_token_across_a_pause_round_trip() {
+    let h = setup();
+
+    h.pair.set_lp_token_paused(&true);
+    assert!(h.lp.is_paused());
+    assert!(h.pair.is_lp_token_paused());
+
+    h.pair.set_lp_token_paused(&false);
+    assert!(!h.lp.is_paused());
+    assert!(
+        !h.pair.is_lp_token_paused(),
+        "unpausing must clear the hint, or the pool would stay frozen forever"
+    );
+
+    // And liquidity genuinely works again through the hot path.
+    h.token_a.mint(&h.user, &h.reserve);
+    h.token_b.mint(&h.user, &h.reserve);
+    h.token_a.transfer(&h.user, &h.pair_id, &h.reserve);
+    h.token_b.transfer(&h.user, &h.pair_id, &h.reserve);
+    h.pair.mint(&h.user);
 }

@@ -27,8 +27,8 @@ use soroban_sdk::{
     Address, Bytes, Env, Symbol,
 };
 use storage::{
-    get_fee_state, get_pair_state, set_fee_state, set_pair_state, set_reentrancy_guard, FeeState,
-    ReentrancyGuard,
+    get_fee_state, get_lp_token_paused, get_pair_state, set_fee_state, set_lp_token_paused,
+    set_pair_state, set_reentrancy_guard, FeeState, ReentrancyGuard,
 };
 
 /// Error surface of the LP-token client declared above.
@@ -62,29 +62,36 @@ pub trait LpTokenInterface {
 
 /// Returns `true` when the pair's LP token is currently paused (issue #313).
 ///
-/// The LP token refuses `mint` / `burn` while paused, which already halts
-/// liquidity operations. This check exists so the pair reports that condition
-/// as its own typed [`PairError::LpTokenPaused`] instead of surfacing an opaque
-/// host error from a nested call — the pair's error surface is what clients and
-/// indexers decode, and "your liquidity op was refused because the LP token is
-/// paused" has to be distinguishable from a genuine arithmetic failure.
-///
-/// Fails open: an unreadable pause flag is treated as "not paused" and the
-/// nested `mint` / `burn` remains the authority. The LP token is written by the
-/// factory at `initialize`, and refusing liquidity because a status *read*
-/// failed would brick the pool, whereas the token itself still refuses to mint
-/// or burn.
+/// This reads through to the LP token, so it is authoritative. It is a view and
+/// not on the mint/burn/swap path, so the nested call is affordable here; the
+/// hot path uses the cached flag instead — see [`ensure_lp_token_not_paused`].
 fn lp_token_is_paused(env: &Env, lp_token: &Address) -> bool {
     LpTokenClient::new(env, lp_token).try_is_paused().unwrap_or(Ok(false)).unwrap_or(false)
 }
 
-/// Guard for every path that changes LP supply.
+/// Guard for every path that changes LP supply, and for `swap`.
 ///
-/// Call this before touching reserves so a paused LP token cannot leave the pair
-/// mid-operation: `mint` and `burn` are not atomic with the pair's own state
-/// writes, and a late failure would strand tokens in the pool.
-fn ensure_lp_token_not_paused(env: &Env, lp_token: &Address) -> Result<(), PairError> {
-    if lp_token_is_paused(env, lp_token) {
+/// Returns [`PairError::LpTokenPaused`] so a caller can tell an intentional
+/// pause apart from an arithmetic failure, which is worth a lot more to clients
+/// and indexers than the raw nested error the LP token would otherwise produce.
+///
+/// # This is a hint; the LP token is the authority
+///
+/// The flag is read from the pair's own storage rather than from the token. That
+/// matters for cost: a contract call is a nested sub-invocation, and paying for
+/// one on every `swap` — the hottest function in the protocol — is a real
+/// fraction of its budget. So the pair caches what it last applied in
+/// [`set_lp_token_paused`] and reads that.
+///
+/// The cache can only go stale in one direction, and only if the LP token's
+/// admin is transferred off the pair: the new admin can pause the token directly
+/// without the pair learning. Even then nothing unsafe happens — the nested
+/// `mint` / `burn` still reverts inside the LP token, and this guard merely
+/// reports it as [`PairError::LpTokenRejected`] instead of
+/// [`PairError::LpTokenPaused`]. A stale `true` is likewise impossible, since
+/// only the pair writes this key.
+fn ensure_lp_token_not_paused(env: &Env) -> Result<(), PairError> {
+    if get_lp_token_paused(env) {
         return Err(PairError::LpTokenPaused);
     }
     Ok(())
@@ -190,7 +197,7 @@ impl Pair {
         let contract = env.current_contract_address();
 
         // A paused LP token must not be able to accept deposits (issue #313).
-        ensure_lp_token_not_paused(&env, &state.lp_token)?;
+        ensure_lp_token_not_paused(&env)?;
 
         let balance_a = TokenClient::new(&env, &state.token_a).balance(&contract);
         let balance_b = TokenClient::new(&env, &state.token_b).balance(&contract);
@@ -319,7 +326,7 @@ impl Pair {
 
         // A paused LP token must not be able to accept deposits (issue #313).
         // Checked before the swap and the transfer, so no user funds move.
-        ensure_lp_token_not_paused(&env, &state.lp_token)?;
+        ensure_lp_token_not_paused(&env)?;
 
         // ── 2. Validate inputs ────────────────────────────────────────────────
         if amount <= 0 {
@@ -489,7 +496,7 @@ impl Pair {
         let contract = env.current_contract_address();
 
         // A paused LP token must not be able to release reserves (issue #313).
-        ensure_lp_token_not_paused(&env, &state.lp_token)?;
+        ensure_lp_token_not_paused(&env)?;
 
         let lp_balance = TokenClient::new(&env, &state.lp_token).balance(&contract);
 
@@ -579,7 +586,7 @@ impl Pair {
         let fee_state = get_fee_state(&env).ok_or(PairError::NotInitialized)?;
 
         // A paused LP token must not be able to release reserves (issue #313).
-        ensure_lp_token_not_paused(&env, &state.lp_token)?;
+        ensure_lp_token_not_paused(&env)?;
 
         if lp_amount <= 0 || min_amount_out <= 0 {
             return Err(PairError::InvalidInput);
@@ -1167,7 +1174,11 @@ impl Pair {
         let result = if paused { lp_client.try_pause() } else { lp_client.try_unpause() };
 
         match result {
-            Ok(Ok(())) => Ok(()),
+            Ok(Ok(())) => {
+                // Keep the hot-path hint in step with the token we just paused.
+                set_lp_token_paused(&env, paused);
+                Ok(())
+            }
             Ok(Err(_)) => Err(PairError::LpTokenRejected),
             // A token that cannot even be invoked is a wiring failure, not an
             // authorization one; report it distinctly.

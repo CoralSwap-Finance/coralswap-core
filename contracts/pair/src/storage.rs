@@ -92,6 +92,34 @@ pub enum DataKey {
     OracleState,
     /// Cumulative protocol-fee accounting.
     ProtocolFeeState,
+    /// Cached "is this pair's LP token paused" flag, written by
+    /// `Pair::set_lp_token_paused` so the mint/burn/swap hot path can produce a
+    /// typed `PairError::LpTokenPaused` without a nested call per call.
+    LpTokenPaused,
+}
+
+// ---------------------------------------------------------------------------
+// LP-token pause cache
+// ---------------------------------------------------------------------------
+
+/// The pair's cached view of its LP token's pause flag.
+///
+/// This is a *hint*, not the enforcement point. The LP token refuses
+/// `mint` / `burn` while paused regardless of what this says, so a stale `false`
+/// costs a worse error code, never a paused pool that keeps trading. It exists
+/// because reading the flag over a contract call on every `swap`, `mint` and
+/// `burn` is a nested sub-invocation per call, which is a measurable share of
+/// the Soroban budget for a function as hot as `swap`.
+///
+/// Absent means `false`; the flag is only written by
+/// [`crate::Pair::set_lp_token_paused`].
+pub fn get_lp_token_paused(env: &Env) -> bool {
+    env.storage().instance().get(&DataKey::LpTokenPaused).unwrap_or(false)
+}
+
+/// Records the LP token pause state the pair just applied.
+pub fn set_lp_token_paused(env: &Env, paused: bool) {
+    env.storage().instance().set(&DataKey::LpTokenPaused, &paused);
 }
 
 // ---------------------------------------------------------------------------
