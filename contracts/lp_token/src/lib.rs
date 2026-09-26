@@ -26,7 +26,9 @@ use soroban_sdk::{contract, contractimpl, xdr::ToXdr, Address, Bytes, BytesN, En
 use storage::{AllowanceEntry, LpTokenKey, TokenMetadata};
 
 // Shared LP persistent TTL policy (issue #390). See coralswap-shared for cadence math.
-use coralswap_shared::{LP_PERSISTENT_EXTEND_TO as TTL_EXTEND_TO, LP_PERSISTENT_THRESHOLD as TTL_THRESHOLD};
+use coralswap_shared::{
+    LP_PERSISTENT_EXTEND_TO as TTL_EXTEND_TO, LP_PERSISTENT_THRESHOLD as TTL_THRESHOLD,
+};
 
 #[contract]
 pub struct LpToken;
@@ -50,13 +52,23 @@ impl LpToken {
             return Err(LpTokenError::AlreadyInitialized);
         }
 
-        // SAC-parity metadata validation (issue 392): decimals 0..=18,
-        // name/symbol 1..32 chars. Factory defaults (7 / Coral LP / CLP)
-        // satisfy this; custom values outside fail with InvalidMetadata.
+        // SAC-parity metadata validation (issue 392, 396): decimals 0..=18,
+        // name/symbol 1..32 chars.
         if decimals > 18 {
             return Err(LpTokenError::InvalidMetadata);
         }
-        if name.len() == 0 || name.len() > 32 || symbol.len() == 0 || symbol.len() > 32 {
+
+        // Backward compatibility: use provided init params if non-empty;
+        // fallback to shared defaults if empty.
+        let effective_name =
+            if name.is_empty() { String::from_str(&env, coralswap_shared::LP_NAME) } else { name };
+        let effective_symbol = if symbol.is_empty() {
+            String::from_str(&env, coralswap_shared::LP_SYMBOL)
+        } else {
+            symbol
+        };
+
+        if effective_name.len() > 32 || effective_symbol.len() > 32 {
             return Err(LpTokenError::InvalidMetadata);
         }
 
@@ -64,7 +76,7 @@ impl LpToken {
         env.storage().instance().set(&LpTokenKey::Admin, &admin);
 
         // Store metadata
-        let metadata = TokenMetadata { decimals, name, symbol };
+        let metadata = TokenMetadata { decimals, name: effective_name, symbol: effective_symbol };
         env.storage().instance().set(&LpTokenKey::Metadata, &metadata);
 
         // Initialize total supply to 0
@@ -274,12 +286,12 @@ impl LpToken {
     pub fn balance(env: Env, id: Address) -> i128 {
         let key = LpTokenKey::Balance(id);
         let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
-        
+
         // Proactively extend TTL if balance exists
         if balance > 0 {
             env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         }
-        
+
         balance
     }
 
@@ -400,7 +412,12 @@ impl LpToken {
 
     /// Burn via allowance (SAC parity, issue 392).
     /// spender must authorize and hold sufficient allowance from holder.
-    pub fn burn_from(env: Env, spender: Address, from: Address, amount: i128) -> Result<(), LpTokenError> {
+    pub fn burn_from(
+        env: Env,
+        spender: Address,
+        from: Address,
+        amount: i128,
+    ) -> Result<(), LpTokenError> {
         if Self::is_paused(env.clone()) {
             return Err(LpTokenError::ContractPaused);
         }

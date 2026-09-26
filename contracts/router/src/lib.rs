@@ -19,14 +19,16 @@ use soroban_sdk::{
     contract, contractimpl, token::TokenClient, xdr::ToXdr, Address, Bytes, BytesN, Env, Vec,
 };
 use storage::{
-    clear_commit, get_commit, get_commit_config, get_commit_count,
-    get_factory, get_hubs, is_nonce_used, set_commit, set_commit_config, set_commit_count,
-    set_factory, set_hubs, set_nonce_used, CommitEntry, RouterCommitConfig,
+    clear_commit, get_commit, get_commit_config, get_commit_count, get_factory, get_hubs,
+    is_nonce_used, set_commit, set_commit_config, set_commit_count, set_factory, set_hubs,
+    set_nonce_used, CommitEntry, RouterCommitConfig,
 };
 
 // Shared TTL policy (issue #390): INSTANCE_TTL_THRESHOLD = 60_480 (~3.5d), EXTEND_TO = 120_960 (~7d).
 // Previously local magic 50_000 / 120_960 — now unified via coralswap-shared.
-use coralswap_shared::{INSTANCE_TTL_EXTEND_TO as TTL_EXTEND_TO, INSTANCE_TTL_THRESHOLD as TTL_THRESHOLD};
+use coralswap_shared::{
+    INSTANCE_TTL_EXTEND_TO as TTL_EXTEND_TO, INSTANCE_TTL_THRESHOLD as TTL_THRESHOLD,
+};
 
 /// Computes `sha256(sender || token_in || token_out || amount_in || min_out || nonce || salt)`.
 ///

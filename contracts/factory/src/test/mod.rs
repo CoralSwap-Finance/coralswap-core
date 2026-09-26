@@ -307,13 +307,23 @@ mod factory_tests {
 
     #[test]
     fn test_create_pair_happy_path() {
-        let (_env, client, token_a, token_b, _, _, _) = setup_env();
+        let (env, client, token_a, token_b, _, _, _) = setup_env();
 
         let pair_addr = client.create_pair(&token_a, &token_b);
 
         // The returned pair address should be retrievable via get_pair.
         let stored = client.get_pair(&token_a, &token_b);
         assert_eq!(stored, Some(pair_addr.clone()));
+
+        // Standardized LP token deterministic metadata (issue #396)
+        let (expected_name, expected_symbol) =
+            coralswap_shared::derive_lp_metadata(&env, &token_a, &token_b);
+        let pair_client = crate::PairClient::new(&env, &pair_addr);
+        let lp_addr = pair_client.lp_token();
+        let lp_client = crate::LpTokenClient::new(&env, &lp_addr);
+        assert_eq!(lp_client.name(), expected_name);
+        assert_eq!(lp_client.symbol(), expected_symbol);
+        assert_eq!(lp_client.decimals(), coralswap_shared::LP_DECIMALS);
     }
 
     #[test]
@@ -451,6 +461,65 @@ mod factory_tests {
         client.pause(&Vec::from_array(&env, [s1.clone(), s2.clone()]));
         client.unpause(&Vec::from_array(&env, [s1, s2]));
         assert!(!client.is_paused());
+    }
+
+    #[test]
+    fn test_resume_authorized_signers_succeeds_and_emits_resumed_event() {
+        let (env, client, _, _, _, _, signers) = setup_env();
+        let s1 = signers.get(0).unwrap();
+        let s2 = signers.get(1).unwrap();
+        let auth_signers = Vec::from_array(&env, [s1, s2]);
+
+        client.pause(&auth_signers);
+        assert!(client.is_paused());
+
+        client.resume(&auth_signers);
+        let all = env.events().all();
+        assert_eq!(all.events().len(), 2, "resume must emit unpaused and resumed events");
+        assert!(!client.is_paused());
+    }
+
+    #[test]
+    fn test_sync_emits_event_and_reports_state() {
+        let (env, client, token_a, token_b, _, _, signers) = setup_env();
+        client.create_pair(&token_a, &token_b);
+
+        client.sync();
+        let all = env.events().all();
+        assert_eq!(all.events().len(), 1, "sync must publish exactly one sync heartbeat event");
+
+        let s1 = signers.get(0).unwrap();
+        let s2 = signers.get(1).unwrap();
+        client.pause(&Vec::from_array(&env, [s1, s2]));
+        assert!(client.is_paused());
+
+        client.sync();
+        let all_paused = env.events().all();
+        assert_eq!(
+            all_paused.events().len(),
+            1,
+            "sync while paused must publish a sync heartbeat event"
+        );
+    }
+
+    #[test]
+    fn test_freeze_and_unfreeze_pair_succeeds_and_emits_events() {
+        let (env, client, token_a, token_b, _, _, signers) = setup_env();
+        let pair_addr = client.create_pair(&token_a, &token_b);
+
+        let s1 = signers.get(0).unwrap();
+        let s2 = signers.get(1).unwrap();
+        let auth_signers = Vec::from_array(&env, [s1, s2]);
+
+        assert!(!client.is_pair_frozen(&pair_addr));
+
+        client.freeze_pair(&auth_signers, &pair_addr);
+        assert_eq!(env.events().all().events().len(), 1, "freeze_pair must emit frozen event");
+        assert!(client.is_pair_frozen(&pair_addr));
+
+        client.unfreeze_pair(&auth_signers, &pair_addr);
+        assert_eq!(env.events().all().events().len(), 1, "unfreeze_pair must emit unfrozen event");
+        assert!(!client.is_pair_frozen(&pair_addr));
     }
 
     #[test]
@@ -776,12 +845,7 @@ mod factory_tests {
         let lp_token_wasm_hash = BytesN::from_array(&env, &[2u8; 32]);
         let signers = Vec::from_array(&env, [Address::generate(&env)]);
 
-        client.initialize(
-            &signers,
-            &pair_wasm_hash,
-            &lp_token_wasm_hash,
-            &Address::generate(&env),
-        );
+        client.initialize(&signers, &pair_wasm_hash, &lp_token_wasm_hash, &Address::generate(&env));
 
         assert_eq!(client.get_pair_wasm_hash(), pair_wasm_hash);
         assert_eq!(client.get_lp_token_wasm_hash(), lp_token_wasm_hash);
@@ -832,9 +896,6 @@ mod factory_tests {
         // Explicit value check: 3 creates → counter and list must both be 3.
         assert_eq!(client.total_pairs(), 3, "total_pairs must be 3 after three creates");
     }
-}
-
-
     // ── Issue #402: create_pair gas benchmark ───────────────────────────────
 
     /// Budget benchmark for create_pair operation.
@@ -865,13 +926,13 @@ mod factory_tests {
         let (_env, client, token_a, token_b, _, _, _) = setup_env();
 
         // Snapshot CPU instruction budget before create_pair
-        let budget_before = _env.budget().cpu_instruction_cost();
+        let budget_before = _env.cost_estimate().budget().cpu_instruction_cost();
 
         // Execute create_pair (the operation under test)
         let _pair_addr = client.create_pair(&token_a, &token_b);
 
         // Snapshot CPU instruction budget after create_pair
-        let budget_after = _env.budget().cpu_instruction_cost();
+        let budget_after = _env.cost_estimate().budget().cpu_instruction_cost();
 
         // Compute actual CPU instructions consumed
         let cpu_used = budget_after - budget_before;
@@ -916,9 +977,9 @@ mod factory_tests {
     fn test_create_pair_baseline_cost() {
         let (_env, client, token_a, token_b, _, _, _) = setup_env();
 
-        let budget_before = _env.budget().cpu_instruction_cost();
+        let budget_before = _env.cost_estimate().budget().cpu_instruction_cost();
         let _pair_addr = client.create_pair(&token_a, &token_b);
-        let budget_after = _env.budget().cpu_instruction_cost();
+        let budget_after = _env.cost_estimate().budget().cpu_instruction_cost();
 
         let cpu_used = budget_after - budget_before;
 
@@ -932,9 +993,6 @@ mod factory_tests {
 
         // Sanity check: cost should be non-zero and reasonable
         assert!(cpu_used > 0, "create_pair must consume non-zero CPU");
-        assert!(
-            cpu_used < 100_000_000,
-            "create_pair baseline exceeds per-tx limit (100M)"
-        );
+        assert!(cpu_used < 100_000_000, "create_pair baseline exceeds per-tx limit (100M)");
     }
 }

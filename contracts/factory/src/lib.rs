@@ -28,6 +28,7 @@ pub trait PairInterface {
         token_b: Address,
         lp_token: Address,
     ) -> Result<(), FactoryError>;
+    fn lp_token(env: Env) -> Address;
 }
 
 #[contractclient(name = "LpTokenClient")]
@@ -39,6 +40,9 @@ pub trait LpTokenInterface {
         name: String,
         symbol: String,
     ) -> Result<(), FactoryError>;
+    fn decimals(env: Env) -> u32;
+    fn name(env: Env) -> String;
+    fn symbol(env: Env) -> String;
 }
 
 #[contract]
@@ -131,18 +135,14 @@ impl Factory {
         // The pair is the sole LP token minter. Initialize the freshly
         // deployed token before exposing the pair so the first liquidity mint
         // cannot fail with an uninitialized-token error.
-        // LP metadata defaults from shared policy (issues 390/392):
-        // 7 decimals matches SAC Stellar-asset precision; name/symbol are
-        // intentionally shared across pairs (uniqueness comes from the contract
-        // address, not the symbol). Values are validated by LpToken::initialize.
+        // LP metadata standardization (issue #396):
+        // 7 decimals matches SAC Stellar-asset precision; name and symbol are
+        // deterministically derived from canonical token pair addresses:
+        // Name: CORAL-SWAP-LP-<HEX8>, Symbol: CLP-<HEX8>.
+        let (lp_name, lp_symbol) = coralswap_shared::derive_lp_metadata(&env, &token_0, &token_1);
         let lp_token_client = LpTokenClient::new(&env, &lp_token_address);
         lp_token_client
-            .try_initialize(
-                &pair_address,
-                &coralswap_shared::LP_DECIMALS,
-                &String::from_str(&env, coralswap_shared::LP_NAME),
-                &String::from_str(&env, coralswap_shared::LP_SYMBOL),
-            )
+            .try_initialize(&pair_address, &coralswap_shared::LP_DECIMALS, &lp_name, &lp_symbol)
             .map_err(|_| FactoryError::NotInitialized)?
             .map_err(|_| FactoryError::NotInitialized)?;
 
@@ -254,7 +254,59 @@ impl Factory {
         storage::set_factory_storage(&env, &storage);
         storage::extend_instance_ttl(&env);
         events::FactoryEvents::unpaused(&env);
+        events::FactoryEvents::resumed(&env);
         Ok(())
+    }
+
+    /// Resumes protocol trading operations (alias for `unpause`).
+    pub fn resume(env: Env, signers: Vec<Address>) -> Result<(), FactoryError> {
+        Self::unpause(env, signers)
+    }
+
+    /// Heartbeat sync entrypoint for indexers and off-chain pollers.
+    /// Emits a `sync` event with the current pause state and total pair count,
+    /// and extends factory instance TTL.
+    pub fn sync(env: Env) -> Result<(), FactoryError> {
+        let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+        let total_pairs = storage::get_total_pairs(&env);
+        storage::extend_instance_ttl(&env);
+        events::FactoryEvents::sync(&env, storage.paused, total_pairs);
+        Ok(())
+    }
+
+    /// Freezes an individual pair, preventing operations on that specific pair.
+    pub fn freeze_pair(env: Env, signers: Vec<Address>, pair: Address) -> Result<(), FactoryError> {
+        let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+        let threshold = storage.signers.len().div_ceil(2);
+        governance::verify_multisig(&env, &signers, threshold)?;
+        signers.iter().find(|s| storage.signers.contains(s)).ok_or(FactoryError::Unauthorized)?;
+
+        storage::set_pair_frozen(&env, &pair, true);
+        storage::extend_instance_ttl(&env);
+        events::FactoryEvents::pair_frozen(&env, &pair);
+        Ok(())
+    }
+
+    /// Unfreezes an individual pair, restoring operations on that pair.
+    pub fn unfreeze_pair(
+        env: Env,
+        signers: Vec<Address>,
+        pair: Address,
+    ) -> Result<(), FactoryError> {
+        let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+        let threshold = storage.signers.len().div_ceil(2);
+        governance::verify_multisig(&env, &signers, threshold)?;
+        signers.iter().find(|s| storage.signers.contains(s)).ok_or(FactoryError::Unauthorized)?;
+
+        storage::set_pair_frozen(&env, &pair, false);
+        storage::extend_instance_ttl(&env);
+        events::FactoryEvents::pair_unfrozen(&env, &pair);
+        Ok(())
+    }
+
+    /// Returns true if an individual pair is frozen.
+    pub fn is_pair_frozen(env: Env, pair: Address) -> bool {
+        storage::is_pair_frozen(&env, &pair)
     }
 
     /// Sets the protocol fee recipient and the protocol fee in basis points.
@@ -382,9 +434,11 @@ impl Factory {
     /// factory are allowed to record fees.
     pub fn deposit_protocol_fee(
         env: Env,
+        pair: Address,
         token: Address,
         amount: i128,
     ) -> Result<(), FactoryError> {
+        pair.require_auth();
         let factory_storage =
             storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
 
@@ -392,11 +446,10 @@ impl Factory {
             return Err(FactoryError::InvalidFeeRecipient);
         }
 
-        let caller = env.caller();
         let pair_list = storage::get_pair_list(&env);
         let mut is_pair = false;
         for i in 0..pair_list.len() {
-            if pair_list.get(i).unwrap() == caller.clone() {
+            if pair_list.get(i).unwrap() == pair {
                 is_pair = true;
                 break;
             }
@@ -413,17 +466,12 @@ impl Factory {
         key.append(&Symbol::new(&env, "protocol_fee_balance").to_xdr(&env));
         key.append(&token.clone().to_xdr(&env));
         let balance: i128 = env.storage().instance().get(&key).unwrap_or(0);
-        env.storage()
-            .instance()
-            .set(&key, &(balance + amount));
+        env.storage().instance().set(&key, &(balance + amount));
 
-        env.events().publish(
-            (Symbol::new(&env, "protocol_fee_collected"), token),
-            (amount,),
-        );
+        #[allow(deprecated)]
+        env.events().publish((Symbol::new(&env, "protocol_fee_collected"), token), (amount,));
 
         storage::extend_instance_ttl(&env);
-
         Ok(())
     }
 
@@ -440,8 +488,16 @@ impl Factory {
         storage::get_factory_storage(&env).map(|s| s.fee_bps).unwrap_or(0)
     }
 
+    pub fn get_fee_bps(env: Env) -> u32 {
+        Self::fee_bps(env)
+    }
+
     pub fn fee_to(env: Env) -> Option<Address> {
         storage::get_factory_storage(&env).map(|s| s.fee_to).unwrap_or(None)
+    }
+
+    pub fn get_fee_to(env: Env) -> Option<Address> {
+        Self::fee_to(env)
     }
 
     pub fn fee_to_setter(env: Env) -> Option<Address> {

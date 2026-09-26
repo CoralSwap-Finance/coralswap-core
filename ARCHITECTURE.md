@@ -63,7 +63,7 @@ The Factory is the registry and governance hub of the protocol.
 - **Governance**: Manages a multisig signer set (1–10 signers, threshold = `ceil(n/2)`). Multisig is required for pause/unpause and upgrade operations.
 - **Protocol fees**: The `fee_to_setter` address can set a protocol-wide fee recipient (`fee_to`) and fee rate (`fee_bps`, max 30 bps). Per-pair fee overrides (max 100 bps) are also supported.
 - **Upgrades**: A timelocked upgrade mechanism (72-hour delay, ~51,840 ledgers) allows the Factory WASM to be replaced via `propose_upgrade` → `execute_upgrade`. Upgrades can be cancelled before execution.
-- **Pause**: The protocol can be paused/unpaused by multisig, which blocks new pair creation.
+- **Pause, Resume & Freezing**: The protocol can be paused or resumed by multisig. Individual pairs can be frozen or unfrozen. Dedicated events (`paused`, `unpaused`, `resumed`, `frozen`, `unfrozen`) and a public heartbeat sync (`sync()`) ensure indexers maintain up-to-date state. See [docs/INDEXER.md](docs/INDEXER.md).
 
 ### Pair
 
@@ -83,6 +83,13 @@ A SEP-41 compliant fungible token contract.
 - Minted and burned exclusively by the authorized Pair contract (admin).
 - Supports `transfer`, `transfer_from`, `approve`, and `permit` (off-chain signature approval).
 - Admin can `pause`/`unpause` all token operations and transfer the admin role.
+- **Deterministic Pair-Derived Metadata**:
+  - Factory deploys LP tokens with deterministic metadata derived from canonical pair tokens:
+    - **Name**: `CORAL-SWAP-LP-<HEX8>` (e.g., `CORAL-SWAP-LP-3F8B1A2C`, 22 characters, <= 32)
+    - **Symbol**: `CLP-<HEX8>` (e.g., `CLP-3F8B1A2C`, 12 characters, <= 32)
+    - **Decimals**: `7` (matches SAC Stellar-asset precision)
+  - `<HEX8>` is the first 8 uppercase hexadecimal characters of `SHA-256(canonical_token_0 || canonical_token_1)`.
+  - Backward compatibility: custom parameters passed to `LpToken::initialize` are respected if provided. If empty strings are provided, values fall back to defaults.
 
 ### Router
 

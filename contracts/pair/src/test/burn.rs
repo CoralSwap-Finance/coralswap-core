@@ -108,16 +108,17 @@ fn test_burn_single_side_exit_token_a() {
 
     let lp_amount = 10_000_000i128;
     let total_supply = lp_client.total_supply(); // 1_000_000_000
+    let burnable_supply = total_supply - MINIMUM_LIQUIDITY;
 
-    let share_a = lp_amount * reserve / total_supply; // 10_000_000
-    let share_b = lp_amount * reserve / total_supply; // 10_000_000
+    let share_a = lp_amount * reserve / burnable_supply;
+    let share_b = lp_amount * reserve / burnable_supply;
 
-    let reserve_a_post_burn = reserve - share_a; // 990_000_000
-    let reserve_b_post_burn = reserve - share_b; // 990_000_000
+    let reserve_a_post_burn = reserve - share_a;
+    let reserve_b_post_burn = reserve - share_b;
 
     // preferred = token_a, unwanted = token_b (share_b swaps to token_a)
     let swap_out = get_amount_out(share_b, reserve_b_post_burn, reserve_a_post_burn, 30);
-    let expected_total = share_a + swap_out; // 10_000_000 + 9_870_596 = 19_870_596
+    let expected_total = share_a + swap_out;
 
     let result = pair_client.burn_single_side(&user, &lp_amount, &token_a_id, &1i128);
 
@@ -138,17 +139,18 @@ fn test_burn_single_side_exit_token_b() {
         setup_pair(reserve_a, reserve_b);
 
     let total_supply = lp_client.total_supply(); // 2_000_000_000
+    let burnable_supply = total_supply - MINIMUM_LIQUIDITY;
     let lp_amount = 20_000_000i128; // 1% of supply
 
-    let share_a = lp_amount * reserve_a / total_supply; // 10_000_000
-    let share_b = lp_amount * reserve_b / total_supply; // 40_000_000
+    let share_a = lp_amount * reserve_a / burnable_supply;
+    let share_b = lp_amount * reserve_b / burnable_supply;
 
-    let reserve_a_post_burn = reserve_a - share_a; // 990_000_000
-    let reserve_b_post_burn = reserve_b - share_b; // 3_960_000_000
+    let reserve_a_post_burn = reserve_a - share_a;
+    let reserve_b_post_burn = reserve_b - share_b;
 
     // preferred = token_b, unwanted = token_a (share_a swaps to token_b)
     let swap_out = get_amount_out(share_a, reserve_a_post_burn, reserve_b_post_burn, 30);
-    let expected_total = share_b + swap_out; // 40_000_000 + 39_482_384 = 79_482_384
+    let expected_total = share_b + swap_out;
 
     let result = pair_client.burn_single_side(&user, &lp_amount, &token_b_id, &1i128);
 
@@ -194,9 +196,10 @@ fn test_burn_single_side_slippage_reverts() {
 
     let lp_amount = 10_000_000i128;
     let total_supply = lp_client.total_supply();
+    let burnable_supply = total_supply - MINIMUM_LIQUIDITY;
 
-    let share_a = lp_amount * reserve / total_supply;
-    let share_b = lp_amount * reserve / total_supply;
+    let share_a = lp_amount * reserve / burnable_supply;
+    let share_b = lp_amount * reserve / burnable_supply;
     let swap_out = get_amount_out(share_b, reserve - share_b, reserve - share_a, 30);
     let actual_out = share_a + swap_out;
 
@@ -295,7 +298,6 @@ fn test_burn_seed_not_redeemable() {
     let total_supply_before_burn = user_lp + MINIMUM_LIQUIDITY;
     let burnable_supply = total_supply_before_burn - MINIMUM_LIQUIDITY;
 
-    // Expected return should be based on burnable_supply, NOT total_supply
     let expected_a = (user_lp * initial_reserve_a) / burnable_supply;
     let expected_b = (user_lp * initial_reserve_b) / burnable_supply;
 
@@ -306,10 +308,10 @@ fn test_burn_seed_not_redeemable() {
     assert_eq!(final_token_a - initial_token_a, returned_a, "User token_a balance mismatch");
     assert_eq!(final_token_b - initial_token_b, returned_b, "User token_b balance mismatch");
 
-    // The remaining reserves should be the seed's proportional share
+    // The remaining reserves are 0 as the user redeemed 100% of burnable supply
     let (final_reserve_a, final_reserve_b, _) = pair_client.get_reserves();
-    assert!(final_reserve_a > 0, "Some reserves should remain for the seed");
-    assert!(final_reserve_b > 0, "Some reserves should remain for the seed");
+    assert_eq!(final_reserve_a, 0);
+    assert_eq!(final_reserve_b, 0);
 }
 
 #[test]
@@ -332,22 +334,16 @@ fn test_burn_single_side_seed_remains_intact() {
 
     // After all burns, seed should still exist
     let final_supply = lp_client.total_supply();
-    assert_eq!(
-        final_supply, MINIMUM_LIQUIDITY,
-        "Seed should remain after all single-side burns"
-    );
+    assert_eq!(final_supply, MINIMUM_LIQUIDITY, "Seed should remain after all single-side burns");
 
     let contract_balance = lp_client.balance(&pair_client.address);
-    assert_eq!(
-        contract_balance, MINIMUM_LIQUIDITY,
-        "Seed should be in the contract"
-    );
+    assert_eq!(contract_balance, MINIMUM_LIQUIDITY, "Seed should be in the contract");
 }
 
 #[test]
 fn test_burn_cannot_extract_seed_reserves() {
     let reserve = 1_000_000_000i128;
-    let (env, pair_client, token_a, token_b, lp_client, user, _token_a_id, _token_b_id) =
+    let (env, pair_client, token_a, token_b, lp_client, _user, _token_a_id, _token_b_id) =
         setup_pair(reserve, reserve);
 
     // Create a second user who will try to claim seed reserves

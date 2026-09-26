@@ -1,7 +1,10 @@
 use soroban_sdk::{contracttype, Address, BytesN, Env, Vec};
 
 // Shared factory TTL policy (issue #390). See coralswap-shared for cadence math.
-use coralswap_shared::{FACTORY_INSTANCE_BUMP_AMOUNT as INSTANCE_BUMP_AMOUNT, FACTORY_INSTANCE_THRESHOLD as INSTANCE_LIFETIME_THRESHOLD};
+use coralswap_shared::{
+    FACTORY_INSTANCE_BUMP_AMOUNT as INSTANCE_BUMP_AMOUNT,
+    FACTORY_INSTANCE_THRESHOLD as INSTANCE_LIFETIME_THRESHOLD,
+};
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -31,6 +34,20 @@ pub enum DataKey {
     /// A single `u32` read is significantly cheaper than deserialising the
     /// full `FactoryStorage` blob just to obtain the count.
     TotalPairs,
+    /// Per-pair frozen flag.
+    PairFrozen(Address),
+}
+
+pub fn is_pair_frozen(env: &Env, pair: &Address) -> bool {
+    env.storage().instance().get(&DataKey::PairFrozen(pair.clone())).unwrap_or(false)
+}
+
+pub fn set_pair_frozen(env: &Env, pair: &Address, frozen: bool) {
+    if frozen {
+        env.storage().instance().set(&DataKey::PairFrozen(pair.clone()), &true);
+    } else {
+        env.storage().instance().remove(&DataKey::PairFrozen(pair.clone()));
+    }
 }
 
 pub fn get_pair_list(env: &Env) -> Vec<Address> {

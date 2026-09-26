@@ -207,3 +207,56 @@ fn test_compute_flash_fee_excessive_fee() {
     let result = crate::flash_loan::compute_flash_fee(10_000, 15_000);
     assert_eq!(result, Err(PairError::FlashLoanFeeTooHigh));
 }
+
+#[test]
+fn test_flash_loan_zero_amount_clean_noop() {
+    let setup = Setup::new();
+    setup.fund_pool(100_000);
+
+    let (res_a_before, res_b_before, _) = setup.pair_client.get_reserves();
+
+    // Using malicious_receiver whose callback would attempt an unauthorized attack if invoked.
+    // Since amount is (0, 0), the callback is never invoked and returns Ok(()).
+    let attack = Bytes::from_slice(&setup.env, b"swap");
+    let result = setup.pair_client.try_flash_loan(&setup.malicious_receiver, &0, &0, &attack);
+    assert_eq!(result, Ok(Ok(())));
+
+    // Reserves remain unchanged.
+    let (res_a_after, res_b_after, _) = setup.pair_client.get_reserves();
+    assert_eq!(res_a_before, res_a_after);
+    assert_eq!(res_b_before, res_b_after);
+}
+
+#[test]
+fn test_flash_loan_zero_amount_fails_if_payload_too_large() {
+    let setup = Setup::new();
+    let mut large_bytes = [0u8; 257];
+    large_bytes[0] = 1;
+    let large_data = Bytes::from_slice(&setup.env, &large_bytes);
+
+    let result = setup.pair_client.try_flash_loan(&setup.honest_receiver, &0, &0, &large_data);
+    assert_eq!(result, Err(Ok(PairError::FlashPayloadTooLarge)));
+}
+
+#[test]
+fn test_flash_loan_zero_amount_fails_if_uninitialized() {
+    let env = Env::default();
+    let (_pair_id, pair_client) = create_pair_contract(&env);
+    let receiver = Address::generate(&env);
+
+    let result = pair_client.try_flash_loan(&receiver, &0, &0, &Bytes::new(&env));
+    assert_eq!(result, Err(Ok(PairError::NotInitialized)));
+}
+
+#[test]
+fn test_flash_loan_negative_amount_fails() {
+    let setup = Setup::new();
+    setup.fund_pool(100_000);
+    let data = Bytes::new(&setup.env);
+
+    let result_neg_a = setup.pair_client.try_flash_loan(&setup.honest_receiver, &-1, &0, &data);
+    assert_eq!(result_neg_a, Err(Ok(PairError::InsufficientInputAmount)));
+
+    let result_neg_b = setup.pair_client.try_flash_loan(&setup.honest_receiver, &0, &-1, &data);
+    assert_eq!(result_neg_b, Err(Ok(PairError::InsufficientInputAmount)));
+}
