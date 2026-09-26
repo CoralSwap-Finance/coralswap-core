@@ -46,6 +46,78 @@ fn test_approve_allows_future_expiration_and_transfer_from_deducts_allowance() {
     assert_eq!(client.balance(&owner), 75);
 }
 
+// ── Issue #386: Self-spend semantics tests ───────────────────────────────────
+
+#[test]
+fn test_transfer_from_self_spend_without_allowance_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let contract_id = env.register(LpToken, ());
+    let client = LpTokenClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let receiver = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        env.storage().persistent().set(&LpTokenKey::Balance(owner.clone()), &100_i128);
+    });
+
+    // Zero allowance between owner and owner
+    assert_eq!(client.allowance(&owner, &owner), 0);
+
+    // Self-spend: spender == from -> allowance check bypassed, direct transfer
+    client.transfer_from(&owner, &owner, &receiver, &40_i128);
+
+    assert_eq!(client.balance(&owner), 60);
+    assert_eq!(client.balance(&receiver), 40);
+    assert_eq!(client.allowance(&owner, &owner), 0);
+}
+
+#[test]
+fn test_transfer_from_self_spend_preserves_existing_allowance() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let contract_id = env.register(LpToken, ());
+    let client = LpTokenClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let current_ledger = env.ledger().sequence();
+
+    // Owner approves itself for 100 tokens
+    client.approve(&owner, &owner, &100_i128, &(current_ledger + 10));
+    assert_eq!(client.allowance(&owner, &owner), 100);
+
+    env.as_contract(&contract_id, || {
+        env.storage().persistent().set(&LpTokenKey::Balance(owner.clone()), &100_i128);
+    });
+
+    // Self-spend: spender == from -> does not consume allowance
+    client.transfer_from(&owner, &owner, &receiver, &30_i128);
+
+    assert_eq!(client.balance(&owner), 70);
+    assert_eq!(client.balance(&receiver), 30);
+    // Allowance remains 100 (unspent)
+    assert_eq!(client.allowance(&owner, &owner), 100);
+}
+
+#[test]
+fn test_transfer_from_third_party_requires_allowance() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let contract_id = env.register(LpToken, ());
+    let client = LpTokenClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let spender = Address::generate(&env);
+    let receiver = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        env.storage().persistent().set(&LpTokenKey::Balance(owner.clone()), &100_i128);
+    });
+
+    // Spender != owner with no allowance must fail
+    let result = client.try_transfer_from(&spender, &owner, &receiver, &25_i128);
+    assert_eq!(result, Err(Ok(LpTokenError::InsufficientAllowance)));
+}
+
 // Permit (SEP-41) tests removed: `Address::Account(BytesN<32>)` was removed in
 // soroban-sdk 21.x (`Address` is now opaque), and the contract's `permit()`
 // derives the verification key from `owner.to_xdr().slice(..32)` which no

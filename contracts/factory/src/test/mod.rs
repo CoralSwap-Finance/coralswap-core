@@ -896,6 +896,7 @@ mod factory_tests {
         // Explicit value check: 3 creates → counter and list must both be 3.
         assert_eq!(client.total_pairs(), 3, "total_pairs must be 3 after three creates");
     }
+
     // ── Issue #402: create_pair gas benchmark ───────────────────────────────
 
     /// Budget benchmark for create_pair operation.
@@ -994,5 +995,85 @@ mod factory_tests {
         // Sanity check: cost should be non-zero and reasonable
         assert!(cpu_used > 0, "create_pair must consume non-zero CPU");
         assert!(cpu_used < 100_000_000, "create_pair baseline exceeds per-tx limit (100M)");
+    }
+
+    // ── Issue #391: is_pair view tests ─────────────────────────────────────
+
+    #[test]
+    fn test_is_pair_returns_true_for_created_pair() {
+        let (_env, client, token_a, token_b, _, _, _) = setup_env();
+        let pair_addr = client.create_pair(&token_a, &token_b);
+
+        assert!(client.is_pair(&pair_addr), "is_pair must return true for factory-created pair");
+    }
+
+    #[test]
+    fn test_is_pair_returns_false_for_unregistered_address() {
+        let (env, client, _, _, _, _, _) = setup_env();
+        let random_addr = Address::generate(&env);
+
+        assert!(
+            !client.is_pair(&random_addr),
+            "is_pair must return false for unregistered address"
+        );
+    }
+
+    // ── Issue #387: stable pagination & creation order tests ────────────────
+
+    #[test]
+    fn test_get_all_pairs_stable_pagination_and_storage_order() {
+        let (env, client, _, _, _, _, _) = setup_env();
+
+        // Create 8 distinct pairs in deterministic sequence
+        let mut created_pairs: std::vec::Vec<Address> = std::vec::Vec::new();
+        for _ in 0..8 {
+            let t0 = Address::generate(&env);
+            let t1 = Address::generate(&env);
+            let pair = client.create_pair(&t0, &t1);
+            created_pairs.push(pair);
+        }
+
+        // Verify total_pairs equals created count
+        assert_eq!(client.total_pairs(), 8);
+
+        // Fetch page 1: offset 0, limit 3
+        let page_1 = client.get_all_pairs(&0, &3);
+        assert_eq!(page_1.len(), 3);
+        assert_eq!(page_1.get(0).unwrap(), created_pairs[0]);
+        assert_eq!(page_1.get(1).unwrap(), created_pairs[1]);
+        assert_eq!(page_1.get(2).unwrap(), created_pairs[2]);
+
+        // Fetch page 2: offset 3, limit 3
+        let page_2 = client.get_all_pairs(&3, &3);
+        assert_eq!(page_2.len(), 3);
+        assert_eq!(page_2.get(0).unwrap(), created_pairs[3]);
+        assert_eq!(page_2.get(1).unwrap(), created_pairs[4]);
+        assert_eq!(page_2.get(2).unwrap(), created_pairs[5]);
+
+        // Fetch page 3: offset 6, limit 3 (only 2 left)
+        let page_3 = client.get_all_pairs(&6, &3);
+        assert_eq!(page_3.len(), 2);
+        assert_eq!(page_3.get(0).unwrap(), created_pairs[6]);
+        assert_eq!(page_3.get(1).unwrap(), created_pairs[7]);
+
+        // Page beyond end: offset 8, limit 3
+        let page_empty = client.get_all_pairs(&8, &3);
+        assert_eq!(page_empty.len(), 0);
+
+        // Stability check: adding a 9th pair does not alter indices 0..8
+        let t_new_0 = Address::generate(&env);
+        let t_new_1 = Address::generate(&env);
+        let pair_9 = client.create_pair(&t_new_0, &t_new_1);
+
+        let full_list = client.get_all_pairs(&0, &50);
+        assert_eq!(full_list.len(), 9);
+        for (i, expected_addr) in created_pairs.iter().enumerate() {
+            assert_eq!(
+                full_list.get(i as u32).unwrap(),
+                *expected_addr,
+                "pair at index {i} must remain unchanged after subsequent creation"
+            );
+        }
+        assert_eq!(full_list.get(8).unwrap(), pair_9);
     }
 }

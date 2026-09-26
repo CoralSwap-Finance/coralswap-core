@@ -317,8 +317,17 @@ impl LpToken {
         Ok(())
     }
 
-    /// Transfer tokens from `from` to `to` using spender's allowance
-    /// Requires authorization from `spender`
+    /// Transfer tokens from `from` to `to` using spender's allowance.
+    /// Requires authorization from `spender`.
+    ///
+    /// # Self-Spend Semantics (issue #386)
+    /// When `spender == from` (self-spend), the owner is transferring their own funds
+    /// directly. Since `spender.require_auth()` validates the owner's own authorization,
+    /// allowance checking and decrementing are bypassed as a gas optimization (behaving
+    /// identically to [`transfer`](Self::transfer)). No allowance is required or consumed.
+    ///
+    /// When `spender != from`, `spender` must hold a valid, non-expired allowance of at
+    /// least `amount` granted by `from`. The allowance is decremented by `amount`.
     pub fn transfer_from(
         env: Env,
         spender: Address,
@@ -334,8 +343,10 @@ impl LpToken {
         // Require authorization from the spender
         spender.require_auth();
 
-        // Check and deduct allowance
-        Self::spend_allowance(&env, &from, &spender, amount)?;
+        // Check and deduct allowance only when spender != from (issue #386)
+        if spender != from {
+            Self::spend_allowance(&env, &from, &spender, amount)?;
+        }
 
         // Perform the transfer
         Self::transfer_internal(&env, &from, &to, amount)?;

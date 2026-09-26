@@ -97,20 +97,10 @@ pub fn consult_twap(env: &Env, window_ledgers: u32) -> Result<(i128, i128), Orac
         )
     };
 
-    // We also need the current accumulation
-    // Since we don't have current cumulative in oracle state directly without passing it,
-    // Wait, the pair updates cumulative prices and stores it in pair storage. We can just use the latest observation if we don't have pair storage here.
-    // Wait, "consult_twap() uses buffer for interpolation". "compare single-snapshot vs. buffer result over same window"
-    // Let's assume we do window over observations.
-
     let (latest_ledger, latest_a, latest_b) = obs.last().unwrap();
     if latest_ledger < target + window_ledgers as u64 {
-        // Not enough data
+        return Err(OracleError::WindowTooShort);
     }
-
-    // Interpolate target
-    // Wait, TWAP is delta P / delta T
-    // Let's use latest minus interpolated target over window_ledgers.
     let time_elapsed = latest_ledger.saturating_sub(target);
     if time_elapsed == 0 {
         return Ok((0, 0));
