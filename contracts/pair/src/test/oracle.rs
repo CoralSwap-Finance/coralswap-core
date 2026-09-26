@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use soroban_sdk::testutils::Ledger as _;
 use soroban_sdk::{Address, Env};
 
 use crate::errors::OracleError;
@@ -75,5 +76,86 @@ fn consult_twap_no_observations_returns_error() {
     env.as_contract(&contract_id, || {
         let result = consult_twap(&env, 100);
         assert_eq!(result, Err(OracleError::WindowTooShort));
+    });
+}
+
+#[test]
+fn consult_twap_boundary_exact_window() {
+    let (env, contract_id) = setup_env();
+
+    env.as_contract(&contract_id, || {
+        let mut price_a: i128 = 0;
+        let mut price_b: i128 = 0;
+
+        // Observation 1 at sequence 100
+        env.ledger().set_sequence_number(100);
+        update_cumulative_prices(&env, 100, 200, 10, &mut price_a, &mut price_b);
+
+        // Observation 2 at sequence 200 (exact window of 100 ledgers)
+        env.ledger().set_sequence_number(200);
+        update_cumulative_prices(&env, 100, 200, 100, &mut price_a, &mut price_b);
+
+        let result = consult_twap(&env, 100);
+        assert!(result.is_ok(), "exact window boundary must succeed");
+        let (avg_a, avg_b) = result.unwrap();
+        assert!(avg_a > 0 || avg_b > 0);
+    });
+}
+
+#[test]
+fn consult_twap_boundary_window_plus_one() {
+    let (env, contract_id) = setup_env();
+
+    env.as_contract(&contract_id, || {
+        let mut price_a: i128 = 0;
+        let mut price_b: i128 = 0;
+
+        // Observation 1 at sequence 100
+        env.ledger().set_sequence_number(100);
+        update_cumulative_prices(&env, 100, 200, 10, &mut price_a, &mut price_b);
+
+        // Observation 2 at sequence 201 (window + 1 for window_ledgers = 100)
+        env.ledger().set_sequence_number(201);
+        update_cumulative_prices(&env, 100, 200, 101, &mut price_a, &mut price_b);
+
+        let result = consult_twap(&env, 100);
+        assert!(result.is_ok(), "window + 1 boundary must succeed");
+    });
+}
+
+#[test]
+fn consult_twap_boundary_insufficient_window() {
+    let (env, contract_id) = setup_env();
+
+    env.as_contract(&contract_id, || {
+        let mut price_a: i128 = 0;
+        let mut price_b: i128 = 0;
+
+        // Observation 1 at sequence 100
+        env.ledger().set_sequence_number(100);
+        update_cumulative_prices(&env, 100, 200, 10, &mut price_a, &mut price_b);
+
+        // Observation 2 at sequence 150
+        env.ledger().set_sequence_number(150);
+        update_cumulative_prices(&env, 100, 200, 50, &mut price_a, &mut price_b);
+
+        // Advance ledger to 200 without updating observation (latest obs is at 150 < target 100 + window 100 = 200)
+        env.ledger().set_sequence_number(200);
+
+        let result = consult_twap(&env, 100);
+        assert_eq!(
+            result,
+            Err(OracleError::WindowTooShort),
+            "insufficient window must return WindowTooShort"
+        );
+
+        // Also test when oldest observation is newer than target:
+        // Window 120 -> target = 200 - 120 = 80, but oldest obs is 100 > 80
+        let result_too_short = consult_twap(&env, 120);
+        assert_eq!(
+            result_too_short,
+            Err(OracleError::WindowTooShort),
+            "window older than oldest observation must return WindowTooShort"
+        );
     });
 }

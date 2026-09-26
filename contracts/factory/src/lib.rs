@@ -159,6 +159,7 @@ impl Factory {
         // 4. Store pair — only reached when initialize() succeeded
         storage::set_pair(&env, token_0.clone(), token_1.clone(), pair_address.clone());
         storage::set_pair(&env, token_1.clone(), token_0.clone(), pair_address.clone());
+        storage::set_is_pair(&env, &pair_address, true);
 
         let pair_index = factory_storage.pair_count;
         factory_storage.pair_count += 1;
@@ -184,6 +185,32 @@ impl Factory {
         storage::get_pair(&env, token_a, token_b)
     }
 
+    /// Returns true if `pair` is a valid pair contract created by this factory.
+    ///
+    /// Provides a single-call boolean view for routers, frontends, and off-chain
+    /// indexers to verify pair authenticity without needing token addresses or
+    /// parsing optional address collisions (issue #391).
+    pub fn is_pair(env: Env, pair: Address) -> bool {
+        storage::is_pair(&env, &pair)
+    }
+
+    /// Returns a paginated slice of pair addresses in exact storage creation order (FIFO).
+    ///
+    /// # Ordering & Pagination Contract (issue #387)
+    /// Pairs are appended to internal storage (`PairList`) sequentially as they are
+    /// created and are NEVER reordered or removed. This guarantees stable, deterministic
+    /// pagination across arbitrary offsets and limits:
+    /// - Index 0 is permanently the first pair ever created by this factory.
+    /// - For any index `i`, `pair[i]` remains invariant as subsequent pairs are added.
+    /// - Paginating with `offset = k * limit` guarantees complete coverage with zero
+    ///   duplicates and zero skipped pairs.
+    ///
+    /// # Arguments
+    /// * `offset` - 0-based starting index in creation order.
+    /// * `limit` - Number of pairs to return (maximum 50).
+    ///
+    /// # Errors
+    /// Returns [`FactoryError::LimitTooHigh`] if `limit > 50`.
     pub fn get_all_pairs(env: Env, offset: u32, limit: u32) -> Result<Vec<Address>, FactoryError> {
         if limit > 50 {
             return Err(FactoryError::LimitTooHigh);
@@ -382,9 +409,11 @@ impl Factory {
     /// factory are allowed to record fees.
     pub fn deposit_protocol_fee(
         env: Env,
+        pair: Address,
         token: Address,
         amount: i128,
     ) -> Result<(), FactoryError> {
+        pair.require_auth();
         let factory_storage =
             storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
 
@@ -392,16 +421,7 @@ impl Factory {
             return Err(FactoryError::InvalidFeeRecipient);
         }
 
-        let caller = env.caller();
-        let pair_list = storage::get_pair_list(&env);
-        let mut is_pair = false;
-        for i in 0..pair_list.len() {
-            if pair_list.get(i).unwrap() == caller.clone() {
-                is_pair = true;
-                break;
-            }
-        }
-        if !is_pair {
+        if !storage::is_pair(&env, &pair) {
             return Err(FactoryError::Unauthorized);
         }
 
@@ -413,14 +433,9 @@ impl Factory {
         key.append(&Symbol::new(&env, "protocol_fee_balance").to_xdr(&env));
         key.append(&token.clone().to_xdr(&env));
         let balance: i128 = env.storage().instance().get(&key).unwrap_or(0);
-        env.storage()
-            .instance()
-            .set(&key, &(balance + amount));
+        env.storage().instance().set(&key, &(balance + amount));
 
-        env.events().publish(
-            (Symbol::new(&env, "protocol_fee_collected"), token),
-            (amount,),
-        );
+        env.events().publish((Symbol::new(&env, "protocol_fee_collected"), token), (amount,));
 
         storage::extend_instance_ttl(&env);
 
@@ -440,8 +455,16 @@ impl Factory {
         storage::get_factory_storage(&env).map(|s| s.fee_bps).unwrap_or(0)
     }
 
+    pub fn get_fee_bps(env: Env) -> u32 {
+        Self::fee_bps(env)
+    }
+
     pub fn fee_to(env: Env) -> Option<Address> {
         storage::get_factory_storage(&env).map(|s| s.fee_to).unwrap_or(None)
+    }
+
+    pub fn get_fee_to(env: Env) -> Option<Address> {
+        Self::fee_to(env)
     }
 
     pub fn fee_to_setter(env: Env) -> Option<Address> {

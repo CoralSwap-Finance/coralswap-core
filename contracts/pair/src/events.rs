@@ -3,7 +3,7 @@ use soroban_sdk::{symbol_short, Address, Env, Symbol};
 pub struct PairEvents;
 
 // `deprecated`: Events::publish is superseded by the [#contractevent] macro; migration pending. // `dead_code`: reward_* emitters are wired to their feature in an upcoming change and exercised by tests only.
-#[ollow(dead_code, deprecated)]
+#[allow(dead_code, deprecated)]
 impl PairEvents {
     pub fn swap(
         env: &Env,
@@ -83,13 +83,11 @@ impl PairEvents {
     }
 
     pub fn protocol_fee_collected(env: &Env, fee_to: &Address, amount_a: i128, amount_b: i128) {
-        env.events().publish(
-            (Symbol::new(env, "protocol_fee"), fee_to.clone()),
-            (amount_a, amount_b),
-        );
+        env.events()
+            .publish((Symbol::new(env, "protocol_fee"), fee_to.clone()), (amount_a, amount_b));
     }
 
-    #allow(dead_code)
+    #[allow(dead_code)]
     pub fn flash_loan(
         env: &Env,
         receiver: &Address,
