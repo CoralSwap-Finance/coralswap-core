@@ -62,7 +62,9 @@ pub fn compute_flash_fee(
 /// 4. **Callback** — call `receiver.on_flash_loan(...)`.  The receiver MUST
 ///    repay principal + fee before the callback returns.
 /// 5. **Repayment check** — `new_balance >= old_reserve + fee` for each
-///    borrowed token.
+///    borrowed token.  Repaying *more* than required is accepted: the surplus
+///    is not refunded, it stays in the pool (see step 6), while repaying even
+///    one stroop less than the fee aborts with `FlashLoanNotRepaid`.
 /// 6. **Reserve update** — set reserves to post-callback balances.
 /// 7. **k-invariant** — `post_k >= pre_k`; reverts on violation.
 /// 8. **Persist + emit** — write updated state, publish event.
@@ -205,6 +207,9 @@ pub fn execute_flash_loan(
     // 8. Reserve update
     // -----------------------------------------------------------------------
 
+    // Reserves track the *actual* token balances, so an overpaid surplus is
+    // credited to the pool rather than refunded to the receiver: it raises
+    // `k` below and accrues to LPs.
     state.reserve_a = new_balance_a;
     state.reserve_b = new_balance_b;
 

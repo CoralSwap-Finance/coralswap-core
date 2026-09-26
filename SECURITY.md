@@ -253,12 +253,22 @@ invokes the receiver's callback, then validates that actual token balances
 increased by the required fee. The operation reverts if repayment is
 insufficient.
 
+**Overpayment**: repaying more than `principal + fee` is accepted. The pair
+sets its reserves to the post-callback balances, so the surplus is credited to
+the pool (raising `k` and accruing to LPs) rather than refunded to the receiver.
+Repaying even one stroop less than the required fee reverts the whole loan with
+`FlashLoanNotRepaid`, and the host discards the frame, restoring the pool's
+balance and reserves.
+
 **Location**: `contracts/pair/src/flash_loan.rs` - `execute_flash_loan`
 
 **Tests**: `contracts/pair/src/test/flash_loan.rs`
 
-- `test_flash_loan_repayment_enforced`
-- `test_flash_loan_insufficient_repayment_reverts`
+- `flash_loan_honest_receiver_repays` (exact repayment)
+- `flash_loan_overpayment_is_credited_to_pool` (surplus credited to reserves)
+- `flash_loan_dual_overpayment_is_credited_to_pool` (both borrowed tokens)
+- `flash_loan_underpayment_reverts_with_flash_loan_not_repaid` (one stroop short)
+- `flash_loan_failing_callback_reverts_with_flash_callback_failed`
 - Malicious receiver scenarios
 
 ### 8. Oracle TWAP Integrity
