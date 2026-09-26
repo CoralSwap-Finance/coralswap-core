@@ -28,6 +28,7 @@ pub trait PairInterface {
         token_b: Address,
         lp_token: Address,
     ) -> Result<(), FactoryError>;
+    fn lp_token(env: Env) -> Address;
 }
 
 #[contractclient(name = "LpTokenClient")]
@@ -39,6 +40,9 @@ pub trait LpTokenInterface {
         name: String,
         symbol: String,
     ) -> Result<(), FactoryError>;
+    fn decimals(env: Env) -> u32;
+    fn name(env: Env) -> String;
+    fn symbol(env: Env) -> String;
 }
 
 #[contract]
@@ -131,17 +135,19 @@ impl Factory {
         // The pair is the sole LP token minter. Initialize the freshly
         // deployed token before exposing the pair so the first liquidity mint
         // cannot fail with an uninitialized-token error.
-        // LP metadata defaults from shared policy (issues 390/392):
-        // 7 decimals matches SAC Stellar-asset precision; name/symbol are
-        // intentionally shared across pairs (uniqueness comes from the contract
-        // address, not the symbol). Values are validated by LpToken::initialize.
+        // LP metadata standardization (issue #396):
+        // 7 decimals matches SAC Stellar-asset precision; name and symbol are
+        // deterministically derived from canonical token pair addresses:
+        // Name: CORAL-SWAP-LP-<HEX8>, Symbol: CLP-<HEX8>.
+        let (lp_name, lp_symbol) =
+            coralswap_shared::derive_lp_metadata(&env, &token_0, &token_1);
         let lp_token_client = LpTokenClient::new(&env, &lp_token_address);
         lp_token_client
             .try_initialize(
                 &pair_address,
                 &coralswap_shared::LP_DECIMALS,
-                &String::from_str(&env, coralswap_shared::LP_NAME),
-                &String::from_str(&env, coralswap_shared::LP_SYMBOL),
+                &lp_name,
+                &lp_symbol,
             )
             .map_err(|_| FactoryError::NotInitialized)?
             .map_err(|_| FactoryError::NotInitialized)?;

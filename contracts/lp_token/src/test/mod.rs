@@ -192,3 +192,44 @@ fn test_transfer_extends_ttl_for_both_parties() {
         assert!(receiver_ttl >= 518_400, "Receiver balance TTL should be extended");
     });
 }
+
+#[test]
+fn test_metadata_custom_values_preserved() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LpToken, ());
+    let client = LpTokenClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    client.initialize(
+        &admin,
+        &7,
+        &String::from_str(&env, "Custom LP Token"),
+        &String::from_str(&env, "CUST-LP"),
+    );
+
+    assert_eq!(client.decimals(), 7);
+    assert_eq!(client.name(), String::from_str(&env, "Custom LP Token"));
+    assert_eq!(client.symbol(), String::from_str(&env, "CUST-LP"));
+}
+
+#[test]
+fn test_metadata_empty_values_fallback_to_defaults() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LpToken, ());
+    let client = LpTokenClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    client.initialize(
+        &admin,
+        &7,
+        &String::from_str(&env, ""),
+        &String::from_str(&env, ""),
+    );
+
+    assert_eq!(client.decimals(), 7);
+    assert_eq!(client.name(), String::from_str(&env, coralswap_shared::LP_NAME));
+    assert_eq!(client.symbol(), String::from_str(&env, coralswap_shared::LP_SYMBOL));
+}
+

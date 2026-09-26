@@ -50,13 +50,26 @@ impl LpToken {
             return Err(LpTokenError::AlreadyInitialized);
         }
 
-        // SAC-parity metadata validation (issue 392): decimals 0..=18,
-        // name/symbol 1..32 chars. Factory defaults (7 / Coral LP / CLP)
-        // satisfy this; custom values outside fail with InvalidMetadata.
+        // SAC-parity metadata validation (issue 392, 396): decimals 0..=18,
+        // name/symbol 1..32 chars.
         if decimals > 18 {
             return Err(LpTokenError::InvalidMetadata);
         }
-        if name.len() == 0 || name.len() > 32 || symbol.len() == 0 || symbol.len() > 32 {
+
+        // Backward compatibility: use provided init params if non-empty;
+        // fallback to shared defaults if empty.
+        let effective_name = if name.len() == 0 {
+            String::from_str(&env, coralswap_shared::LP_NAME)
+        } else {
+            name
+        };
+        let effective_symbol = if symbol.len() == 0 {
+            String::from_str(&env, coralswap_shared::LP_SYMBOL)
+        } else {
+            symbol
+        };
+
+        if effective_name.len() > 32 || effective_symbol.len() > 32 {
             return Err(LpTokenError::InvalidMetadata);
         }
 
@@ -64,7 +77,11 @@ impl LpToken {
         env.storage().instance().set(&LpTokenKey::Admin, &admin);
 
         // Store metadata
-        let metadata = TokenMetadata { decimals, name, symbol };
+        let metadata = TokenMetadata {
+            decimals,
+            name: effective_name,
+            symbol: effective_symbol,
+        };
         env.storage().instance().set(&LpTokenKey::Metadata, &metadata);
 
         // Initialize total supply to 0

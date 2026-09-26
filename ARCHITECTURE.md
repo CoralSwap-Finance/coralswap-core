@@ -83,6 +83,13 @@ A SEP-41 compliant fungible token contract.
 - Minted and burned exclusively by the authorized Pair contract (admin).
 - Supports `transfer`, `transfer_from`, `approve`, and `permit` (off-chain signature approval).
 - Admin can `pause`/`unpause` all token operations and transfer the admin role.
+- **Deterministic Pair-Derived Metadata**:
+  - Factory deploys LP tokens with deterministic metadata derived from canonical pair tokens:
+    - **Name**: `CORAL-SWAP-LP-<HEX8>` (e.g., `CORAL-SWAP-LP-3F8B1A2C`, 22 characters, <= 32)
+    - **Symbol**: `CLP-<HEX8>` (e.g., `CLP-3F8B1A2C`, 12 characters, <= 32)
+    - **Decimals**: `7` (matches SAC Stellar-asset precision)
+  - `<HEX8>` is the first 8 uppercase hexadecimal characters of `SHA-256(canonical_token_0 || canonical_token_1)`.
+  - Backward compatibility: custom parameters passed to `LpToken::initialize` are respected if provided. If empty strings are provided, values fall back to defaults.
 
 ### Router
 

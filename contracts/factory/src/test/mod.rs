@@ -307,13 +307,23 @@ mod factory_tests {
 
     #[test]
     fn test_create_pair_happy_path() {
-        let (_env, client, token_a, token_b, _, _, _) = setup_env();
+        let (env, client, token_a, token_b, _, _, _) = setup_env();
 
         let pair_addr = client.create_pair(&token_a, &token_b);
 
         // The returned pair address should be retrievable via get_pair.
         let stored = client.get_pair(&token_a, &token_b);
         assert_eq!(stored, Some(pair_addr.clone()));
+
+        // Standardized LP token deterministic metadata (issue #396)
+        let (expected_name, expected_symbol) =
+            coralswap_shared::derive_lp_metadata(&env, &token_a, &token_b);
+        let pair_client = crate::PairClient::new(&env, &pair_addr);
+        let lp_addr = pair_client.lp_token();
+        let lp_client = crate::LpTokenClient::new(&env, &lp_addr);
+        assert_eq!(lp_client.name(), expected_name);
+        assert_eq!(lp_client.symbol(), expected_symbol);
+        assert_eq!(lp_client.decimals(), coralswap_shared::LP_DECIMALS);
     }
 
     #[test]
