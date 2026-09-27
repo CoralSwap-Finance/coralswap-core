@@ -38,6 +38,9 @@ pub trait PairInterface {
         lp_token: Address,
     ) -> Result<(), FactoryError>;
     fn lp_token(env: Env) -> Address;
+    fn set_lp_token_paused(env: Env, paused: bool);
+    fn set_stale_threshold(env: Env, new_threshold: u32);
+    fn is_lp_token_paused(env: Env) -> bool;
 }
 
 #[contractclient(name = "LpTokenClient")]
@@ -518,6 +521,74 @@ impl Factory {
     /// pair's dynamic fee"; any `Some(bps)` with `bps > 0` replaces it.
     pub fn get_pair_fee_override(env: Env, pair: Address) -> Option<u32> {
         storage::get_pair_fee_override(&env, &pair)
+    }
+
+    /// Relays an LP token pause or unpause instruction to the specified pair contract.
+    ///
+    /// The caller must authenticate as the current `fee_to_setter`. The call is forwarded
+    /// to the pair contract via `PairClient`.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban host environment.
+    /// * `setter` - The address claiming the governance setter role.
+    /// * `pair` - The address of the pair contract to configure.
+    /// * `paused` - The new paused state for the LP token.
+    ///
+    /// # Errors
+    /// Returns `FactoryError::NotInitialized` if the factory has not been initialized.
+    /// Returns `FactoryError::Unauthorized` if `setter` is not the current `fee_to_setter`.
+    pub fn set_pair_lp_token_paused(
+        env: Env,
+        setter: Address,
+        pair: Address,
+        paused: bool,
+    ) -> Result<(), FactoryError> {
+        let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+
+        setter.require_auth();
+
+        if setter != storage.fee_to_setter {
+            return Err(FactoryError::Unauthorized);
+        }
+
+        PairClient::new(&env, &pair).set_lp_token_paused(&paused);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Relays a stale threshold update instruction to the specified pair contract.
+    ///
+    /// The caller must authenticate as the current `fee_to_setter`. The call is forwarded
+    /// to the pair contract via `PairClient`.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban host environment.
+    /// * `setter` - The address claiming the governance setter role.
+    /// * `pair` - The address of the pair contract to configure.
+    /// * `threshold` - The new EMA staleness decay threshold in ledgers.
+    ///
+    /// # Errors
+    /// Returns `FactoryError::NotInitialized` if the factory has not been initialized.
+    /// Returns `FactoryError::Unauthorized` if `setter` is not the current `fee_to_setter`.
+    pub fn set_pair_stale_threshold(
+        env: Env,
+        setter: Address,
+        pair: Address,
+        threshold: u32,
+    ) -> Result<(), FactoryError> {
+        let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+
+        setter.require_auth();
+
+        if setter != storage.fee_to_setter {
+            return Err(FactoryError::Unauthorized);
+        }
+
+        PairClient::new(&env, &pair).set_stale_threshold(&threshold);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
     }
 
     /// Records protocol fees collected by a pair.

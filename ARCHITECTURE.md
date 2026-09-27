@@ -64,6 +64,7 @@ The Factory is the registry and governance hub of the protocol.
 - **Protocol fees**: The `fee_to_setter` address can set a protocol-wide fee recipient (`fee_to`) and fee rate (`fee_bps`, max 30 bps). Per-pair fee overrides (max 100 bps) are also supported.
   - **Disabling fees is explicit.** A *disabled* protocol fee is `fee_to = None`, which may be combined with any `fee_bps`; the pair then charges nothing. `fee_to = Some(addr)` with `fee_bps = 0` is rejected with `FactoryError::FeeDisabled`, because a live recipient collecting zero is indistinguishable from the disabled state in downstream accounting. Clear a fee by clearing `fee_to`, not by setting the rate to zero.
   - **A pair override of `0` means "no override"**, not "zero fee". `set_pair_fee(pair, 0, None)` removes the entry so the pair falls back to the dynamic/protocol fee; it must never be used to make a pool free, which would silently make every swap a zero-fee trade against the LPs' consent.
+- **Pair configuration relays**: In addition to per-pair fee overrides, the `fee_to_setter` governance role can configure pair-level parameters through factory entry points (`Factory::set_pair_lp_token_paused` and `Factory::set_pair_stale_threshold`). The pair verifies caller authorization against its stored `pair.factory` contract address.
 - **Upgrades**: A timelocked upgrade mechanism (72-hour delay, ~51,840 ledgers) allows the Factory WASM to be replaced via `propose_upgrade` → `execute_upgrade`. Upgrades can be cancelled before execution.
 - **Pause, Resume & Freezing**: The protocol can be paused or resumed by multisig. Individual pairs can be frozen or unfrozen. Dedicated events (`paused`, `unpaused`, `resumed`, `frozen`, `unfrozen`) and a public heartbeat sync (`sync()`) ensure indexers maintain up-to-date state. See [docs/INDEXER.md](docs/INDEXER.md).
 
@@ -76,7 +77,7 @@ Each Pair contract holds reserves of two tokens and implements the constant-prod
 - **Burn**: Burns LP tokens and returns pro-rata reserves. Supports standard two-sided burn and single-sided burn (with an internal swap leg).
 - **Flash Loans**: Lends reserve tokens to a receiver contract, requires repayment (principal + fee) in the same transaction.
 - **Oracle**: Tracks cumulative prices for TWAP queries (`consult_twap`). The accumulators live in a self-contained `OracleState` struct owned by the oracle module, rather than being duplicated on `PairStorage`; the pair only hands the oracle its reserves. The price history is a ring buffer capped at `MAX_OBSERVATIONS = 24`, so a pair's on-chain footprint is bounded no matter how often it is synced.
-- **LP token pause relay**: `Pair::set_lp_token_paused` and `Pair::is_lp_token_paused` proxy the pair's LP token. The pair is the LP token's `admin`, and it authorizes the relay from the factory's `fee_to_setter` role, so pausing a single pool's LP token does not require direct admin access to every LP token.
+- **LP token pause relay**: `Pair::set_lp_token_paused` and `Pair::is_lp_token_paused` proxy the pair's LP token. The pair is the LP token's `admin`, and it requires authorization from the factory contract address (`pair.factory.require_auth()`). The factory exposes `Factory::set_pair_lp_token_paused` authorized by the `fee_to_setter` role, which relays the instruction to the pair.
 - **Reentrancy Guard**: All state-mutating swap and burn paths are protected by a storage-based reentrancy lock.
 
 ### Pause Layering
@@ -85,8 +86,8 @@ Pausing is a two-level mechanism, and the levels are deliberately not equivalent
 
 | Level | Flag | Effect | Reachable by |
 | --- | --- | --- | --- |
-| LP token operations | `LpToken::is_paused` | Blocks all `transfer` / `transfer_from` / `approve` / `permit` | LP token `admin` (the Pair) |
-| Liquidity provision | Pair-side pause flag | Blocks `mint` and `mint_with_one_token` and `burn`, but **not** transfers | factory `fee_to_setter` via the Pair relay |
+| LP token operations | `LpToken::is_paused` | Blocks all `transfer` / `transfer_from` / `approve` / `permit` | factory `fee_to_setter` via `Factory::set_pair_lp_token_paused` -> `Pair::set_lp_token_paused` |
+| Liquidity provision | Pair-side pause flag | Blocks `mint` and `mint_with_one_token` and `burn`, but **not** transfers | factory signers via `Factory::freeze_pair` |
 
 The liquidity-level flag is separate from the token-level one on purpose: freezing a pool's *liquidity* is a governance action, whereas halting *all* LP token movement is an incident-response action. A halted pool can still be unwound by holders who already hold LP tokens.
 
@@ -358,3 +359,12 @@ The V2 architecture is expected to introduce:
 - Additional pool types beyond constant-product
 
 The current contract structure is designed to support forward evolution through the Factory's timelocked upgrade mechanism and per-pair fee flexibility.
+
+---
+
+## Deployment & Migration Notes
+
+### Pair Storage Migration (#421)
+
+Pairs created prior to PR #421 must be redeployed due to the `PairStorage` layout change introduced in commit `2237859`. The last compatible commit prior to this storage layout change is `5ad9ec0`. Attempting to run newer Pair contract code against storage instances deployed prior to `5ad9ec0` will result in serialization mismatches.
+

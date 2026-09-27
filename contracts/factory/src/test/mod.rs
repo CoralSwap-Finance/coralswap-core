@@ -4,7 +4,10 @@ use soroban_sdk::Env;
 
 mod factory_tests {
     use super::*;
-    use crate::{Factory, FactoryClient};
+    use crate::errors::FactoryError;
+    use crate::{Factory, FactoryClient, PairClient};
+    use coralswap_shared::auth_args;
+    use coralswap_shared::test_support as auth;
     use soroban_sdk::{
         symbol_short, testutils::Address as _, testutils::Events, Address, Bytes, BytesN, IntoVal,
         TryFromVal, Val, Vec,
@@ -1286,5 +1289,115 @@ mod factory_tests {
             );
         }
         assert_eq!(full_list.get(8).unwrap(), pair_9);
+    }
+
+    #[test]
+    fn test_set_pair_lp_token_paused_updates_pair_state_and_enforces_auth() {
+        let (env, client, token_a, token_b, factory_address, fee_to_setter, _) = setup_env();
+        let pair_addr = client.create_pair(&token_a, &token_b);
+        let pair_client = PairClient::new(&env, &pair_addr);
+
+        assert!(!pair_client.is_lp_token_paused());
+
+        auth::allow(
+            &env,
+            &fee_to_setter,
+            &factory_address,
+            "set_pair_lp_token_paused",
+            auth_args!(&env, fee_to_setter.clone(), pair_addr.clone(), true),
+        );
+        client.set_pair_lp_token_paused(&fee_to_setter, &pair_addr, &true);
+        auth::assert_authorized(
+            &env,
+            &fee_to_setter,
+            &factory_address,
+            "set_pair_lp_token_paused",
+            auth_args!(&env, fee_to_setter.clone(), pair_addr.clone(), true),
+        );
+        assert!(pair_client.is_lp_token_paused());
+
+        auth::allow(
+            &env,
+            &fee_to_setter,
+            &factory_address,
+            "set_pair_lp_token_paused",
+            auth_args!(&env, fee_to_setter.clone(), pair_addr.clone(), false),
+        );
+        client.set_pair_lp_token_paused(&fee_to_setter, &pair_addr, &false);
+        auth::assert_authorized(
+            &env,
+            &fee_to_setter,
+            &factory_address,
+            "set_pair_lp_token_paused",
+            auth_args!(&env, fee_to_setter.clone(), pair_addr.clone(), false),
+        );
+        assert!(!pair_client.is_lp_token_paused());
+
+        let stranger = Address::generate(&env);
+        auth::allow(
+            &env,
+            &stranger,
+            &factory_address,
+            "set_pair_lp_token_paused",
+            auth_args!(&env, stranger.clone(), pair_addr.clone(), true),
+        );
+        let res = client.try_set_pair_lp_token_paused(&stranger, &pair_addr, &true);
+        assert_eq!(res, Err(Ok(FactoryError::Unauthorized)));
+
+        auth::allow_nothing(&env);
+        assert!(client.try_set_pair_lp_token_paused(&fee_to_setter, &pair_addr, &true).is_err());
+    }
+
+    #[test]
+    fn test_set_pair_stale_threshold_updates_pair_state_and_enforces_auth() {
+        let (env, client, token_a, token_b, factory_address, fee_to_setter, _) = setup_env();
+        let pair_addr = client.create_pair(&token_a, &token_b);
+
+        auth::allow(
+            &env,
+            &fee_to_setter,
+            &factory_address,
+            "set_pair_stale_threshold",
+            auth_args!(&env, fee_to_setter.clone(), pair_addr.clone(), 500u32),
+        );
+        client.set_pair_stale_threshold(&fee_to_setter, &pair_addr, &500u32);
+        auth::assert_authorized(
+            &env,
+            &fee_to_setter,
+            &factory_address,
+            "set_pair_stale_threshold",
+            auth_args!(&env, fee_to_setter.clone(), pair_addr.clone(), 500u32),
+        );
+
+        let stranger = Address::generate(&env);
+        auth::allow(
+            &env,
+            &stranger,
+            &factory_address,
+            "set_pair_stale_threshold",
+            auth_args!(&env, stranger.clone(), pair_addr.clone(), 500u32),
+        );
+        let res = client.try_set_pair_stale_threshold(&stranger, &pair_addr, &500u32);
+        assert_eq!(res, Err(Ok(FactoryError::Unauthorized)));
+
+        auth::allow_nothing(&env);
+        assert!(client.try_set_pair_stale_threshold(&fee_to_setter, &pair_addr, &500u32).is_err());
+    }
+
+    #[test]
+    fn test_direct_call_to_pair_setters_from_non_factory_fails() {
+        let (env, client, token_a, token_b, _, _, _) = setup_env();
+        let pair_addr = client.create_pair(&token_a, &token_b);
+        let pair_client = PairClient::new(&env, &pair_addr);
+
+        let stranger = Address::generate(&env);
+
+        auth::allow(&env, &stranger, &pair_addr, "set_lp_token_paused", auth_args!(&env, true));
+        let lp_res = pair_client.try_set_lp_token_paused(&true);
+        assert!(lp_res.is_err());
+
+        auth::allow(&env, &stranger, &pair_addr, "set_stale_threshold", auth_args!(&env, 500u32));
+        let threshold_res = pair_client.try_set_stale_threshold(&500u32);
+        assert!(threshold_res.is_err());
     }
 }
