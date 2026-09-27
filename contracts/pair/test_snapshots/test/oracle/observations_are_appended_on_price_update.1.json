@@ -64,6 +64,22 @@
                                 }
                               ]
                             }
+                          },
+                          {
+                            "key": {
+                              "symbol": "price_a_cumulative"
+                            },
+                            "val": {
+                              "i128": "20"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "price_b_cumulative"
+                            },
+                            "val": {
+                              "i128": "0"
+                            }
                           }
                         ]
                       }

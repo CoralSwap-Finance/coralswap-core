@@ -4,15 +4,32 @@ use soroban_sdk::Env;
 
 pub const MAX_TWAP_WINDOW: u32 = 86400;
 
+// The accumulator, its sample buffer and the constant bounding that buffer are
+// only reachable from tests: `update_cumulative_prices` is not yet called by any
+// pair entry point, which is tracked as #271. They are kept compiling and
+// tested here so that #271 is a wiring change rather than a rewrite, and so the
+// dead storage they used to occupy is not simply re-added later.
+//
+// Issue #312 removed the unwritten `price_a_cumulative` / `price_b_cumulative`
+// fields from `PairStorage`; these are the replacement home for them.
 #[allow(dead_code)]
-pub fn update_cumulative_prices(
-    env: &Env,
-    reserve_a: i128,
-    reserve_b: i128,
-    time_elapsed: u64,
-    price_a_cumulative: &mut i128,
-    price_b_cumulative: &mut i128,
-) {
+pub const MAX_OBSERVATIONS: u32 = 24;
+
+/// Advances the cumulative-price accumulators and records a sample.
+///
+/// The accumulators are owned by [`OracleState`] (issue #312) rather than by
+/// `PairStorage`, so this function no longer takes mutable out-parameters: the
+/// previous pair always holds the authoritative value, which removed the
+/// possibility of a caller silently dropping an update on the floor.
+///
+/// This is still not wired into any pair entry point — that is #271. Until then
+/// it is reachable only from tests, and the accumulators it maintains are
+/// honestly scoped to the oracle rather than advertised as pool state.
+///
+/// No-op when either reserve is zero (the price is undefined) or when no time
+/// has elapsed.
+#[allow(dead_code)]
+pub fn update_cumulative_prices(env: &Env, reserve_a: i128, reserve_b: i128, time_elapsed: u64) {
     if reserve_a == 0 || reserve_b == 0 || time_elapsed == 0 {
         return;
     }
@@ -20,17 +37,17 @@ pub fn update_cumulative_prices(
     let price_a_delta = (reserve_b / reserve_a).wrapping_mul(time_elapsed as i128);
     let price_b_delta = (reserve_a / reserve_b).wrapping_mul(time_elapsed as i128);
 
-    *price_a_cumulative = price_a_cumulative.wrapping_add(price_a_delta);
-    *price_b_cumulative = price_b_cumulative.wrapping_add(price_b_delta);
-
     let mut oracle_state = get_oracle_state(env);
-    if oracle_state.observations.len() >= 24 {
+    oracle_state.price_a_cumulative = oracle_state.price_a_cumulative.wrapping_add(price_a_delta);
+    oracle_state.price_b_cumulative = oracle_state.price_b_cumulative.wrapping_add(price_b_delta);
+
+    if oracle_state.observations.len() >= MAX_OBSERVATIONS {
         oracle_state.observations.remove(0);
     }
     oracle_state.observations.push_back((
         env.ledger().sequence() as u64,
-        *price_a_cumulative,
-        *price_b_cumulative,
+        oracle_state.price_a_cumulative,
+        oracle_state.price_b_cumulative,
     ));
     set_oracle_state(env, &oracle_state);
 }
@@ -97,7 +114,11 @@ pub fn consult_twap(env: &Env, window_ledgers: u32) -> Result<(i128, i128), Orac
         )
     };
 
+    // A TWAP is the change in cumulative price over the change in time, so the
+    // most recent sample is the "now" endpoint; only the start needs
+    // interpolation against the requested target ledger.
     let (latest_ledger, latest_a, latest_b) = obs.last().unwrap();
+
     if latest_ledger < target + window_ledgers as u64 {
         return Err(OracleError::WindowTooShort);
     }

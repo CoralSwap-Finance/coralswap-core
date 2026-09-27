@@ -14,3 +14,5 @@ coralswap-shared = { path = "../shared" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+# Scoped-authorization test helpers (issue #314); dev-only, never in release WASM.
+coralswap-shared = { path = "../shared", features = ["test-support"] }

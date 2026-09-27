@@ -1,3 +1,5 @@
+mod auth_matrix;
+
 use crate::errors::LpTokenError;
 use crate::storage::LpTokenKey;
 use crate::{LpToken, LpTokenClient};
@@ -8,6 +10,8 @@ use soroban_sdk::{testutils::Address as _, Address, Env, String};
 #[test]
 fn test_approve_rejects_current_ledger_expiration() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): LP token accounting, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
     let contract_id = env.register(LpToken, ());
     let client = LpTokenClient::new(&env, &contract_id);
@@ -24,6 +28,8 @@ fn test_approve_rejects_current_ledger_expiration() {
 #[test]
 fn test_approve_allows_future_expiration_and_transfer_from_deducts_allowance() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): LP token accounting, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
     let contract_id = env.register(LpToken, ());
     let client = LpTokenClient::new(&env, &contract_id);
@@ -130,6 +136,8 @@ fn test_transfer_from_third_party_requires_allowance() {
 #[test]
 fn test_write_balance_extends_ttl() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): LP token accounting, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
     let contract_id = env.register(LpToken, ());
     let client = LpTokenClient::new(&env, &contract_id);
@@ -158,6 +166,8 @@ fn test_write_balance_extends_ttl() {
 #[test]
 fn test_balance_read_extends_ttl() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): LP token accounting, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
     let contract_id = env.register(LpToken, ());
     let client = LpTokenClient::new(&env, &contract_id);
@@ -193,6 +203,8 @@ fn test_balance_read_extends_ttl() {
 #[test]
 fn test_nonce_write_extends_ttl() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): LP token accounting, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
     let contract_id = env.register(LpToken, ());
     let client = LpTokenClient::new(&env, &contract_id);
@@ -232,6 +244,8 @@ fn test_nonce_write_extends_ttl() {
 #[test]
 fn test_transfer_extends_ttl_for_both_parties() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): LP token accounting, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
     let contract_id = env.register(LpToken, ());
     let client = LpTokenClient::new(&env, &contract_id);
@@ -268,6 +282,8 @@ fn test_transfer_extends_ttl_for_both_parties() {
 #[test]
 fn test_metadata_custom_values_preserved() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): LP token accounting, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
     let contract_id = env.register(LpToken, ());
     let client = LpTokenClient::new(&env, &contract_id);
@@ -288,6 +304,8 @@ fn test_metadata_custom_values_preserved() {
 #[test]
 fn test_metadata_empty_values_fallback_to_defaults() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): LP token accounting, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
     let contract_id = env.register(LpToken, ());
     let client = LpTokenClient::new(&env, &contract_id);

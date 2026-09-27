@@ -834,22 +834,6 @@
                           },
                           {
                             "key": {
-                              "symbol": "price_a_cumulative"
-                            },
-                            "val": {
-                              "i128": "0"
-                            }
-                          },
-                          {
-                            "key": {
-                              "symbol": "price_b_cumulative"
-                            },
-                            "val": {
-                              "i128": "0"
-                            }
-                          },
-                          {
-                            "key": {
                               "symbol": "reserve_a"
                             },
                             "val": {
