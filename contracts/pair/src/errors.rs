@@ -29,6 +29,12 @@ pub enum PairError {
     InvalidStaleThreshold = 120,
     /// Dust amount below minimum-reserve policy floor (issue 393).
     DustAmount = 121,
+    /// The pair's LP token is paused, so LP supply cannot change (issue #313).
+    LpTokenPaused = 122,
+    /// The pair's LP token could not be invoked at all (wiring failure).
+    LpTokenUnavailable = 123,
+    /// The LP token refused the call, e.g. the caller is not its admin.
+    LpTokenRejected = 124,
 }
 
 #[contracterror]

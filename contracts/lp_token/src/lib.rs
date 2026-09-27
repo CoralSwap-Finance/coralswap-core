@@ -26,7 +26,9 @@ use soroban_sdk::{contract, contractimpl, xdr::ToXdr, Address, Bytes, BytesN, En
 use storage::{AllowanceEntry, LpTokenKey, TokenMetadata};
 
 // Shared LP persistent TTL policy (issue #390). See coralswap-shared for cadence math.
-use coralswap_shared::{LP_PERSISTENT_EXTEND_TO as TTL_EXTEND_TO, LP_PERSISTENT_THRESHOLD as TTL_THRESHOLD};
+use coralswap_shared::{
+    LP_PERSISTENT_EXTEND_TO as TTL_EXTEND_TO, LP_PERSISTENT_THRESHOLD as TTL_THRESHOLD,
+};
 
 #[contract]
 pub struct LpToken;
@@ -50,13 +52,23 @@ impl LpToken {
             return Err(LpTokenError::AlreadyInitialized);
         }
 
-        // SAC-parity metadata validation (issue 392): decimals 0..=18,
-        // name/symbol 1..32 chars. Factory defaults (7 / Coral LP / CLP)
-        // satisfy this; custom values outside fail with InvalidMetadata.
+        // SAC-parity metadata validation (issue 392, 396): decimals 0..=18,
+        // name/symbol 1..32 chars.
         if decimals > 18 {
             return Err(LpTokenError::InvalidMetadata);
         }
-        if name.len() == 0 || name.len() > 32 || symbol.len() == 0 || symbol.len() > 32 {
+
+        // Backward compatibility: use provided init params if non-empty;
+        // fallback to shared defaults if empty.
+        let effective_name =
+            if name.is_empty() { String::from_str(&env, coralswap_shared::LP_NAME) } else { name };
+        let effective_symbol = if symbol.is_empty() {
+            String::from_str(&env, coralswap_shared::LP_SYMBOL)
+        } else {
+            symbol
+        };
+
+        if effective_name.len() > 32 || effective_symbol.len() > 32 {
             return Err(LpTokenError::InvalidMetadata);
         }
 
@@ -64,7 +76,7 @@ impl LpToken {
         env.storage().instance().set(&LpTokenKey::Admin, &admin);
 
         // Store metadata
-        let metadata = TokenMetadata { decimals, name, symbol };
+        let metadata = TokenMetadata { decimals, name: effective_name, symbol: effective_symbol };
         env.storage().instance().set(&LpTokenKey::Metadata, &metadata);
 
         // Initialize total supply to 0
@@ -107,6 +119,35 @@ impl LpToken {
 
     /// Pause the contract - blocks all token operations
     /// Only callable by admin
+    ///
+    /// # What "pause" means here (issue #313)
+    ///
+    /// `pause` is a supply-and-transfer freeze scoped to *this* token. While
+    /// paused, every function that moves LP balances or changes supply returns
+    /// `LpTokenError::ContractPaused`:
+    ///
+    /// | Function            | Blocked while paused |
+    /// |---------------------|----------------------|
+    /// | `transfer`          | yes                  |
+    /// | `transfer_from`     | yes                  |
+    /// | `mint`              | yes                  |
+    /// | `burn`              | yes                  |
+    /// | `burn_from`         | yes                  |
+    /// | `approve` / `increase_allowance` | no (balances do not move) |
+    /// | views (`balance`, `allowance`, `total_supply`, `is_paused`) | no |
+    ///
+    /// Because the pair mints and burns LP supply through this contract, a
+    /// paused LP token also halts the pair's liquidity operations: `Pair::mint`,
+    /// `Pair::mint_with_one_token`, `Pair::burn` and `Pair::burn_single_side` all
+    /// refuse. The pair additionally checks this flag up front and reports
+    /// `PairError::LpTokenPaused`, so callers get a typed error from the pair
+    /// rather than an opaque failure from a nested call.
+    ///
+    /// A pause does **not** halt swaps, flash loans, or pair-level freezes; those
+    /// are governed by the factory's `pause` / `freeze_pair` and by each pair's
+    /// own reentrancy guard.
+    ///
+    /// `pause` is idempotent and reversible via `unpause`.
     pub fn pause(env: Env) -> Result<(), LpTokenError> {
         // Get admin and require authorization
         let admin: Address =
@@ -274,12 +315,12 @@ impl LpToken {
     pub fn balance(env: Env, id: Address) -> i128 {
         let key = LpTokenKey::Balance(id);
         let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
-        
+
         // Proactively extend TTL if balance exists
         if balance > 0 {
             env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         }
-        
+
         balance
     }
 
@@ -305,8 +346,17 @@ impl LpToken {
         Ok(())
     }
 
-    /// Transfer tokens from `from` to `to` using spender's allowance
-    /// Requires authorization from `spender`
+    /// Transfer tokens from `from` to `to` using spender's allowance.
+    /// Requires authorization from `spender`.
+    ///
+    /// # Self-Spend Semantics (issue #386)
+    /// When `spender == from` (self-spend), the owner is transferring their own funds
+    /// directly. Since `spender.require_auth()` validates the owner's own authorization,
+    /// allowance checking and decrementing are bypassed as a gas optimization (behaving
+    /// identically to [`transfer`](Self::transfer)). No allowance is required or consumed.
+    ///
+    /// When `spender != from`, `spender` must hold a valid, non-expired allowance of at
+    /// least `amount` granted by `from`. The allowance is decremented by `amount`.
     pub fn transfer_from(
         env: Env,
         spender: Address,
@@ -322,8 +372,10 @@ impl LpToken {
         // Require authorization from the spender
         spender.require_auth();
 
-        // Check and deduct allowance
-        Self::spend_allowance(&env, &from, &spender, amount)?;
+        // Check and deduct allowance only when spender != from (issue #386)
+        if spender != from {
+            Self::spend_allowance(&env, &from, &spender, amount)?;
+        }
 
         // Perform the transfer
         Self::transfer_internal(&env, &from, &to, amount)?;
@@ -400,7 +452,12 @@ impl LpToken {
 
     /// Burn via allowance (SAC parity, issue 392).
     /// spender must authorize and hold sufficient allowance from holder.
-    pub fn burn_from(env: Env, spender: Address, from: Address, amount: i128) -> Result<(), LpTokenError> {
+    pub fn burn_from(
+        env: Env,
+        spender: Address,
+        from: Address,
+        amount: i128,
+    ) -> Result<(), LpTokenError> {
         if Self::is_paused(env.clone()) {
             return Err(LpTokenError::ContractPaused);
         }

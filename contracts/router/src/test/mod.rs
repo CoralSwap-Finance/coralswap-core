@@ -17,6 +17,7 @@ pub struct MockFactory;
 pub enum MFKey {
     Pair(Address, Address),
     FeeToSetter,
+    IsPair(Address),
 }
 
 #[contractimpl]
@@ -24,6 +25,15 @@ impl MockFactory {
     pub fn set_pair(env: Env, token_a: Address, token_b: Address, pair: Address) {
         let (t0, t1) = if token_a < token_b { (token_a, token_b) } else { (token_b, token_a) };
         env.storage().instance().set(&MFKey::Pair(t0, t1), &pair);
+        env.storage().instance().set(&MFKey::IsPair(pair), &true);
+    }
+
+    pub fn set_is_pair(env: Env, pair: Address, is_pair: bool) {
+        env.storage().instance().set(&MFKey::IsPair(pair), &is_pair);
+    }
+
+    pub fn is_pair(env: Env, pair: Address) -> bool {
+        env.storage().instance().get(&MFKey::IsPair(pair)).unwrap_or(false)
     }
 
     pub fn get_pair(env: Env, token_a: Address, token_b: Address) -> Option<Address> {
@@ -612,6 +622,8 @@ fn deploy_router_with_pair(env: &Env) -> (Address, Address, Address, Address, Ad
 #[test]
 fn test_commit_swap_stores_entry() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): router routing arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
     let (router_id, _) = deploy_router(&env);
     let router = RouterClient::new(&env, &router_id);
@@ -631,6 +643,8 @@ fn test_commit_swap_stores_entry() {
 #[test]
 fn test_reveal_without_commit_fails() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): router routing arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
     let (router_id, _) = deploy_router(&env);
     let router = RouterClient::new(&env, &router_id);
@@ -649,6 +663,8 @@ fn test_reveal_without_commit_fails() {
 #[test]
 fn test_reveal_same_ledger_fails() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): router routing arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
     let (router_id, _) = deploy_router(&env);
     let router = RouterClient::new(&env, &router_id);
@@ -672,6 +688,8 @@ fn test_reveal_same_ledger_fails() {
 #[test]
 fn test_reveal_wrong_hash_fails() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): router routing arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
     let (router_id, _) = deploy_router(&env);
     let router = RouterClient::new(&env, &router_id);
@@ -698,6 +716,8 @@ fn test_reveal_wrong_hash_fails() {
 #[test]
 fn test_reveal_nonce_replay_fails() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): router routing arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
     let (router_id, _) = deploy_router(&env);
     let router = RouterClient::new(&env, &router_id);
@@ -727,6 +747,8 @@ fn test_reveal_nonce_replay_fails() {
 #[test]
 fn test_commit_reveal_full_lifecycle() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): router routing arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
 
     let (router_id, _factory_id, token_in_id, token_out_id, _pair_id) =
@@ -803,6 +825,8 @@ fn test_commit_reveal_full_lifecycle() {
 #[test]
 fn test_sweep_drains_stuck_balance_to_recipient() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): router routing arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
     let (router_id, factory_id) = deploy_router(&env);
     let router = RouterClient::new(&env, &router_id);
@@ -816,12 +840,11 @@ fn test_sweep_drains_stuck_balance_to_recipient() {
 
     let recipient = Address::generate(&env);
     let swept = router.sweep(&token, &recipient);
-
     assert_eq!(swept, 500);
+    assert_eq!(env.auths()[0].0, governance, "sweep must be authorized by governance");
     let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
     assert_eq!(token_client.balance(&recipient), 500);
     assert_eq!(token_client.balance(&router_id), 0);
-    assert_eq!(env.auths()[0].0, governance, "sweep must be authorized by governance");
 }
 
 #[test]
@@ -844,6 +867,8 @@ fn test_sweep_without_governance_auth_fails() {
 #[test]
 fn test_sweep_zero_balance_fails() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): router routing arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
     let (router_id, factory_id) = deploy_router(&env);
     let router = RouterClient::new(&env, &router_id);
@@ -856,4 +881,34 @@ fn test_sweep_zero_balance_fails() {
         router.sweep(&token, &recipient);
     }));
     assert!(result.is_err(), "sweeping an empty balance must fail (ZeroAmount)");
+}
+
+#[test]
+fn test_hop_check_validates_is_pair() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (router_id, factory_id) = deploy_router(&env);
+    let router = RouterClient::new(&env, &router_id);
+
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    let fake_pair = Address::generate(&env);
+
+    // Factory maps token_a, token_b -> fake_pair, but is_pair is false
+    MockFactoryClient::new(&env, &factory_id).set_pair(&token_a, &token_b, &fake_pair);
+    MockFactoryClient::new(&env, &factory_id).set_is_pair(&fake_pair, &false);
+
+    let mut path = Vec::new(&env);
+    path.push_back(token_a.clone());
+    path.push_back(token_b.clone());
+
+    let user = Address::generate(&env);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        router.swap_exact_tokens_multi_hop(&path, &1000, &1, &user, &u64::MAX);
+    }));
+    assert!(result.is_err(), "hop check must fail when is_pair is false");
+
+    // Now mark is_pair as true
+    MockFactoryClient::new(&env, &factory_id).set_is_pair(&fake_pair, &true);
+    assert!(MockFactoryClient::new(&env, &factory_id).is_pair(&fake_pair));
 }

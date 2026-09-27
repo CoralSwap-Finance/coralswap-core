@@ -10,8 +10,6 @@ pub struct PairStorage {
     pub reserve_a: i128,
     pub reserve_b: i128,
     pub block_timestamp_last: u64,
-    pub price_a_cumulative: i128,
-    pub price_b_cumulative: i128,
     pub k_last: i128,
 }
 
@@ -49,9 +47,28 @@ pub struct ReentrancyGuard {
     pub locked: bool,
 }
 
+/// Oracle bookkeeping for the pair.
+///
+/// The cumulative price accumulators live here, next to the observation ring
+/// buffer that is derived from them, rather than on [`PairStorage`].
+///
+/// They used to sit on `PairStorage`, where they were written once at
+/// `initialize` and never again (issue #312): the only writer,
+/// `oracle::update_cumulative_prices`, is not reachable from any pair entry
+/// point, so the two fields were dead storage that cost rent on every pool and
+/// implied a working TWAP that did not exist. Keeping the accumulators with the
+/// observations they feed makes the oracle self-contained: once #271 wires
+/// `update_cumulative_prices` into `swap`/`mint`/`burn`, a single
+/// `get_oracle_state` read serves both the accumulators and the buffer, and
+/// there is no second copy of the same numbers to fall out of sync.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct OracleState {
+    /// Running Uniswap-V2-style `price * elapsed` accumulator for token A.
+    pub price_a_cumulative: i128,
+    /// Running accumulator for token B.
+    pub price_b_cumulative: i128,
+    /// Ring buffer of `(ledger_sequence, cumulative_a, cumulative_b)` samples.
     pub observations: soroban_sdk::Vec<(u64, i128, i128)>,
 }
 
@@ -75,6 +92,34 @@ pub enum DataKey {
     OracleState,
     /// Cumulative protocol-fee accounting.
     ProtocolFeeState,
+    /// Cached "is this pair's LP token paused" flag, written by
+    /// `Pair::set_lp_token_paused` so the mint/burn/swap hot path can produce a
+    /// typed `PairError::LpTokenPaused` without a nested call per call.
+    LpTokenPaused,
+}
+
+// ---------------------------------------------------------------------------
+// LP-token pause cache
+// ---------------------------------------------------------------------------
+
+/// The pair's cached view of its LP token's pause flag.
+///
+/// This is a *hint*, not the enforcement point. The LP token refuses
+/// `mint` / `burn` while paused regardless of what this says, so a stale `false`
+/// costs a worse error code, never a paused pool that keeps trading. It exists
+/// because reading the flag over a contract call on every `swap`, `mint` and
+/// `burn` is a nested sub-invocation per call, which is a measurable share of
+/// the Soroban budget for a function as hot as `swap`.
+///
+/// Absent means `false`; the flag is only written by
+/// [`crate::Pair::set_lp_token_paused`].
+pub fn get_lp_token_paused(env: &Env) -> bool {
+    env.storage().instance().get(&DataKey::LpTokenPaused).unwrap_or(false)
+}
+
+/// Records the LP token pause state the pair just applied.
+pub fn set_lp_token_paused(env: &Env, paused: bool) {
+    env.storage().instance().set(&DataKey::LpTokenPaused, &paused);
 }
 
 // ---------------------------------------------------------------------------
@@ -82,12 +127,18 @@ pub enum DataKey {
 // ---------------------------------------------------------------------------
 
 pub fn get_oracle_state(env: &Env) -> OracleState {
-    env.storage()
-        .instance()
-        .get(&DataKey::OracleState)
-        .unwrap_or(OracleState { observations: soroban_sdk::Vec::new(env) })
+    env.storage().instance().get(&DataKey::OracleState).unwrap_or(OracleState {
+        price_a_cumulative: 0,
+        price_b_cumulative: 0,
+        observations: soroban_sdk::Vec::new(env),
+    })
 }
 
+/// Persists the oracle bookkeeping.
+///
+/// Only `update_cumulative_prices` writes this today, and that is not yet
+/// reached from a pair entry point (#271), so this is dead until then.
+#[allow(dead_code)]
 pub fn set_oracle_state(env: &Env, state: &OracleState) {
     env.storage().instance().set(&DataKey::OracleState, state);
 }
@@ -128,14 +179,18 @@ pub fn set_reentrancy_guard(env: &Env, guard: &ReentrancyGuard) {
     env.storage().instance().set(&DataKey::Guard, guard);
 }
 
-
- // -----------------------------------------------------------------------
+// -----------------------------------------------------------------------
 // ProtocolFeeState helpers
 // -----------------------------------------------------------------------
+#[allow(dead_code)]
 pub fn get_protocol_fee_state(env: &Env) -> ProtocolFeeState {
-    env.storage().instance().get(&DataKey::ProtocolFeeState).unwrap_or(ProtocolFeeState { fee_a: 0, fee_b: 0 })
+    env.storage()
+        .instance()
+        .get(&DataKey::ProtocolFeeState)
+        .unwrap_or(ProtocolFeeState { fee_a: 0, fee_b: 0 })
 }
 
+#[allow(dead_code)]
 pub fn set_protocol_fee_state(env: &Env, state: &ProtocolFeeState) {
     env.storage().instance().set(&DataKey::ProtocolFeeState, state);
 }

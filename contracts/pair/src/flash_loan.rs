@@ -62,9 +62,9 @@ pub fn compute_flash_fee(
 /// 4. **Callback** — call `receiver.on_flash_loan(...)`.  The receiver MUST
 ///    repay principal + fee before the callback returns.
 /// 5. **Repayment check** — `new_balance >= old_reserve + fee` for each
-///    borrowed token. This is a floor, not an equality: if the receiver
-///    returns MORE than principal + fee, the surplus is accepted and
-///    retained by the pool as a donation (issue #384).
+///    borrowed token.  Repaying *more* than required is accepted: the surplus
+///    is not refunded, it stays in the pool (see step 6), while repaying even
+///    one stroop less than the fee aborts with `FlashLoanNotRepaid`.
 /// 6. **Reserve update** — set reserves to post-callback balances.
 /// 7. **k-invariant** — `post_k >= pre_k`; reverts on violation.
 /// 8. **Persist + emit** — write updated state, publish event.
@@ -74,7 +74,7 @@ pub fn compute_flash_fee(
 /// | Error                    | Condition                                          |
 /// |--------------------------|---------------------------------------------------|
 /// | `FlashPayloadTooLarge`   | `data.len() > MAX_PAYLOAD_SIZE` (256 bytes)       |
-/// | `InsufficientInputAmount`| Both amounts are zero, or either is negative      |
+/// | `InsufficientInputAmount`| Either amount is negative                         |
 /// | `NotInitialized`         | Pair storage not yet written by `initialize`       |
 /// | `InsufficientLiquidity`  | Requested amount exceeds current reserves         |
 /// | `Locked`                 | Reentrancy — another flash loan is in progress    |
@@ -97,11 +97,8 @@ pub fn execute_flash_loan(
         return Err(PairError::FlashPayloadTooLarge);
     }
 
-    // At least one token must be borrowed; negative amounts are nonsensical.
+    // Negative amounts are nonsensical.
     if amount_a < 0 || amount_b < 0 {
-        return Err(PairError::InsufficientInputAmount);
-    }
-    if amount_a == 0 && amount_b == 0 {
         return Err(PairError::InsufficientInputAmount);
     }
 
@@ -110,6 +107,12 @@ pub fn execute_flash_loan(
     // -----------------------------------------------------------------------
 
     let mut state = get_pair_state(env).ok_or(PairError::NotInitialized)?;
+
+    // Clean no-op edge: if both amounts are zero, return Ok(()) immediately.
+    // No tokens are transferred, no callback is invoked, and no reentrancy lock is acquired.
+    if amount_a == 0 && amount_b == 0 {
+        return Ok(());
+    }
 
     // Requested amounts must not exceed current reserves.
     if amount_a > state.reserve_a || amount_b > state.reserve_b {
@@ -212,6 +215,9 @@ pub fn execute_flash_loan(
     // 8. Reserve update
     // -----------------------------------------------------------------------
 
+    // Reserves track the *actual* token balances, so an overpaid surplus is
+    // credited to the pool rather than refunded to the receiver: it raises
+    // `k` below and accrues to LPs.
     state.reserve_a = new_balance_a;
     state.reserve_b = new_balance_b;
 

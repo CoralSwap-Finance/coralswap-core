@@ -21,4 +21,12 @@ pub trait FactoryInterface {
     /// Returns the per-pair fee override in basis points, or `None` if no
     /// override is set. See `Factory::set_pair_fee`.
     fn get_pair_fee_override(env: Env, pair: Address) -> Option<u32>;
+
+    fn fee_to(env: Env) -> Option<Address>;
+
+    fn fee_bps(env: Env) -> u32;
+
+    fn get_fee_to(env: Env) -> Option<Address>;
+
+    fn get_fee_bps(env: Env) -> u32;
 }

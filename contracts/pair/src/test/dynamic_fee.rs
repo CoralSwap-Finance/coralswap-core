@@ -573,6 +573,8 @@ fn test_swap_updates_volatility_accumulator() {
     use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
     let env = Env::default();
+    // BLANKET MOCK (issue #314): dynamic fee arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     // Deploy contracts
@@ -662,6 +664,8 @@ fn test_multiple_swaps_accumulate_volatility() {
     use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
     let env = Env::default();
+    // BLANKET MOCK (issue #314): dynamic fee arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     // Deploy contracts

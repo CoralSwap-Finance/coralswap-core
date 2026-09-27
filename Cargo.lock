@@ -325,6 +325,7 @@ checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 name = "coralswap-factory"
 version = "0.1.0"
 dependencies = [
+ "coralswap-shared",
  "soroban-sdk",
 ]
 
@@ -354,6 +355,7 @@ dependencies = [
 name = "coralswap-lp-token"
 version = "0.1.0"
 dependencies = [
+ "coralswap-shared",
  "soroban-sdk",
 ]
 
@@ -383,12 +385,21 @@ dependencies = [
  "coralswap-lp-token",
  "coralswap-malicious-flash-receiver",
  "coralswap-mock-flash-receiver",
+ "coralswap-shared",
  "ethnum",
  "soroban-sdk",
 ]
 
 [[package]]
 name = "coralswap-router"
+version = "0.1.0"
+dependencies = [
+ "coralswap-shared",
+ "soroban-sdk",
+]
+
+[[package]]
+name = "coralswap-shared"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",

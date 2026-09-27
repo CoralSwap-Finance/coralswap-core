@@ -18,11 +18,13 @@
 //
 // ---------------------------------------------------------------------------
 
+mod auth_matrix;
 mod burn;
 mod dynamic_fee;
 //mod events;
 mod flash_loan;
 mod initialize;
+mod lp_pause;
 mod mint;
 mod mint_single_side;
 mod oracle;

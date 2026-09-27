@@ -51,6 +51,8 @@ struct EnvHarness {
 
 fn setup_harness() -> EnvHarness {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): fee-override reads, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     let admin = Address::generate(&env);
@@ -148,6 +150,8 @@ fn swap_with_override_does_not_panic_even_when_factory_missing() {
     // The pair should fall back to dynamic fee when the factory contract does
     // not exist or returns an error. This tests graceful degradation.
     let env = Env::default();
+    // BLANKET MOCK (issue #314): fee-override reads, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     let admin = Address::generate(&env);

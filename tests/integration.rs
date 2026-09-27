@@ -94,6 +94,8 @@ mod integration_tests {
     #[test]
     fn test_full_coral_swap_flow() {
         let env = Env::default();
+        // BLANKET MOCK (issue #314): end-to-end wiring test; the guards are
+        // covered by the per-contract `auth_matrix` modules.
         env.mock_all_auths_allowing_non_root_auth();
 
         let admin = Address::generate(&env);
@@ -183,8 +185,7 @@ mod integration_tests {
         assert!(returned_a > 0, "remove_liquidity must return token_a");
         assert!(returned_b > 0, "remove_liquidity must return token_b");
         assert_eq!(lp_token_client.balance(&user), 0);
-        // The burn path consumes the LP tokens held by the pair, including the
-        // initial minimum-liquidity balance transferred during first mint.
-        assert_eq!(lp_token_client.balance(&pair_address), 0);
+        // The MINIMUM_LIQUIDITY seed remains permanently locked in the pair.
+        assert_eq!(lp_token_client.balance(&pair_address), 1_000_i128);
     }
 }

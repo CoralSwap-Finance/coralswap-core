@@ -5,6 +5,8 @@ use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env,
 
 /// Helper to deploy and initialize pair for testing
 fn setup_pair(env: &Env) -> (PairClient<'static>, Address, Address, Address, Address) {
+    // BLANKET MOCK (issue #314): oracle staleness arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     // Create mock token contracts (use Pair as mock since we only need Address)
@@ -50,6 +52,8 @@ fn test_set_stale_threshold_updates_value() {
     let env = Env::default();
     let (pair_client, _factory, _, _, _) = setup_pair(&env);
 
+    // BLANKET MOCK (issue #314): oracle staleness arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     // Set a new stale threshold
@@ -65,6 +69,8 @@ fn test_set_stale_threshold_validation_zero_fails() {
     let env = Env::default();
     let (pair_client, _, _, _, _) = setup_pair(&env);
 
+    // BLANKET MOCK (issue #314): oracle staleness arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     // Attempt to set threshold to 0 should fail
@@ -81,6 +87,8 @@ fn test_set_stale_threshold_validation_exceeds_max() {
     let env = Env::default();
     let (pair_client, _, _, _, _) = setup_pair(&env);
 
+    // BLANKET MOCK (issue #314): oracle staleness arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     // Attempt to set threshold above 100_000 should fail
@@ -97,6 +105,8 @@ fn test_set_stale_threshold_boundary_min() {
     let env = Env::default();
     let (pair_client, _, _, _, _) = setup_pair(&env);
 
+    // BLANKET MOCK (issue #314): oracle staleness arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     // Set threshold to minimum valid value (1)
@@ -110,6 +120,8 @@ fn test_set_stale_threshold_boundary_max() {
     let env = Env::default();
     let (pair_client, _, _, _, _) = setup_pair(&env);
 
+    // BLANKET MOCK (issue #314): oracle staleness arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     // Set threshold to maximum valid value (100_000)
@@ -128,6 +140,8 @@ fn test_set_stale_threshold_requires_factory_auth() {
     let _unauthorized = Address::generate(&env);
 
     // Mock auth for the unauthorized address
+    // BLANKET MOCK (issue #314): oracle staleness arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     // Attempt to set stale threshold without proper authorization
@@ -146,6 +160,8 @@ fn test_set_stale_threshold_idempotent() {
     let env = Env::default();
     let (pair_client, _, _, _, _) = setup_pair(&env);
 
+    // BLANKET MOCK (issue #314): oracle staleness arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     // Set threshold to 300
@@ -164,6 +180,8 @@ fn test_set_stale_threshold_can_be_changed_multiple_times() {
     let env = Env::default();
     let (pair_client, _, _, _, _) = setup_pair(&env);
 
+    // BLANKET MOCK (issue #314): oracle staleness arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     // Change threshold multiple times
@@ -178,6 +196,8 @@ fn test_set_stale_threshold_affects_decay_behavior() {
     let env = Env::default();
     let (pair_client, _, _, _, _) = setup_pair(&env);
 
+    // BLANKET MOCK (issue #314): oracle staleness arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     // Change threshold to a very low value
@@ -195,6 +215,8 @@ fn test_set_stale_threshold_various_valid_values() {
     let env = Env::default();
     let (pair_client, _, _, _, _) = setup_pair(&env);
 
+    // BLANKET MOCK (issue #314): oracle staleness arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     let valid_thresholds = vec![1u32, 10, 100, 500, 1000, 5000, 10_000, 50_000, 100_000];
@@ -210,6 +232,8 @@ fn test_set_stale_threshold_invalid_values() {
     let env = Env::default();
     let (pair_client, _, _, _, _) = setup_pair(&env);
 
+    // BLANKET MOCK (issue #314): oracle staleness arithmetic, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     let invalid_thresholds = vec![0u32, 100_001, u32::MAX, 1_000_000];

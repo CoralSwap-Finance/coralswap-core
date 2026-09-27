@@ -1,11 +1,29 @@
+mod auth_matrix;
+
 use soroban_sdk::Env;
 
 mod factory_tests {
     use super::*;
     use crate::{Factory, FactoryClient};
-    use soroban_sdk::{testutils::Address as _, testutils::Events, Address, Bytes, BytesN, Vec};
+    use soroban_sdk::{
+        symbol_short, testutils::Address as _, testutils::Events, Address, Bytes, BytesN, IntoVal,
+        TryFromVal, Val, Vec,
+    };
     use std::fs;
     use std::path::PathBuf;
+
+    /// Asserts that the events emitted by the last contract invocation are
+    /// exactly `expected`, in order, as `(topics, data)` pairs published by the
+    /// factory. Used by the fee tests so that "an event is emitted on every fee
+    /// change" is verified on the *payload*, not just the count.
+    fn assert_emitted(env: &Env, factory: &Address, expected: std::vec::Vec<(Val, Val)>) {
+        let mut out: Vec<(Address, Vec<Val>, Val)> = Vec::new(env);
+        for (topics, data) in expected {
+            let topics = <Vec<Val>>::try_from_val(env, &topics).unwrap();
+            out.push_back((factory.clone(), topics, data));
+        }
+        assert_eq!(env.events().all(), out);
+    }
 
     fn load_wasm(file_name: &str) -> std::vec::Vec<u8> {
         let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target");
@@ -31,6 +49,8 @@ mod factory_tests {
     fn setup_env<'a>() -> (Env, FactoryClient<'a>, Address, Address, Address, Address, Vec<Address>)
     {
         let env = Env::default();
+        // BLANKET MOCK (issue #314): factory deployment and fee arithmetic, not authorization.
+        // Guards are covered by the per-contract `auth_matrix` module.
         env.mock_all_auths();
 
         let factory_address = env.register(Factory, ());
@@ -307,13 +327,23 @@ mod factory_tests {
 
     #[test]
     fn test_create_pair_happy_path() {
-        let (_env, client, token_a, token_b, _, _, _) = setup_env();
+        let (env, client, token_a, token_b, _, _, _) = setup_env();
 
         let pair_addr = client.create_pair(&token_a, &token_b);
 
         // The returned pair address should be retrievable via get_pair.
         let stored = client.get_pair(&token_a, &token_b);
         assert_eq!(stored, Some(pair_addr.clone()));
+
+        // Standardized LP token deterministic metadata (issue #396)
+        let (expected_name, expected_symbol) =
+            coralswap_shared::derive_lp_metadata(&env, &token_a, &token_b);
+        let pair_client = crate::PairClient::new(&env, &pair_addr);
+        let lp_addr = pair_client.lp_token();
+        let lp_client = crate::LpTokenClient::new(&env, &lp_addr);
+        assert_eq!(lp_client.name(), expected_name);
+        assert_eq!(lp_client.symbol(), expected_symbol);
+        assert_eq!(lp_client.decimals(), coralswap_shared::LP_DECIMALS);
     }
 
     #[test]
@@ -451,6 +481,65 @@ mod factory_tests {
         client.pause(&Vec::from_array(&env, [s1.clone(), s2.clone()]));
         client.unpause(&Vec::from_array(&env, [s1, s2]));
         assert!(!client.is_paused());
+    }
+
+    #[test]
+    fn test_resume_authorized_signers_succeeds_and_emits_resumed_event() {
+        let (env, client, _, _, _, _, signers) = setup_env();
+        let s1 = signers.get(0).unwrap();
+        let s2 = signers.get(1).unwrap();
+        let auth_signers = Vec::from_array(&env, [s1, s2]);
+
+        client.pause(&auth_signers);
+        assert!(client.is_paused());
+
+        client.resume(&auth_signers);
+        let all = env.events().all();
+        assert_eq!(all.events().len(), 2, "resume must emit unpaused and resumed events");
+        assert!(!client.is_paused());
+    }
+
+    #[test]
+    fn test_sync_emits_event_and_reports_state() {
+        let (env, client, token_a, token_b, _, _, signers) = setup_env();
+        client.create_pair(&token_a, &token_b);
+
+        client.sync();
+        let all = env.events().all();
+        assert_eq!(all.events().len(), 1, "sync must publish exactly one sync heartbeat event");
+
+        let s1 = signers.get(0).unwrap();
+        let s2 = signers.get(1).unwrap();
+        client.pause(&Vec::from_array(&env, [s1, s2]));
+        assert!(client.is_paused());
+
+        client.sync();
+        let all_paused = env.events().all();
+        assert_eq!(
+            all_paused.events().len(),
+            1,
+            "sync while paused must publish a sync heartbeat event"
+        );
+    }
+
+    #[test]
+    fn test_freeze_and_unfreeze_pair_succeeds_and_emits_events() {
+        let (env, client, token_a, token_b, _, _, signers) = setup_env();
+        let pair_addr = client.create_pair(&token_a, &token_b);
+
+        let s1 = signers.get(0).unwrap();
+        let s2 = signers.get(1).unwrap();
+        let auth_signers = Vec::from_array(&env, [s1, s2]);
+
+        assert!(!client.is_pair_frozen(&pair_addr));
+
+        client.freeze_pair(&auth_signers, &pair_addr);
+        assert_eq!(env.events().all().events().len(), 1, "freeze_pair must emit frozen event");
+        assert!(client.is_pair_frozen(&pair_addr));
+
+        client.unfreeze_pair(&auth_signers, &pair_addr);
+        assert_eq!(env.events().all().events().len(), 1, "unfreeze_pair must emit unfrozen event");
+        assert!(!client.is_pair_frozen(&pair_addr));
     }
 
     #[test]
@@ -646,6 +735,189 @@ mod factory_tests {
         assert_eq!(client.fee_to(), Some(fee_recipient));
     }
 
+    // ── Issue #311: no silently-zeroed protocol fee ─────────────────────────
+
+    /// The headline case from #311: a live recipient wired to a zero rate looks
+    /// enabled to governance and to monitoring, yet every swap routes zero to
+    /// it. It must be rejected rather than accepted-and-ignored.
+    #[test]
+    fn test_set_fee_to_some_recipient_with_zero_bps_reverts() {
+        let (env, client, _, _, _, fee_to_setter, _) = setup_env();
+        let fee_recipient = Address::generate(&env);
+
+        let result = client.try_set_fee_to(&fee_to_setter, &Some(fee_recipient), &0u32);
+        assert!(result.is_err(), "Some(fee_to) with fee_bps = 0 must revert");
+
+        // Reverted means nothing was written and nothing was announced.
+        assert_eq!(env.events().all().events().len(), 0, "a revert must emit no event");
+        assert_eq!(client.fee_to(), None);
+    }
+
+    /// `None` + `0` is the one and only way to express "collection disabled".
+    ///
+    /// Note: `env.events().all()` reports the *last* invocation, so the event
+    /// assertion has to come before any getter call.
+    #[test]
+    fn test_set_fee_to_none_with_zero_bps_disables_collection() {
+        let (env, client, _, _, _, fee_to_setter, _) = setup_env();
+        let fee_recipient = Address::generate(&env);
+
+        client.set_fee_to(&fee_to_setter, &Some(fee_recipient.clone()), &20u32);
+        env.events().all();
+
+        // Disabling is a legitimate transition and must be observable.
+        client.set_fee_to(&fee_to_setter, &None, &0u32);
+
+        assert_emitted(
+            &env,
+            &client.address,
+            std::vec![
+                ((symbol_short!("fee_to"),).into_val(&env), None::<Address>.into_val(&env),),
+                (
+                    (symbol_short!("fee_upd"),).into_val(&env),
+                    (20u32, 0u32, None::<Address>).into_val(&env),
+                ),
+            ],
+        );
+        assert_eq!(client.fee_to(), None);
+    }
+
+    /// `None` + nonzero and `Some` + `0` are the two halves of the same
+    /// footgun; both must be rejected.
+    #[test]
+    fn test_set_fee_to_rejects_both_contradictory_combinations() {
+        let (env, client, _, _, _, fee_to_setter, _) = setup_env();
+        let fee_recipient = Address::generate(&env);
+
+        assert!(
+            client.try_set_fee_to(&fee_to_setter, &None, &1u32).is_err(),
+            "None recipient with a nonzero rate must revert"
+        );
+        assert!(
+            client.try_set_fee_to(&fee_to_setter, &Some(fee_recipient), &0u32).is_err(),
+            "live recipient with a zero rate must revert"
+        );
+        assert_eq!(client.fee_to(), None);
+    }
+
+    /// Every successful fee change must emit `protocol_fee_updated` with the
+    /// old and new rate, so a monitor can detect a zeroing even if the final
+    /// state is inspected only via the event stream.
+    #[test]
+    fn test_set_fee_to_emits_change_event_on_every_fee_change() {
+        let (env, client, _, _, _, fee_to_setter, _) = setup_env();
+        let first = Address::generate(&env);
+        let second = Address::generate(&env);
+
+        client.set_fee_to(&fee_to_setter, &Some(first.clone()), &10u32);
+        env.events().all();
+
+        // Recipients rotate and the rate changes: still exactly one fee event,
+        // carrying the rate that was replaced.
+        client.set_fee_to(&fee_to_setter, &Some(second.clone()), &25u32);
+
+        assert_emitted(
+            &env,
+            &client.address,
+            std::vec![
+                ((symbol_short!("fee_to"),).into_val(&env), Some(second.clone()).into_val(&env),),
+                (
+                    (symbol_short!("fee_upd"),).into_val(&env),
+                    (10u32, 25u32, Some(second)).into_val(&env),
+                ),
+            ],
+        );
+    }
+
+    /// A rejected call must leave both rate and recipient untouched, and must
+    /// not emit a misleading "fee changed" event.
+    #[test]
+    fn test_set_fee_to_rejected_update_leaves_state_and_event_log_intact() {
+        let (env, client, _, _, _, fee_to_setter, _) = setup_env();
+        let recipient = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        client.set_fee_to(&fee_to_setter, &Some(recipient.clone()), &20u32);
+        env.events().all();
+
+        assert!(client.try_set_fee_to(&fee_to_setter, &Some(other.clone()), &0u32).is_err());
+
+        // Assert the event log before any getter call: `events().all()` only
+        // reports the last invocation.
+        assert_eq!(
+            env.events().all().events().len(),
+            0,
+            "a rejected fee change must not emit an event"
+        );
+        assert_eq!(client.fee_to(), Some(recipient), "revert must not change fee_to");
+    }
+
+    // ── Issue #311: set_pair_fee(0) must clear, not zero the swap fee ───────
+
+    /// `set_pair_fee(pair, 0)` is documented as "clear the override". Storing a
+    /// literal `0` would be read back as "charge nothing", so the override must
+    /// be removed and the pair must fall back to its dynamic fee.
+    #[test]
+    fn test_set_pair_fee_zero_clears_override_instead_of_zeroing_fees() {
+        let (env, client, fee_to_setter) = setup_factory_for_pair_fee_tests();
+        let pair = Address::generate(&env);
+
+        client.set_pair_fee(&fee_to_setter, &pair, &40u32);
+        assert_eq!(client.get_pair_fee_override(&pair), Some(40u32));
+
+        client.set_pair_fee(&fee_to_setter, &pair, &0u32);
+        assert_eq!(
+            client.get_pair_fee_override(&pair),
+            None,
+            "0 must clear the override; a stored 0 would silently zero the swap fee"
+        );
+    }
+
+    /// The clear is a real, observable transition: the emitted event reports the
+    /// previous rate and a `new_fee_bps` of 0.
+    #[test]
+    fn test_set_pair_fee_clear_emits_event_with_old_rate() {
+        let (env, client, fee_to_setter) = setup_factory_for_pair_fee_tests();
+        let pair = Address::generate(&env);
+
+        client.set_pair_fee(&fee_to_setter, &pair, &40u32);
+        env.events().all();
+
+        client.set_pair_fee(&fee_to_setter, &pair, &0u32);
+        assert_emitted(
+            &env,
+            &client.address,
+            std::vec![(
+                (symbol_short!("pair_fee"), pair.clone()).into_val(&env),
+                (40u32, 0u32, env.ledger().sequence()).into_val(&env),
+            )],
+        );
+    }
+    /// Clearing a pair that has no override is a harmless no-op, not an error.
+    #[test]
+    fn test_set_pair_fee_clearing_absent_override_is_noop() {
+        let (env, client, fee_to_setter) = setup_factory_for_pair_fee_tests();
+        let pair = Address::generate(&env);
+
+        assert!(client.try_set_pair_fee(&fee_to_setter, &pair, &0u32).is_ok());
+        assert_eq!(client.get_pair_fee_override(&pair), None);
+    }
+
+    /// An override must not be able to bleed into a sibling pair when cleared.
+    #[test]
+    fn test_set_pair_fee_clear_is_scoped_to_one_pair() {
+        let (env, client, fee_to_setter) = setup_factory_for_pair_fee_tests();
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+
+        client.set_pair_fee(&fee_to_setter, &a, &40u32);
+        client.set_pair_fee(&fee_to_setter, &b, &10u32);
+        client.set_pair_fee(&fee_to_setter, &a, &0u32);
+
+        assert_eq!(client.get_pair_fee_override(&a), None);
+        assert_eq!(client.get_pair_fee_override(&b), Some(10u32));
+    }
+
     // ── Issue #132: set_pair_fee per-pair fee override ──────────────────────
 
     /// Sets up a fresh factory WITHOUT uploading pair / lp_token WASM. The
@@ -656,6 +928,8 @@ mod factory_tests {
     /// test environment.
     fn setup_factory_for_pair_fee_tests<'a>() -> (Env, FactoryClient<'a>, Address) {
         let env = Env::default();
+        // BLANKET MOCK (issue #314): factory deployment and fee arithmetic, not authorization.
+        // Guards are covered by the per-contract `auth_matrix` module.
         env.mock_all_auths();
 
         let factory_address = env.register(Factory, ());
@@ -722,11 +996,17 @@ mod factory_tests {
     fn test_set_pair_fee_boundary_values_are_accepted() {
         let (env, client, fee_to_setter) = setup_factory_for_pair_fee_tests();
 
-        // fee_bps = 0 is allowed and stored verbatim (lets governance "clear"
-        // the override by setting it to zero).
+        // fee_bps = 0 is the documented way for governance to "clear" the
+        // override (issue #311): it must not be persisted as a zero rate,
+        // because a stored 0 reads back as "charge nothing".
         let pair_zero = Address::generate(&env);
         client.set_pair_fee(&fee_to_setter, &pair_zero, &0u32);
-        assert_eq!(client.get_pair_fee_override(&pair_zero), Some(0u32));
+        assert_eq!(client.get_pair_fee_override(&pair_zero), None);
+
+        // fee_bps = 1 is the lowest rate actually stored.
+        let pair_one = Address::generate(&env);
+        client.set_pair_fee(&fee_to_setter, &pair_one, &1u32);
+        assert_eq!(client.get_pair_fee_override(&pair_one), Some(1u32));
 
         // fee_bps = 100 is the documented maximum.
         let pair_max = Address::generate(&env);
@@ -776,12 +1056,7 @@ mod factory_tests {
         let lp_token_wasm_hash = BytesN::from_array(&env, &[2u8; 32]);
         let signers = Vec::from_array(&env, [Address::generate(&env)]);
 
-        client.initialize(
-            &signers,
-            &pair_wasm_hash,
-            &lp_token_wasm_hash,
-            &Address::generate(&env),
-        );
+        client.initialize(&signers, &pair_wasm_hash, &lp_token_wasm_hash, &Address::generate(&env));
 
         assert_eq!(client.get_pair_wasm_hash(), pair_wasm_hash);
         assert_eq!(client.get_lp_token_wasm_hash(), lp_token_wasm_hash);
@@ -832,8 +1107,6 @@ mod factory_tests {
         // Explicit value check: 3 creates → counter and list must both be 3.
         assert_eq!(client.total_pairs(), 3, "total_pairs must be 3 after three creates");
     }
-}
-
 
     // ── Issue #402: create_pair gas benchmark ───────────────────────────────
 
@@ -865,13 +1138,13 @@ mod factory_tests {
         let (_env, client, token_a, token_b, _, _, _) = setup_env();
 
         // Snapshot CPU instruction budget before create_pair
-        let budget_before = _env.budget().cpu_instruction_cost();
+        let budget_before = _env.cost_estimate().budget().cpu_instruction_cost();
 
         // Execute create_pair (the operation under test)
         let _pair_addr = client.create_pair(&token_a, &token_b);
 
         // Snapshot CPU instruction budget after create_pair
-        let budget_after = _env.budget().cpu_instruction_cost();
+        let budget_after = _env.cost_estimate().budget().cpu_instruction_cost();
 
         // Compute actual CPU instructions consumed
         let cpu_used = budget_after - budget_before;
@@ -916,9 +1189,9 @@ mod factory_tests {
     fn test_create_pair_baseline_cost() {
         let (_env, client, token_a, token_b, _, _, _) = setup_env();
 
-        let budget_before = _env.budget().cpu_instruction_cost();
+        let budget_before = _env.cost_estimate().budget().cpu_instruction_cost();
         let _pair_addr = client.create_pair(&token_a, &token_b);
-        let budget_after = _env.budget().cpu_instruction_cost();
+        let budget_after = _env.cost_estimate().budget().cpu_instruction_cost();
 
         let cpu_used = budget_after - budget_before;
 
@@ -932,10 +1205,87 @@ mod factory_tests {
 
         // Sanity check: cost should be non-zero and reasonable
         assert!(cpu_used > 0, "create_pair must consume non-zero CPU");
+        assert!(cpu_used < 100_000_000, "create_pair baseline exceeds per-tx limit (100M)");
+    }
+
+    // ── Issue #391: is_pair view tests ─────────────────────────────────────
+
+    #[test]
+    fn test_is_pair_returns_true_for_created_pair() {
+        let (_env, client, token_a, token_b, _, _, _) = setup_env();
+        let pair_addr = client.create_pair(&token_a, &token_b);
+
+        assert!(client.is_pair(&pair_addr), "is_pair must return true for factory-created pair");
+    }
+
+    #[test]
+    fn test_is_pair_returns_false_for_unregistered_address() {
+        let (env, client, _, _, _, _, _) = setup_env();
+        let random_addr = Address::generate(&env);
+
         assert!(
-            cpu_used < 100_000_000,
-            "create_pair baseline exceeds per-tx limit (100M)"
+            !client.is_pair(&random_addr),
+            "is_pair must return false for unregistered address"
         );
+    }
+
+    // ── Issue #387: stable pagination & creation order tests ────────────────
+
+    #[test]
+    fn test_get_all_pairs_stable_pagination_and_storage_order() {
+        let (env, client, _, _, _, _, _) = setup_env();
+
+        // Create 8 distinct pairs in deterministic sequence
+        let mut created_pairs: std::vec::Vec<Address> = std::vec::Vec::new();
+        for _ in 0..8 {
+            let t0 = Address::generate(&env);
+            let t1 = Address::generate(&env);
+            let pair = client.create_pair(&t0, &t1);
+            created_pairs.push(pair);
+        }
+
+        // Verify total_pairs equals created count
+        assert_eq!(client.total_pairs(), 8);
+
+        // Fetch page 1: offset 0, limit 3
+        let page_1 = client.get_all_pairs(&0, &3);
+        assert_eq!(page_1.len(), 3);
+        assert_eq!(page_1.get(0).unwrap(), created_pairs[0]);
+        assert_eq!(page_1.get(1).unwrap(), created_pairs[1]);
+        assert_eq!(page_1.get(2).unwrap(), created_pairs[2]);
+
+        // Fetch page 2: offset 3, limit 3
+        let page_2 = client.get_all_pairs(&3, &3);
+        assert_eq!(page_2.len(), 3);
+        assert_eq!(page_2.get(0).unwrap(), created_pairs[3]);
+        assert_eq!(page_2.get(1).unwrap(), created_pairs[4]);
+        assert_eq!(page_2.get(2).unwrap(), created_pairs[5]);
+
+        // Fetch page 3: offset 6, limit 3 (only 2 left)
+        let page_3 = client.get_all_pairs(&6, &3);
+        assert_eq!(page_3.len(), 2);
+        assert_eq!(page_3.get(0).unwrap(), created_pairs[6]);
+        assert_eq!(page_3.get(1).unwrap(), created_pairs[7]);
+
+        // Page beyond end: offset 8, limit 3
+        let page_empty = client.get_all_pairs(&8, &3);
+        assert_eq!(page_empty.len(), 0);
+
+        // Stability check: adding a 9th pair does not alter indices 0..8
+        let t_new_0 = Address::generate(&env);
+        let t_new_1 = Address::generate(&env);
+        let pair_9 = client.create_pair(&t_new_0, &t_new_1);
+
+        let full_list = client.get_all_pairs(&0, &50);
+        assert_eq!(full_list.len(), 9);
+        for (i, expected_addr) in created_pairs.iter().enumerate() {
+            assert_eq!(
+                full_list.get(i as u32).unwrap(),
+                *expected_addr,
+                "pair at index {i} must remain unchanged after subsequent creation"
+            );
+        }
+        assert_eq!(full_list.get(8).unwrap(), pair_9);
     }
 
     // ── Deterministic pair-address derivation (Issue #383) ───────────────────
