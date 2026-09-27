@@ -8,7 +8,7 @@ use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Bytes, En
 ///
 /// - `b"repay"`    — repay exactly `amount + fee` (baseline)
 /// - `b"overpay"`  — repay `amount + fee + amount`, i.e. donate the borrowed
-///                   principal a second time on top of the required repayment
+///   principal a second time on top of the required repayment
 /// - `b"underpay"` — repay `amount + fee - 1`, a single stroop short of the fee
 /// - `b"steal"`    — repay nothing, letting the pair's checks reject the loan
 ///
