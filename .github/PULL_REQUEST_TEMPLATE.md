@@ -26,3 +26,4 @@ Closes #
 - [ ] Public functions have doc comments
 - [ ] Commit messages follow conventional format
 - [ ] No unrelated changes included
+- [ ] Any new `storage().set` writes are paired with an `extend_ttl` call (see docs/STORAGE_LIFETIMES.md)
