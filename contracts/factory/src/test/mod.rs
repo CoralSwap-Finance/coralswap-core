@@ -1326,7 +1326,7 @@ mod factory_tests {
         let (env, client, token_a, token_b, _, _, _) = setup_env();
 
         let token_c = Address::generate(&env);
-        let token_d = Address::generate(&env);
+        let _token_d = Address::generate(&env);
 
         // Predict before creating — discovery without create_pair.
         let predicted_ab = client.get_pair_address(&token_a, &token_b);
