@@ -236,6 +236,7 @@ pub trait RouterInterface {
     ) -> i128;
 }
 
+mod add_liquidity_boundary;
 mod helpers_test;
 
 // ---------------------------------------------------------------------------

@@ -394,6 +394,8 @@ dependencies = [
 name = "coralswap-router"
 version = "0.1.0"
 dependencies = [
+ "coralswap-lp-token",
+ "coralswap-pair",
  "coralswap-shared",
  "soroban-sdk",
 ]
