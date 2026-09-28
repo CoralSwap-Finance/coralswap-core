@@ -190,6 +190,25 @@ pub const MAX_COMMITS_HARD_CAP: u32 = 1_000;
 /// Hard cap for admin-configured commit expiry (~30 days).
 pub const COMMIT_EXPIRY_HARD_CAP: u32 = 518_400;
 
+// ─────────────────────────────────────────────
+// Upgrade policy (factory)
+// ─────────────────────────────────────────────
+
+/// 72 hours expressed in ledgers, assuming a ~5-second ledger close time.
+/// 72 * 3600 / 5 = 51_840 ledgers.
+pub const UPGRADE_DELAY_LEDGERS: u32 = 51_840;
+
+// ─────────────────────────────────────────────
+// Flash loan policy (pair)
+// ─────────────────────────────────────────────
+
+/// Minimum flash-loan fee in basis points (0.05%).
+/// The effective fee is max(current_dynamic_fee_bps, FLASH_FEE_FLOOR_BPS).
+pub const FLASH_FEE_FLOOR_BPS: u32 = 5;
+
+/// Maximum allowed byte length for the `data` payload passed to the receiver.
+pub const MAX_PAYLOAD_SIZE: u32 = 256;
+
 /// Scoped-authorization test helpers (issue #314). Only compiled when the
 /// `test-support` feature is enabled, which happens solely as a
 /// dev-dependency of the contract crates.

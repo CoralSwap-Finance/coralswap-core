@@ -2,9 +2,7 @@ use crate::errors::FactoryError;
 use crate::storage::{self, PendingUpgrade};
 use soroban_sdk::{BytesN, Env};
 
-/// 72 hours expressed in ledgers, assuming a ~5-second ledger close time.
-/// 72 * 3600 / 5 = 51_840 ledgers.
-const UPGRADE_DELAY_LEDGERS: u32 = 51_840;
+
 
 /// Proposes a WASM upgrade. Stores the hash and the current ledger sequence.
 /// Rejects if a proposal is already pending.
@@ -31,7 +29,7 @@ pub fn execute_upgrade(env: &Env) -> Result<(), FactoryError> {
     let proposal = storage::get_pending_upgrade(env).ok_or(FactoryError::NoPendingUpgrade)?;
 
     let elapsed = env.ledger().sequence().saturating_sub(proposal.proposed_at_ledger);
-    if elapsed < UPGRADE_DELAY_LEDGERS {
+    if elapsed < coralswap_shared::UPGRADE_DELAY_LEDGERS {
         return Err(FactoryError::UpgradeTimelockNotExpired);
     }
 

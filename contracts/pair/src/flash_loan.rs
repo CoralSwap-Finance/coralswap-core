@@ -11,12 +11,7 @@ use crate::{
     storage::{get_fee_state, get_pair_state, set_pair_state},
 };
 
-/// Minimum flash-loan fee in basis points (0.05%).
-/// The effective fee is max(current_dynamic_fee_bps, FLASH_FEE_FLOOR_BPS).
-const FLASH_FEE_FLOOR_BPS: u32 = 5;
-
-/// Maximum allowed byte length for the `data` payload passed to the receiver.
-const MAX_PAYLOAD_SIZE: u32 = 256;
+use coralswap_shared::{FLASH_FEE_FLOOR_BPS, MAX_PAYLOAD_SIZE};
 
 /// Computes the flash-loan fee for `amount` stroops.
 ///

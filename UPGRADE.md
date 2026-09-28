@@ -38,6 +38,8 @@ propose_upgrade() ──→ 72-hour timelock ──→ execute_upgrade()
 | Multisig threshold | `ceil(n / 2)` where `n` = number of registered signers |
 | Max signers | 10 |
 
+> **Warning**: The delay in ledgers is hardcoded based on an assumption of a 5-second ledger close time on the Stellar network. If the network's ledger cadence changes, these time estimates will silently become inaccurate and might break time-sensitive operations like the upgrade timelock.
+
 ## Step-by-Step Upgrade Process
 
 ### 1. Build and Audit the New Contract
