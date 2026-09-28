@@ -1,4 +1,41 @@
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{contractevent, Address, Env};
+
+/// Emitted by `Factory::freeze_pair` the moment a pool is halted.
+///
+/// Declared with `#[contractevent]` (the migration target of `publish`, see
+/// below) because the payload is a named record rather than an anonymous
+/// tuple: indexers need `pair` for filtering, and `by` / `ledger` to reconstruct
+/// an incident timeline without a second call.
+///
+/// - Topics: `("pair_frozen_event", pair)`
+/// - Data: map `{ by: Address, ledger: u32 }`
+#[contractevent]
+#[derive(Clone)]
+pub struct PairFrozenEvent {
+    /// The pair contract that was frozen.
+    #[topic]
+    pub pair: Address,
+    /// The factory admin (`fee_to_setter`) that authorized the freeze.
+    pub by: Address,
+    /// Ledger sequence at which the freeze took effect.
+    pub ledger: u32,
+}
+
+/// Emitted by `Factory::unfreeze_pair`; the mirror of [`PairFrozenEvent`].
+///
+/// - Topics: `("pair_unfrozen_event", pair)`
+/// - Data: map `{ by: Address, ledger: u32 }`
+#[contractevent]
+#[derive(Clone)]
+pub struct PairUnfrozenEvent {
+    /// The pair contract that was unfrozen.
+    #[topic]
+    pub pair: Address,
+    /// The factory admin (`fee_to_setter`) that authorized the unfreeze.
+    pub by: Address,
+    /// Ledger sequence at which the unfreeze took effect.
+    pub ledger: u32,
+}
 
 #[allow(dead_code)]
 pub struct FactoryEvents;
@@ -35,12 +72,12 @@ impl FactoryEvents {
         env.events().publish((soroban_sdk::symbol_short!("sync"),), (paused, pair_count));
     }
 
-    pub fn pair_frozen(env: &Env, pair: &Address) {
-        env.events().publish((soroban_sdk::symbol_short!("frozen"), pair.clone()), ());
+    pub fn pair_frozen(env: &Env, pair: &Address, by: &Address, ledger: u32) {
+        PairFrozenEvent { pair: pair.clone(), by: by.clone(), ledger }.publish(env);
     }
 
-    pub fn pair_unfrozen(env: &Env, pair: &Address) {
-        env.events().publish((soroban_sdk::symbol_short!("unfrozen"), pair.clone()), ());
+    pub fn pair_unfrozen(env: &Env, pair: &Address, by: &Address, ledger: u32) {
+        PairUnfrozenEvent { pair: pair.clone(), by: by.clone(), ledger }.publish(env);
     }
 
     pub fn upgrade_proposed(env: &Env, new_wasm_hash: &[u8; 32]) {
@@ -129,3 +166,8 @@ const _: () = assert!(is_convention_symbol("setter"));
 const _: () = assert!(is_convention_symbol("fee_upd"));
 const _: () = assert!(is_convention_symbol("pair_fee"));
 const _: () = assert!(is_convention_symbol("protocol_fee_collected"));
+// `#[contractevent]` derives the topic symbol from the struct name (snake
+// cased) rather than from a literal, so it cannot be caught by the emitters'
+// literals above — mirror the derived names here instead.
+const _: () = assert!(is_convention_symbol("pair_frozen_event"));
+const _: () = assert!(is_convention_symbol("pair_unfrozen_event"));

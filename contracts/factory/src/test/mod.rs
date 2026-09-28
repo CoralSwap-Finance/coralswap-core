@@ -522,24 +522,147 @@ mod factory_tests {
         );
     }
 
+    // ── Pair freeze (incident response, gated by the fee_to admin) ──────────
+
+    /// Asserts the last invocation published exactly one freeze/unfreeze event
+    /// with the full `PairFrozenEvent { pair, by, ledger }` payload: the pair
+    /// as the indexed topic, the authorizing admin, and the ledger it fired on.
+    fn assert_pair_freeze_event(
+        env: &Env,
+        factory: &Address,
+        pair: &Address,
+        by: &Address,
+        event_symbol: &str,
+    ) {
+        let mut topics: Vec<Val> = Vec::new(env);
+        topics.push_back(soroban_sdk::Symbol::new(env, event_symbol).into_val(env));
+        topics.push_back(pair.clone().into_val(env));
+
+        let mut data = soroban_sdk::Map::<soroban_sdk::Symbol, Val>::new(env);
+        data.set(soroban_sdk::Symbol::new(env, "by"), by.clone().into_val(env));
+        data.set(soroban_sdk::Symbol::new(env, "ledger"), env.ledger().sequence().into_val(env));
+
+        let expected: Vec<(Address, Vec<Val>, Val)> =
+            Vec::from_array(env, [(factory.clone(), topics, data.into_val(env))]);
+
+        assert_eq!(
+            env.events().all(),
+            expected,
+            "{event_symbol} must carry pair/by/ledger exactly"
+        );
+    }
+
     #[test]
     fn test_freeze_and_unfreeze_pair_succeeds_and_emits_events() {
-        let (env, client, token_a, token_b, _, _, signers) = setup_env();
+        let (env, client, token_a, token_b, factory_address, fee_to_setter, _) = setup_env();
         let pair_addr = client.create_pair(&token_a, &token_b);
 
-        let s1 = signers.get(0).unwrap();
-        let s2 = signers.get(1).unwrap();
-        let auth_signers = Vec::from_array(&env, [s1, s2]);
-
         assert!(!client.is_pair_frozen(&pair_addr));
 
-        client.freeze_pair(&auth_signers, &pair_addr);
-        assert_eq!(env.events().all().events().len(), 1, "freeze_pair must emit frozen event");
+        client.freeze_pair(&pair_addr);
+        assert_pair_freeze_event(
+            &env,
+            &factory_address,
+            &pair_addr,
+            &fee_to_setter,
+            "pair_frozen_event",
+        );
         assert!(client.is_pair_frozen(&pair_addr));
 
-        client.unfreeze_pair(&auth_signers, &pair_addr);
-        assert_eq!(env.events().all().events().len(), 1, "unfreeze_pair must emit unfrozen event");
+        client.unfreeze_pair(&pair_addr);
+        assert_pair_freeze_event(
+            &env,
+            &factory_address,
+            &pair_addr,
+            &fee_to_setter,
+            "pair_unfrozen_event",
+        );
         assert!(!client.is_pair_frozen(&pair_addr));
+    }
+
+    /// The freeze is bound to the `fee_to_setter`: installing only that
+    /// address's authorization is enough for the call to succeed, which is
+    /// what makes it a single-signer incident lever rather than a multisig.
+    #[test]
+    fn test_freeze_pair_is_authorized_by_the_fee_to_setter() {
+        let (env, client, token_a, token_b, factory_address, setter, _) = setup_env();
+        let pair_addr = client.create_pair(&token_a, &token_b);
+
+        coralswap_shared::test_support::allow(
+            &env,
+            &setter,
+            &factory_address,
+            "freeze_pair",
+            coralswap_shared::auth_args!(&env, pair_addr.clone()),
+        );
+        client.freeze_pair(&pair_addr);
+        coralswap_shared::test_support::assert_authorized(
+            &env,
+            &setter,
+            &factory_address,
+            "freeze_pair",
+            coralswap_shared::auth_args!(&env, pair_addr.clone()),
+        );
+        assert!(client.is_pair_frozen(&pair_addr));
+    }
+
+    #[test]
+    fn test_freeze_pair_rejects_a_non_admin() {
+        let (env, client, token_a, token_b, factory_address, _, _) = setup_env();
+        let pair_addr = client.create_pair(&token_a, &token_b);
+        let stranger = Address::generate(&env);
+
+        // Only the stranger's authorization is installed, so the contract's
+        // `fee_to_setter.require_auth()` must reject the call.
+        coralswap_shared::test_support::allow(
+            &env,
+            &stranger,
+            &factory_address,
+            "freeze_pair",
+            coralswap_shared::auth_args!(&env, pair_addr.clone()),
+        );
+
+        assert!(client.try_freeze_pair(&pair_addr).is_err(), "a non-admin must not freeze a pair");
+        assert!(!client.is_pair_frozen(&pair_addr), "state must be unchanged");
+    }
+
+    #[test]
+    fn test_unfreeze_pair_rejects_a_non_admin() {
+        let (env, client, token_a, token_b, factory_address, _, _) = setup_env();
+        let pair_addr = client.create_pair(&token_a, &token_b);
+        client.freeze_pair(&pair_addr);
+
+        let stranger = Address::generate(&env);
+        coralswap_shared::test_support::allow(
+            &env,
+            &stranger,
+            &factory_address,
+            "unfreeze_pair",
+            coralswap_shared::auth_args!(&env, pair_addr.clone()),
+        );
+
+        assert!(client.try_unfreeze_pair(&pair_addr).is_err(), "a non-admin must not unfreeze");
+        assert!(client.is_pair_frozen(&pair_addr), "state must be unchanged");
+    }
+
+    /// Freezing an address that is not one of this factory's pools is refused
+    /// before anything is invoked on it, so the admin cannot point the relay
+    /// at an arbitrary contract.
+    #[test]
+    fn test_freeze_pair_rejects_an_address_that_is_not_a_pair() {
+        let (env, client, _, _, factory_address, setter, _) = setup_env();
+        let not_a_pair = Address::generate(&env);
+
+        coralswap_shared::test_support::allow(
+            &env,
+            &setter,
+            &factory_address,
+            "freeze_pair",
+            coralswap_shared::auth_args!(&env, not_a_pair.clone()),
+        );
+
+        assert!(client.try_freeze_pair(&not_a_pair).is_err());
+        assert!(!client.is_pair_frozen(&not_a_pair));
     }
 
     #[test]
