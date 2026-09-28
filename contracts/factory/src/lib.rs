@@ -63,6 +63,7 @@ impl Factory {
         env: Env,
         signers: Vec<Address>,
         pair_wasm_hash: BytesN<32>,
+        concentrated_pair_wasm_hash: BytesN<32>,
         lp_token_wasm_hash: BytesN<32>,
         fee_to_setter: Address,
     ) -> Result<(), FactoryError> {
@@ -80,6 +81,7 @@ impl Factory {
         let factory_storage = FactoryStorage {
             signers,
             pair_wasm_hash,
+            concentrated_pair_wasm_hash,
             lp_token_wasm_hash,
             pair_count: 0,
             protocol_version: coralswap_shared::PROTOCOL_VERSION,
@@ -637,6 +639,13 @@ impl Factory {
     pub fn get_pair_wasm_hash(env: Env) -> Result<BytesN<32>, FactoryError> {
         storage::get_factory_storage(&env)
             .map(|s| s.pair_wasm_hash)
+            .ok_or(FactoryError::NotInitialized)
+    }
+
+    /// Returns the WASM hash new concentrated-pair contracts are deployed from.
+    pub fn get_concentrated_pair_wasm_hash(env: Env) -> Result<BytesN<32>, FactoryError> {
+        storage::get_factory_storage(&env)
+            .map(|s| s.concentrated_pair_wasm_hash)
             .ok_or(FactoryError::NotInitialized)
     }
 
