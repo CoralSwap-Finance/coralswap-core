@@ -23,6 +23,8 @@ enum name (the enum itself already scopes them).
 | `InsufficientLiquidity` / `InsufficientInputAmount` / `InsufficientOutputAmount` | AMM amount conditions | Pair, Router |
 | `SlippageExceeded`  | output/input outside the user's tolerance                      | Pair, Router |
 | `DustAmount`        | below the shared minimum-reserve floor (issue #393)            | Pair, Router |
+| `ContractFrozen`    | this contract's trading is halted by an incident-response freeze | Pair |
+| `PairFreezeFailed`  | freeze/unfreeze call into the pair contract failed             | Factory |
 
 Rules:
 
@@ -74,6 +76,7 @@ Rules:
 | Factory  | `fee_upd`                  | protocol fee updated    |
 | Factory  | `pair_fee`                 | per-pair fee override   |
 | Factory  | `protocol_fee_collected`   | protocol fee swept      |
+| Factory  | `pair_frozen_event` / `pair_unfrozen_event` | per-pair freeze state |
 | Pair     | `swap` / `mint` / `burn` / `sync` | core AMM events   |
 | Pair     | `burn_ss` / `mint_ss`      | single-side burn / mint |
 | Pair     | `rwd_added` / `rwd_rate` / `rwd_claim` | reward module |
