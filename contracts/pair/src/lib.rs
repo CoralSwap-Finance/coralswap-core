@@ -831,6 +831,9 @@ impl Pair {
     // ─────────────────────────────────────────
 
     /// Syncs reserves to actual token balances and updates the oracle timestamp.
+    ///
+    /// Call after an unsolicited token transfer when the caller wants the
+    /// donation recognized as reserves before the next swap.
     pub fn sync(env: Env) -> Result<(), PairError> {
         let _guard = reentrancy::ReentrancyGuard::acquire(&env)?;
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
@@ -908,6 +911,10 @@ impl Pair {
             TokenClient::new(env, &pair.token_b).transfer(&contract_address, to, &amount_b_out);
         }
 
+        // Token transfers made before this call are counted as swap input,
+        // including unsolicited donations. Such a donation can relax the
+        // fee-adjusted K check only by its own input amount; it does not bypass
+        // the invariant. Call sync() first to recognize it as reserves instead.
         let balance_a = TokenClient::new(env, &pair.token_a).balance(&contract_address);
 
         let balance_b = TokenClient::new(env, &pair.token_b).balance(&contract_address);

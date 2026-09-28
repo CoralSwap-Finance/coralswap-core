@@ -59,7 +59,7 @@ impl Ctx {
         let recipient = Address::generate(&env);
 
         let factory = FactoryClient::new(&env, &factory_id);
-        factory.initialize(&signers, &empty_wasm, &empty_wasm, &setter);
+        factory.initialize(&signers, &empty_wasm, &empty_wasm, &empty_wasm, &setter);
 
         Self { env, factory, factory_id, setter, stranger, pair, token, recipient }
     }

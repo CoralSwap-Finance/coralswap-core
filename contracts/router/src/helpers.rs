@@ -202,8 +202,20 @@ pub fn get_pair_reserves_and_fee(
     token_out: &Address,
 ) -> Result<(i128, i128, u32), RouterError> {
     let pair_client = PairClient::new(env, pair);
-    let (reserve_a, reserve_b, _) = pair_client.get_reserves();
-    let fee_bps = pair_client.get_current_fee_bps();
+    let (reserve_a, reserve_b, _) = pair_client
+        .try_get_reserves()
+        .map_err(|_| RouterError::PairNotFound)?
+        .map_err(|_| RouterError::PairNotFound)?;
+    if reserve_a <= 0 || reserve_b <= 0 || reserve_a.checked_mul(reserve_b).is_none() {
+        return Err(RouterError::InsufficientLiquidity);
+    }
+    let fee_bps = pair_client
+        .try_get_current_fee_bps()
+        .map_err(|_| RouterError::PairNotFound)?
+        .map_err(|_| RouterError::PairNotFound)?;
+    if fee_bps == 0 || fee_bps > 100 {
+        return Err(RouterError::PairNotFound);
+    }
 
     let (token_0, _) = sort_tokens(token_in, token_out)?;
     if *token_in == token_0 {
