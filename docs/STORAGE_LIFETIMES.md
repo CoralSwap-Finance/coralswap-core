@@ -63,7 +63,7 @@ and simply return `None` / defaults if storage is gone.
 | Entry | Type | Written by | Refresh point |
 |---|---|---|---|
 | balances (`Balance(owner)`) | **persistent** | `mint`, `burn`, `transfer` | every write (`LP_PERSISTENT_THRESHOLD`/`EXTEND_TO`) — balances MUST survive idle wallets |
-| allowances (`Allowance(from, spender)`) | **persistent** | `approve` | `approve` (extended to the requested expiration ledger) |
+| allowances (`Allowance(from, spender)`) | **persistent** | `approve`, `spend_allowance` (via `transfer_from`, `burn_from`) | `approve` and **every allowance spend** — the remaining entry is re-extended to the declared expiration ledger, so a partial spend cannot leave storage expiring before the allowance's deadline |
 | permit nonces | **persistent** | `permit` | `permit` |
 | admin / metadata / pause config | instance | `initialize`, admin setters | write paths |
 
