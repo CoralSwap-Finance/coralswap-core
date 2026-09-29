@@ -1068,6 +1068,8 @@ impl Pair {
         PairEvents::swap(
             env,
             to,
+            &pair.token_a,
+            &pair.token_b,
             amount_a_in,
             amount_b_in,
             amount_a_out,
