@@ -1,0 +1,61 @@
+name: Coverage
+
+# Measures line coverage of the workspace with cargo-llvm-cov and enforces the
+# per-member floors recorded in coverage.toml. A PR that lands below its floor
+# fails this workflow with a report in the job summary and as annotations;
+# uncovered-but-justified regions must be allowlisted in coverage.toml with a
+# reason and an `# expires:` date that the gate enforces.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  coverage:
+    name: Coverage floor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+          targets: wasm32v1-none
+          components: llvm-tools-preview
+
+      # Separate cache bucket: coverage builds with `-C instrument-coverage`
+      # into target/llvm-cov-target, which must not thrash the regular
+      # check job's target/debug cache.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: coverage
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Enforce coverage floors
+        run: ./scripts/check-coverage.sh
+        env:
+          COVERAGE_HTML: "1"
+
+      # Keep the LCOV report and the browsable HTML around even when the gate
+      # rejects the PR, so reviewers can see exactly which lines are missing.
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            target/llvm-cov/coverage.lcov
+            target/llvm-cov/html
+          if-no-files-found: ignore
+          retention-days: 14
