@@ -14,6 +14,7 @@ pub trait FactoryInterface {
 #[allow(dead_code)]
 pub trait PairInterface {
     fn burn(env: Env, to: Address) -> (i128, i128);
+    fn deposit_lp(env: Env, from: Address, amount: i128);
     fn mint(env: Env, to: Address) -> i128;
     fn lp_token(env: Env) -> Address;
     fn swap(env: Env, amount_a_out: i128, amount_b_out: i128, to: Address);

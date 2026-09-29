@@ -300,17 +300,9 @@ impl Factory {
     pub fn pause(env: Env, signers: Vec<Address>) -> Result<(), FactoryError> {
         let mut storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
 
-        // Require a majority (threshold = ceil(n/2)) of the registered signers.
-        let threshold = storage.signers.len().div_ceil(2);
-        governance::verify_multisig(&env, &signers, threshold)?;
-
-        // Require that at least one of the (already auth-verified) provided
-        // signers is a registered signer. `verify_multisig` already called
-        // `require_auth()` on every provided signer above, so this is a
-        // membership check only — a second `require_auth()` on the same
-        // address here would be a redundant re-authorization within the same
-        // call frame, which soroban-sdk rejects.
-        signers.iter().find(|s| storage.signers.contains(s)).ok_or(FactoryError::Unauthorized)?;
+        // Require a strict majority (`> n/2`) of the registered signers; see
+        // `governance::quorum_threshold`.
+        governance::verify_multisig(&env, &storage.signers, &signers)?;
 
         storage.paused = true;
         storage::set_factory_storage(&env, &storage);
@@ -322,12 +314,7 @@ impl Factory {
     pub fn unpause(env: Env, signers: Vec<Address>) -> Result<(), FactoryError> {
         let mut storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
 
-        let threshold = storage.signers.len().div_ceil(2);
-        governance::verify_multisig(&env, &signers, threshold)?;
-
-        // See the matching comment in `pause()` — membership check only,
-        // `verify_multisig` already required auth from every provided signer.
-        signers.iter().find(|s| storage.signers.contains(s)).ok_or(FactoryError::Unauthorized)?;
+        governance::verify_multisig(&env, &storage.signers, &signers)?;
 
         storage.paused = false;
         storage::set_factory_storage(&env, &storage);
@@ -356,9 +343,7 @@ impl Factory {
     /// Freezes an individual pair, preventing operations on that specific pair.
     pub fn freeze_pair(env: Env, signers: Vec<Address>, pair: Address) -> Result<(), FactoryError> {
         let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
-        let threshold = storage.signers.len().div_ceil(2);
-        governance::verify_multisig(&env, &signers, threshold)?;
-        signers.iter().find(|s| storage.signers.contains(s)).ok_or(FactoryError::Unauthorized)?;
+        governance::verify_multisig(&env, &storage.signers, &signers)?;
 
         storage::set_pair_frozen(&env, &pair, true);
         storage::extend_instance_ttl(&env);
@@ -373,9 +358,7 @@ impl Factory {
         pair: Address,
     ) -> Result<(), FactoryError> {
         let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
-        let threshold = storage.signers.len().div_ceil(2);
-        governance::verify_multisig(&env, &signers, threshold)?;
-        signers.iter().find(|s| storage.signers.contains(s)).ok_or(FactoryError::Unauthorized)?;
+        governance::verify_multisig(&env, &storage.signers, &signers)?;
 
         storage::set_pair_frozen(&env, &pair, false);
         storage::extend_instance_ttl(&env);
@@ -651,7 +634,7 @@ impl Factory {
         storage::get_factory_storage(&env).map(|s| s.paused).unwrap_or(false)
     }
 
-    /// Proposes a WASM upgrade. Gated by multisig (threshold = ceil(n/2)).
+    /// Proposes a WASM upgrade. Gated by multisig (strict majority, `> n/2`).
     pub fn propose_upgrade(
         env: Env,
         signers: Vec<Address>,
@@ -659,8 +642,7 @@ impl Factory {
     ) -> Result<(), FactoryError> {
         let factory_storage =
             storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
-        let threshold = factory_storage.signers.len().div_ceil(2);
-        governance::verify_multisig(&env, &signers, threshold)?;
+        governance::verify_multisig(&env, &factory_storage.signers, &signers)?;
         upgrade::propose_upgrade(&env, new_wasm_hash)?;
         storage::extend_instance_ttl(&env);
         Ok(())
@@ -677,8 +659,7 @@ impl Factory {
     pub fn cancel_upgrade(env: Env, signers: Vec<Address>) -> Result<(), FactoryError> {
         let factory_storage =
             storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
-        let threshold = factory_storage.signers.len().div_ceil(2);
-        governance::verify_multisig(&env, &signers, threshold)?;
+        governance::verify_multisig(&env, &factory_storage.signers, &signers)?;
         upgrade::cancel_upgrade(&env)?;
         storage::extend_instance_ttl(&env);
         Ok(())

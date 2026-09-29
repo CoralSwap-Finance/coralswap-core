@@ -27,8 +27,9 @@ use soroban_sdk::{
     Address, Bytes, Env, Symbol,
 };
 use storage::{
-    get_fee_state, get_lp_token_paused, get_pair_state, set_fee_state, set_lp_token_paused,
-    set_pair_state, set_reentrancy_guard, FeeState, ReentrancyGuard,
+    get_fee_state, get_lp_token_paused, get_pair_state, get_pending_lp, get_pending_lp_total,
+    set_fee_state, set_lp_token_paused, set_pair_state, set_pending_lp, set_pending_lp_total,
+    set_reentrancy_guard, FeeState, ReentrancyGuard,
 };
 
 /// Error surface of the LP-token client declared above.
@@ -487,6 +488,70 @@ impl Pair {
     // Burn
     // ─────────────────────────────────────────
 
+    /// Moves `amount` LP tokens from `from` into the pair and attributes them to
+    /// `from`, ready for a later [`Pair::burn`] by the same address.
+    ///
+    /// This is the concurrency-safe way to stage a withdrawal (issue #363):
+    /// because the LP is *attributed*, another user's `burn` — or a second
+    /// deposit that lands between this call and the caller's own `burn` — can
+    /// never consume it. A bare LP `transfer` to the pair carries no owner
+    /// information, so it cannot be protected this way.
+    ///
+    /// Requires authorization from `from`. Multiple deposits accumulate.
+    ///
+    /// # Errors
+    /// `InvalidInput` for a non-positive `amount` or `from` being the pair
+    /// itself (which would let the locked seed be re-attributed);
+    /// `LpTokenPaused` while the LP token is paused; `Locked` on reentrancy.
+    pub fn deposit_lp(env: Env, from: Address, amount: i128) -> Result<(), PairError> {
+        from.require_auth();
+
+        let _guard = reentrancy::ReentrancyGuard::acquire(&env)?;
+
+        let state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+        let contract = env.current_contract_address();
+
+        ensure_lp_token_not_paused(&env)?;
+
+        if amount <= 0 || from == contract {
+            return Err(PairError::InvalidInput);
+        }
+
+        TokenClient::new(&env, &state.lp_token).transfer(&from, &contract, &amount);
+
+        let pending = get_pending_lp(&env, &from).checked_add(amount).ok_or(PairError::Overflow)?;
+        let total = get_pending_lp_total(&env).checked_add(amount).ok_or(PairError::Overflow)?;
+        set_pending_lp(&env, &from, pending);
+        set_pending_lp_total(&env, total);
+        Self::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// LP tokens `who` has staged via [`Pair::deposit_lp`] and not yet burned.
+    pub fn pending_lp(env: Env, who: Address) -> i128 {
+        get_pending_lp(&env, &who)
+    }
+
+    /// Burns LP tokens held by the pair on behalf of `to` and pays out the
+    /// underlying reserves to `to`.
+    ///
+    /// # LP attribution (issue #363)
+    ///
+    /// The pair holds LP that does not belong to `to`: the permanent
+    /// `MINIMUM_LIQUIDITY` seed, and any LP other users have staged for their own
+    /// burn. Only LP attributable to the caller is redeemed:
+    ///
+    /// 1. If `to` has staged LP via [`Pair::deposit_lp`], exactly that amount is
+    ///    burned and nothing else.
+    /// 2. Otherwise (a raw LP `transfer` to the pair, as UniswapV2 does) the
+    ///    *unattributed* remainder is burned:
+    ///    `balance - MINIMUM_LIQUIDITY - total staged by everyone`. Raw
+    ///    transfers carry no owner, so the first caller claims them; use
+    ///    `deposit_lp` (as the router does) whenever more than one withdrawal
+    ///    may be in flight.
+    ///
+    /// The seed and other users' staged LP are never touched.
     pub fn burn(env: Env, to: Address) -> Result<(i128, i128), PairError> {
         to.require_auth();
 
@@ -516,9 +581,16 @@ impl Pair {
             return Err(PairError::InsufficientLiquidityBurned);
         }
 
-        let burn_lp = lp_balance
-            .checked_sub(MINIMUM_LIQUIDITY)
-            .ok_or(PairError::InsufficientLiquidityBurned)?;
+        let pending = get_pending_lp(&env, &to);
+        let pending_total = get_pending_lp_total(&env);
+        let burn_lp = if pending > 0 {
+            pending
+        } else {
+            lp_balance
+                .checked_sub(MINIMUM_LIQUIDITY)
+                .and_then(|v| v.checked_sub(pending_total))
+                .ok_or(PairError::InsufficientLiquidityBurned)?
+        };
 
         if burn_lp <= 0 {
             return Err(PairError::InsufficientLiquidityBurned);
@@ -546,6 +618,11 @@ impl Pair {
         }
 
         LpTokenClient::new(&env, &state.lp_token).burn(&contract, &burn_lp);
+
+        if pending > 0 {
+            set_pending_lp(&env, &to, 0);
+            set_pending_lp_total(&env, pending_total - pending);
+        }
 
         TokenClient::new(&env, &state.token_a).transfer(&contract, &to, &amount_a);
 
