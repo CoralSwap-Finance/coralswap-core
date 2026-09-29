@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+use soroban_sdk::testutils::storage::Instance as _;
+use soroban_sdk::testutils::Ledger as _;
 use soroban_sdk::{contract, contractimpl, Env};
 
 use crate::{errors::PairError, reentrancy};
@@ -393,6 +395,96 @@ fn test_mint_reentrancy_guard_prevents_attack() {
         assert!(
             matches!(reentrant_attempt, Err(PairError::Locked)),
             "Reentrant call during mint() should be blocked with Locked error"
+        );
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Guard-entry lifetime (issue #362)
+//
+// The `Guard` flag lives in instance storage. These tests pin down that a lock
+// flip always leaves the entry alive for longer than any operation can hold the
+// lock, so a held guard cannot silently vanish (fail-open) mid-operation.
+// ---------------------------------------------------------------------------
+
+fn advance_ledgers(env: &Env, by: u32) {
+    env.ledger().with_mut(|li| {
+        li.sequence_number += by;
+        li.max_entry_ttl = li.max_entry_ttl.max(1_000_000);
+    });
+}
+
+#[test]
+fn test_guard_ttl_policy_covers_any_hold_window() {
+    // The compile-time asserts in `coralswap_shared` enforce this too; the
+    // runtime form keeps the relationship visible in the test report.
+    assert!(
+        coralswap_shared::REENTRANCY_TTL_THRESHOLD >= coralswap_shared::REENTRANCY_MAX_HOLD_LEDGERS
+    );
+    assert!(coralswap_shared::REENTRANCY_TTL_EXTEND_TO >= coralswap_shared::INSTANCE_TTL_EXTEND_TO);
+}
+
+#[test]
+fn test_acquire_leaves_guard_entry_ttl_above_hold_window() {
+    let env = Env::default();
+    let contract_id = env.register(ReentrancyTest, ());
+
+    env.as_contract(&contract_id, || {
+        let _guard = reentrancy::ReentrancyGuard::acquire(&env).unwrap();
+        let ttl = env.storage().instance().get_ttl();
+        assert!(
+            ttl >= coralswap_shared::REENTRANCY_MAX_HOLD_LEDGERS,
+            "held guard must outlive the longest possible hold window, got ttl {ttl}"
+        );
+        assert!(ttl >= coralswap_shared::REENTRANCY_TTL_THRESHOLD);
+    });
+}
+
+#[test]
+fn test_release_leaves_guard_entry_ttl_above_threshold() {
+    let env = Env::default();
+    let contract_id = env.register(ReentrancyTest, ());
+
+    env.as_contract(&contract_id, || {
+        drop(reentrancy::ReentrancyGuard::acquire(&env).unwrap());
+        let ttl = env.storage().instance().get_ttl();
+        assert!(ttl >= coralswap_shared::REENTRANCY_TTL_THRESHOLD);
+    });
+}
+
+#[test]
+fn test_acquire_refreshes_a_nearly_expired_guard_entry() {
+    let env = Env::default();
+    let contract_id = env.register(ReentrancyTest, ());
+
+    env.as_contract(&contract_id, || {
+        // Establish the entry, then age it until it is about to expire.
+        drop(reentrancy::ReentrancyGuard::acquire(&env).unwrap());
+        let ttl = env.storage().instance().get_ttl();
+        advance_ledgers(&env, ttl - 10);
+        assert!(env.storage().instance().get_ttl() <= 10);
+
+        // Flipping the lock must top the entry back up before it can lapse.
+        let _guard = reentrancy::ReentrancyGuard::acquire(&env).unwrap();
+        assert!(
+            env.storage().instance().get_ttl() >= coralswap_shared::REENTRANCY_MAX_HOLD_LEDGERS
+        );
+    });
+}
+
+#[test]
+fn test_held_guard_stays_locked_across_ledgers() {
+    let env = Env::default();
+    let contract_id = env.register(ReentrancyTest, ());
+
+    env.as_contract(&contract_id, || {
+        let _guard = reentrancy::ReentrancyGuard::acquire(&env).unwrap();
+
+        // Far longer than any real invocation: the lock must still read as held.
+        advance_ledgers(&env, coralswap_shared::REENTRANCY_MAX_HOLD_LEDGERS);
+        assert!(
+            matches!(reentrancy::ReentrancyGuard::acquire(&env), Err(PairError::Locked)),
+            "a held guard must not vanish while ledgers advance"
         );
     });
 }

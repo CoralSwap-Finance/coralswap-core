@@ -44,6 +44,7 @@ mod integration_tests {
             amount_b_min: i128,
             to: Address,
             deadline: u64,
+            deadline_ledger: Option<u32>,
         ) -> (i128, i128, i128);
         fn remove_liquidity(
             env: Env,
@@ -54,6 +55,7 @@ mod integration_tests {
             amount_b_min: i128,
             to: Address,
             deadline: u64,
+            deadline_ledger: Option<u32>,
         ) -> (i128, i128);
     }
 
@@ -144,6 +146,7 @@ mod integration_tests {
         let deadline = env.ledger().timestamp() + 100;
         let (amount_a, amount_b, liquidity) = router_client.add_liquidity(
             &token_a, &token_b, &deposit_a, &deposit_b, &deposit_a, &deposit_b, &user, &deadline,
+            &None,
         );
 
         assert_eq!(amount_a, deposit_a);
@@ -180,7 +183,7 @@ mod integration_tests {
         assert!(new_k >= previous_k, "k invariant must be preserved after fee-adjusted swap");
 
         let (returned_a, returned_b) = router_client
-            .remove_liquidity(&token_a, &token_b, &liquidity, &0, &0, &user, &deadline);
+            .remove_liquidity(&token_a, &token_b, &liquidity, &0, &0, &user, &deadline, &None);
 
         assert!(returned_a > 0, "remove_liquidity must return token_a");
         assert!(returned_b > 0, "remove_liquidity must return token_b");

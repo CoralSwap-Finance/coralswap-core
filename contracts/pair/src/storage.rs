@@ -96,6 +96,11 @@ pub enum DataKey {
     /// `Pair::set_lp_token_paused` so the mint/burn/swap hot path can produce a
     /// typed `PairError::LpTokenPaused` without a nested call per call.
     LpTokenPaused,
+    /// LP tokens `Address` has deposited into the pair via `deposit_lp` and
+    /// not yet burned (persistent; issue #363).
+    PendingLp(Address),
+    /// Sum of every outstanding `PendingLp` entry (instance; issue #363).
+    PendingLpTotal,
 }
 
 // ---------------------------------------------------------------------------
@@ -193,4 +198,42 @@ pub fn get_protocol_fee_state(env: &Env) -> ProtocolFeeState {
 #[allow(dead_code)]
 pub fn set_protocol_fee_state(env: &Env, state: &ProtocolFeeState) {
     env.storage().instance().set(&DataKey::ProtocolFeeState, state);
+}
+
+// ---------------------------------------------------------------------------
+// Per-caller pending LP accounting (issue #363)
+// ---------------------------------------------------------------------------
+//
+// `burn` used to redeem the pair's *entire* LP balance, so LP that one user had
+// transferred in for a later `burn` could be consumed by whoever called `burn`
+// first. Deposits made through `Pair::deposit_lp` are instead attributed to the
+// depositor here, and `burn` redeems only the caller's attributed amount.
+
+/// LP tokens attributed to `who` and awaiting `burn`.
+pub fn get_pending_lp(env: &Env, who: &Address) -> i128 {
+    env.storage().persistent().get(&DataKey::PendingLp(who.clone())).unwrap_or(0)
+}
+
+/// Sets `who`'s pending LP, dropping the entry when it reaches zero.
+pub fn set_pending_lp(env: &Env, who: &Address, amount: i128) {
+    let key = DataKey::PendingLp(who.clone());
+    if amount == 0 {
+        env.storage().persistent().remove(&key);
+    } else {
+        env.storage().persistent().set(&key, &amount);
+        env.storage().persistent().extend_ttl(
+            &key,
+            coralswap_shared::LP_PERSISTENT_THRESHOLD,
+            coralswap_shared::LP_PERSISTENT_EXTEND_TO,
+        );
+    }
+}
+
+/// Total LP attributed to some depositor and awaiting `burn`.
+pub fn get_pending_lp_total(env: &Env) -> i128 {
+    env.storage().instance().get(&DataKey::PendingLpTotal).unwrap_or(0)
+}
+
+pub fn set_pending_lp_total(env: &Env, amount: i128) {
+    env.storage().instance().set(&DataKey::PendingLpTotal, &amount);
 }

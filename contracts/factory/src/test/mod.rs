@@ -1,4 +1,5 @@
 mod auth_matrix;
+mod governance;
 
 use soroban_sdk::Env;
 

@@ -56,6 +56,34 @@ fn compute_swap_hash(
     env.crypto().sha256(&data).into()
 }
 
+/// Rejects the call if either deadline has passed (issue #365).
+///
+/// * `deadline` — Unix timestamp (seconds); the call fails once
+///   `ledger.timestamp() > deadline`. Pass `u64::MAX` for "no timestamp bound".
+/// * `deadline_ledger` — optional ledger sequence number; the call fails once
+///   `ledger.sequence() > deadline_ledger`. `None` means "no ledger bound", so
+///   existing callers keep their behaviour by passing `None`.
+///
+/// Both bounds are checked up front, before the first hop touches any pair or
+/// token. A Soroban invocation executes inside a single ledger, so the ledger
+/// and timestamp cannot advance between hops: one check at the first hop is
+/// exactly equivalent to checking every intermediate hop.
+fn check_deadline(
+    env: &Env,
+    deadline: u64,
+    deadline_ledger: Option<u32>,
+) -> Result<(), RouterError> {
+    if deadline < env.ledger().timestamp() {
+        return Err(RouterError::Expired);
+    }
+    if let Some(limit) = deadline_ledger {
+        if env.ledger().sequence() > limit {
+            return Err(RouterError::Expired);
+        }
+    }
+    Ok(())
+}
+
 #[contract]
 pub struct Router;
 
@@ -233,10 +261,9 @@ impl Router {
         amount_out_min: i128,
         to: Address,
         deadline: u64,
+        deadline_ledger: Option<u32>,
     ) -> Result<i128, RouterError> {
-        if deadline < env.ledger().timestamp() {
-            return Err(RouterError::Expired);
-        }
+        check_deadline(&env, deadline, deadline_ledger)?;
         if amount_in <= 0 {
             return Err(RouterError::ZeroAmount);
         }
@@ -297,6 +324,7 @@ impl Router {
         path: Vec<Address>,
         to: Address,
         deadline: u64,
+        deadline_ledger: Option<u32>,
     ) -> Result<Vec<i128>, RouterError> {
         let final_out = Self::swap_exact_tokens_multi_hop(
             env.clone(),
@@ -305,6 +333,7 @@ impl Router {
             amount_out_min,
             to,
             deadline,
+            deadline_ledger,
         )?;
         let mut amounts = Vec::new(&env);
         amounts.push_back(final_out);
@@ -320,10 +349,9 @@ impl Router {
         path: Vec<Address>,
         to: Address,
         deadline: u64,
+        deadline_ledger: Option<u32>,
     ) -> Result<Vec<i128>, RouterError> {
-        if deadline < env.ledger().timestamp() {
-            return Err(RouterError::Expired);
-        }
+        check_deadline(&env, deadline, deadline_ledger)?;
         if amount_out <= 0 {
             return Err(RouterError::ZeroAmount);
         }
@@ -406,6 +434,8 @@ impl Router {
     /// * `amount_b_min` - Minimum amount of token_b to add
     /// * `to` - Recipient of LP tokens
     /// * `deadline` - Unix timestamp after which the transaction will revert
+    /// * `deadline_ledger` - Optional ledger sequence after which the transaction will
+    ///   revert; `None` disables the ledger bound (see `check_deadline`)
     pub fn add_liquidity(
         env: Env,
         token_a: Address,
@@ -416,11 +446,9 @@ impl Router {
         amount_b_min: i128,
         to: Address,
         deadline: u64,
+        deadline_ledger: Option<u32>,
     ) -> Result<(i128, i128, i128), RouterError> {
-        // Check deadline
-        if deadline < env.ledger().timestamp() {
-            return Err(RouterError::Expired);
-        }
+        check_deadline(&env, deadline, deadline_ledger)?;
 
         // Validate inputs: reject zero desired amounts
         if amount_a_desired <= 0 || amount_b_desired <= 0 {
@@ -633,7 +661,7 @@ impl Router {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
 
         let (path, _) = Self::get_best_path(env.clone(), token_in, token_out, amount_in)?;
-        Self::swap_exact_tokens_multi_hop(env, path, amount_in, min_out, sender, u64::MAX)
+        Self::swap_exact_tokens_multi_hop(env, path, amount_in, min_out, sender, u64::MAX, None)
     }
 
     /// Removes liquidity from a token pair (not yet implemented).
@@ -646,6 +674,8 @@ impl Router {
     /// * `amount_b_min` - Minimum amount of token_b to receive
     /// * `to` - Recipient of underlying tokens
     /// * `deadline` - Unix timestamp after which the transaction will revert
+    /// * `deadline_ledger` - Optional ledger sequence after which the transaction will
+    ///   revert; `None` disables the ledger bound (see `check_deadline`)
     pub fn remove_liquidity(
         env: Env,
         token_a: Address,
@@ -655,11 +685,9 @@ impl Router {
         amount_b_min: i128,
         to: Address,
         deadline: u64,
+        deadline_ledger: Option<u32>,
     ) -> Result<(i128, i128), RouterError> {
-        // Check deadline
-        if deadline < env.ledger().timestamp() {
-            return Err(RouterError::Expired);
-        }
+        check_deadline(&env, deadline, deadline_ledger)?;
 
         // Check for non-zero liquidity
         if liquidity <= 0 {
@@ -680,15 +708,13 @@ impl Router {
         // Get pair contract client
         let pair_client = PairClient::new(&env, &pair_address);
 
-        // Get LP token address from pair
-        let lp_token_address = pair_client.lp_token();
-
         // The user must provide authorization for the Router to transfer LP tokens
         to.require_auth();
 
-        // Transfer LP tokens from 'to' to pair
-        let lp_token_client = TokenClient::new(&env, &lp_token_address);
-        lp_token_client.transfer(&to, &pair_address, &liquidity);
+        // Stage the LP with the pair, attributed to `to` (issue #363). The pair
+        // burns exactly this amount for `to`, so a concurrent withdrawal by
+        // another user can never consume it (and vice versa).
+        pair_client.deposit_lp(&to, &liquidity);
 
         // Call Pair::burn(to) - this will burn LP tokens from the pair and transfer underlying tokens
         let (amount_a, amount_b) = pair_client.burn(&to);
