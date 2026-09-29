@@ -1,4 +1,5 @@
 use crate::errors::RouterError;
+use ethnum::U256;
 use soroban_sdk::{contractclient, Address, Env, Vec};
 
 #[contractclient(name = "FactoryClient")]
@@ -73,8 +74,12 @@ pub fn get_amount_out(
 /// Computes input amount required for an exact output swap.
 ///
 /// Formula:
-/// amount_in = (reserve_in * amount_out * 10000)
-///             / ((reserve_out - amount_out) * (10000 - fee_bps)) + 1
+/// amount_in = ceil((reserve_in * amount_out * 10000)
+///               / ((reserve_out - amount_out) * (10000 - fee_bps)))
+///
+/// The ceiling is deliberate: the router must overfund by at most one unit,
+/// never underfund an exact-output swap. `U256` keeps the intermediate product
+/// exact when reserves are large even though the returned amount is `i128`.
 #[allow(dead_code)]
 pub fn get_amount_in(
     _env: &Env,
@@ -90,17 +95,14 @@ pub fn get_amount_in(
         return Err(RouterError::InsufficientLiquidity);
     }
 
-    let numerator = reserve_in
-        .checked_mul(amount_out)
-        .ok_or(RouterError::InsufficientLiquidity)?
-        .checked_mul(10000)
-        .ok_or(RouterError::InsufficientLiquidity)?;
-
-    let denominator = (reserve_out - amount_out)
-        .checked_mul(10000 - fee_bps as i128)
-        .ok_or(RouterError::InsufficientLiquidity)?;
-
-    Ok((numerator / denominator) + 1)
+    let numerator =
+        U256::from(reserve_in as u128) * U256::from(amount_out as u128) * U256::from(10_000u128);
+    let denominator =
+        U256::from((reserve_out - amount_out) as u128) * U256::from((10_000 - fee_bps) as u128);
+    let quotient = numerator / denominator;
+    let remainder = numerator % denominator;
+    let rounded = quotient + U256::from((remainder != U256::ZERO) as u8);
+    i128::try_from(rounded.as_u128()).map_err(|_| RouterError::InsufficientLiquidity)
 }
 
 /// Given some amount of an asset and pair reserves,
