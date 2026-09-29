@@ -32,6 +32,7 @@ times (cadence math is documented in the shared crate).
 | `PairList`, `TotalPairs` | instance | `create_pair` | `create_pair` |
 | `PendingUpgrade` | instance | `propose_upgrade`, `cancel_upgrade` | `propose_upgrade` |
 | `PairFeeOverride(pair)` | instance | `set_pair_fee` | `set_pair_fee` |
+| `PairFrozen(pair)` | instance | `freeze_pair`, `unfreeze_pair` | both (`storage::extend_instance_ttl`); entries are **removed** when unfrozen, so an unfreeze leaves no key behind |
 | `protocol_fee_balance` accumulator | instance | `deposit_protocol_fee` | `deposit_protocol_fee` |
 
 Lifetime guarantee: instance entries are extended to ≥ 30 days on every
@@ -47,6 +48,7 @@ and simply return `None` / defaults if storage is gone.
 | `ProtocolFeeA` / `ProtocolFeeB` accumulators | instance | `swap` (when protocol fee is active) | `swap` |
 | fee-state / dynamic-fee accumulators | instance | `sync`, `swap` | `sync` |
 | reentrancy lock flag | instance | `flash_loan` guard flip | `extend_reentrancy_ttl` at flip time (5_000-ledger window is intentional — the lock must die quickly) |
+| `Frozen` flag | instance | `set_frozen` (factory contract only) | `set_frozen` (`extend_instance_ttl`); the incident-response halt, cleared by an unfreeze |
 | oracle observations | instance | oracle update paths | same write |
 
 ### Router (all instance storage)
@@ -61,7 +63,7 @@ and simply return `None` / defaults if storage is gone.
 | Entry | Type | Written by | Refresh point |
 |---|---|---|---|
 | balances (`Balance(owner)`) | **persistent** | `mint`, `burn`, `transfer` | every write (`LP_PERSISTENT_THRESHOLD`/`EXTEND_TO`) — balances MUST survive idle wallets |
-| allowances (`Allowance(from, spender)`) | **persistent** | `approve` | `approve` (extended to the requested expiration ledger) |
+| allowances (`Allowance(from, spender)`) | **persistent** | `approve`, `spend_allowance` (via `transfer_from`, `burn_from`) | `approve` and **every allowance spend** — the remaining entry is re-extended to the declared expiration ledger, so a partial spend cannot leave storage expiring before the allowance's deadline |
 | permit nonces | **persistent** | `permit` | `permit` |
 | admin / metadata / pause config | instance | `initialize`, admin setters | write paths |
 

@@ -1,0 +1,113 @@
+# CoralSwap coverage policy — enforced on every PR by scripts/check-coverage.sh
+# (see .github/workflows/coverage.yml).
+#
+# Metric: line coverage of workspace *production* sources, exported by
+# `cargo llvm-cov --lcov` after running the whole test suite. cargo-llvm-cov
+# already ignores top-level `tests/`, `examples/` and `benches/` harness code;
+# the `measurement.exclude` globs below additionally drop in-crate test modules
+# and dev-only helpers so the number tracks shipped contract code.
+#
+# Every workspace member must appear exactly once:
+#   * in [floors]        — a minimum line-coverage percentage the gate enforces
+#   * or in [no_floor.*] — a documented reason why it cannot have a floor
+# The gate fails on unknown/stale entries, so nothing escapes the floor silently.
+
+[measurement]
+# Globs matched against the repo-relative and member-relative source path.
+# Files matching any glob are removed from both numerator and denominator.
+exclude = [
+    "src/test/*",
+    "*/src/test/*",
+    "src/test_support.rs",
+    "*/src/test_support.rs",
+]
+
+[floors]
+# Floors sit just below the coverage measured when this policy was introduced
+# (2026-09-28, after exemptions are applied):
+#
+#   factory 92.09   lp-token 80.29   malicious 100.00   mock 88.37
+#   pair 89.70      router 62.19     shared 94.34
+#
+# The 1-2 pp slack absorbs ordinary refactors; a PR that adds uncovered
+# production code — or drops tests from a high-risk area (flash loan,
+# single-sided mint, reentrancy guard, auth paths) — lands below the floor and
+# fails the gate.
+coralswap-factory = 91.0
+coralswap-lp-token = 79.0
+coralswap-malicious-flash-receiver = 99.0
+coralswap-mock-flash-receiver = 85.0
+coralswap-pair = 89.0
+coralswap-router = 61.0
+coralswap-shared = 92.0
+
+# Workspace members without a production-source floor. Each entry needs a
+# `reason`; the gate rejects members that are in neither table.
+[no_floor.coralswap-flash-receiver-interface]
+reason = "Trait-only crate: `FlashReceiver` declares `on_flash_loan` without a body, so the crate compiles to no executable lines of its own (the client glue is generated into the calling crates)."
+
+[no_floor.coralswap-integration-tests]
+reason = "Test harness crate. cargo-llvm-cov excludes top-level `tests/` sources from the report by design, so there is no production code to measure here; its assertions exercise the floored contract crates instead."
+
+[no_floor.coralswap-fuzz]
+reason = "Test harness crate (proptest suite behind the `fuzz` feature). Its sources live in a top-level `tests/` directory that cargo-llvm-cov excludes from coverage; the pair math it fuzzes is measured under coralswap-pair."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Allowlist: uncovered-but-justified regions.
+#
+# Each entry needs `path`, `lines` (comma separated lines/ranges, e.g.
+# "9, 23-24"), a `reason`, and a mandatory expiry comment inside the entry:
+#
+#     [[exemptions]]
+#     path = "…"
+#     lines = "…"
+#     reason = "…"
+#     # expires: YYYY-MM-DD
+#
+# The gate rejects an exemption once `today` reaches its expiry date, warns 14
+# days ahead of it, and errors out if the entry stops matching executable
+# lines (stale line numbers after a refactor). Fix the coverage, delete the
+# dead code, or re-review and move the date forward.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[exemptions]]
+path = "contracts/factory/src/events.rs"
+lines = "143-157"
+reason = "`const fn is_convention_symbol` is evaluated exclusively by the `const _: () = assert!(...)` symbol-name checks below it — it runs at compile time and can never execute on chain."
+# expires: 2027-03-31
+
+[[exemptions]]
+path = "contracts/lp_token/src/lib.rs"
+lines = "617-631"
+reason = "Same compile-time-only convention check as factory/src/events.rs: `is_convention_symbol` is only called from `const` assertions, never at runtime."
+# expires: 2027-03-31
+
+[[exemptions]]
+path = "contracts/factory/src/storage.rs"
+lines = "9, 23, 79"
+reason = "`#[contracttype]` attribute lines for storage key/metadata declarations — declarative type definitions with no executable body; coverage is attributed to the macro expansion, not to contract logic."
+# expires: 2027-03-31
+
+[[exemptions]]
+path = "contracts/lp_token/src/storage.rs"
+lines = "3, 10, 16"
+reason = "`#[contracttype]` attribute lines for `TokenMetadata` / `AllowanceEntry` / `LpTokenKey` declarations — declarative types with no executable body."
+# expires: 2027-03-31
+
+[[exemptions]]
+path = "contracts/pair/src/storage.rs"
+lines = "3, 16, 44, 64, 75, 83"
+reason = "`#[contracttype]` attribute lines for the pair's `DataKey` and value-type declarations — declarative types with no executable body."
+# expires: 2027-03-31
+
+[[exemptions]]
+path = "contracts/router/src/storage.rs"
+lines = "3, 13, 21"
+reason = "`#[contracttype]` attribute lines for router storage-key declarations — declarative types with no executable body."
+# expires: 2027-03-31
+
+[[exemptions]]
+path = "contracts/pair/src/lib.rs"
+lines = "125"
+reason = "`#[contracttype]` attribute line for the `FeeStateView` response type — declarative type with no executable body."
+# expires: 2027-03-31

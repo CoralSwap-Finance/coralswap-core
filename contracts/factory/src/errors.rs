@@ -20,4 +20,8 @@ pub enum FactoryError {
     FeeTooHigh = 14,
     InvalidFeeRecipient = 15,
     FeeDisabled = 16,
+    /// The pair could not be frozen/unfrozen: the cross-contract `set_frozen`
+    /// call on the pair failed (pair not initialized, or an older pair WASM
+    /// that does not implement the relay yet).
+    PairFreezeFailed = 17,
 }

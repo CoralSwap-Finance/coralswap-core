@@ -35,6 +35,8 @@ pub enum PairError {
     LpTokenUnavailable = 123,
     /// The LP token refused the call, e.g. the caller is not its admin.
     LpTokenRejected = 124,
+    /// This pool is frozen by the factory admin (incident response).
+    ContractFrozen = 125,
 }
 
 #[contracterror]
