@@ -169,6 +169,7 @@ impl Factory {
         storage::set_pair(&env, token_0.clone(), token_1.clone(), pair_address.clone());
         storage::set_pair(&env, token_1.clone(), token_0.clone(), pair_address.clone());
         storage::set_is_pair(&env, &pair_address, true);
+        storage::set_is_lp_token(&env, &lp_token_address, true);
 
         let pair_index = factory_storage.pair_count;
         factory_storage.pair_count += 1;
@@ -244,6 +245,11 @@ impl Factory {
     /// parsing optional address collisions (issue #391).
     pub fn is_pair(env: Env, pair: Address) -> bool {
         storage::is_pair(&env, &pair)
+    }
+
+    /// Returns true if the address is an LP token deployed by this factory.
+    pub fn is_lp_token(env: Env, token: Address) -> bool {
+        storage::is_lp_token(&env, &token)
     }
 
     /// Returns a paginated slice of pair addresses in exact storage creation order (FIFO).
@@ -430,6 +436,20 @@ impl Factory {
     /// | `InvalidFeeRecipient`   | `fee_to == None && fee_bps > 0`              |
     /// | `FeeDisabled`           | `fee_to == Some(..) && fee_bps == 0`         |
     pub fn set_fee_to(
+        env: Env,
+        setter: Address,
+        fee_to: Option<Address>,
+        fee_bps: u32,
+    ) -> Result<(), FactoryError> {
+        Self::set_fee_config(env, setter, fee_to, fee_bps)
+    }
+
+    /// Atomically updates the protocol fee recipient and rate.
+    ///
+    /// `None + 0` disables collection. Every other combination must have a
+    /// recipient and a nonzero rate, so governance cannot leave a half-enabled
+    /// configuration between separate calls.
+    pub fn set_fee_config(
         env: Env,
         setter: Address,
         fee_to: Option<Address>,

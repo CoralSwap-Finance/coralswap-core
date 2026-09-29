@@ -397,6 +397,7 @@ dependencies = [
  "coralswap-lp-token",
  "coralswap-pair",
  "coralswap-shared",
+ "ethnum",
  "soroban-sdk",
 ]
 

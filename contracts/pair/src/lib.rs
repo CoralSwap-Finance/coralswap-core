@@ -141,6 +141,28 @@ impl Pair {
             return Err(PairError::InvalidInput);
         }
 
+        // A pool token must never be a contract identity controlled by this
+        // deployment or by an existing pool from the same factory. Otherwise
+        // reserve accounting can become circular or self-referential.
+        if token_a == factory
+            || token_b == factory
+            || token_a == env.current_contract_address()
+            || token_b == env.current_contract_address()
+            || token_a == lp_token
+            || token_b == lp_token
+        {
+            return Err(PairError::InvalidInput);
+        }
+
+        let factory_client = FactoryClient::new(&env, &factory);
+        let token_is_known_contract = |token: &Address| {
+            factory_client.try_is_pair(token).is_ok_and(|result| result.unwrap_or(false))
+                || factory_client.try_is_lp_token(token).is_ok_and(|result| result.unwrap_or(false))
+        };
+        if token_is_known_contract(&token_a) || token_is_known_contract(&token_b) {
+            return Err(PairError::InvalidInput);
+        }
+
         let state = storage::PairStorage {
             factory,
             token_a,
