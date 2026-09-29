@@ -15,6 +15,7 @@
 //   sync.rs             — tests for reserve synchronization (Pair::sync)
 //   reentrancy.rs       — tests for reentrancy guard (acquire/release)
 //   pair_fee_override.rs — tests for per-pair fee override wiring (issue #132)
+//   frozen.rs           — factory-admin freeze: what it blocks and restores
 //
 // ---------------------------------------------------------------------------
 
@@ -23,6 +24,7 @@ mod burn;
 mod dynamic_fee;
 //mod events;
 mod flash_loan;
+mod frozen;
 mod initialize;
 mod lp_pause;
 mod mint;

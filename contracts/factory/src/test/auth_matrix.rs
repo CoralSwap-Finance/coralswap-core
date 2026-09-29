@@ -11,11 +11,16 @@
 //! | `set_fee_to`               | `(setter, fee_to, fee_bps)`                                   | the `fee_to_setter` |
 //! | `set_fee_to_setter`        | `(setter, new_setter)`                                        | the `fee_to_setter` |
 //! | `set_pair_fee`             | `(setter, pair, fee_bps)`                                     | the `fee_to_setter` |
+//! | `freeze_pair` / `unfreeze_pair` | `(pair)`                                                 | the `fee_to_setter` |
 //! | `deposit_protocol_fee`     | `(pair, token, amount)`                                       | the `pair`          |
 //!
 //! Each setter entry point takes the claimed setter as an explicit argument and
 //! then checks it against storage, so the authorization is bound to a specific
-//! address *and* a specific argument list. `deposit_protocol_fee` is covered
+//! address *and* a specific argument list. `freeze_pair` / `unfreeze_pair`
+//! are the exception: they take no setter argument and read it from storage,
+//! so only the rejection half belongs here — the positive half needs a real
+//! deployed pair (the relay invokes `Pair::set_frozen`) and lives in
+//! `test/mod.rs`. `deposit_protocol_fee` is covered
 //! negatively only: its authorizer is a deployed contract, and
 //! `Env::mock_auths` would overwrite that contract with its mock checker (see
 //! the pair matrix for the full explanation).
@@ -214,7 +219,39 @@ fn set_fee_to_setter_rejects_a_stranger() {
     assert_eq!(c.factory.fee_to_setter(), Some(c.setter));
 }
 
-/// A correct authorizer bound to the wrong *arguments* must not satisfy the
+/// `freeze_pair` reads its admin from storage rather than taking it as an
+/// argument, so the only way for a stranger's signature to be refused is the
+/// `fee_to_setter.require_auth()` guard itself.
+#[test]
+fn freeze_pair_rejects_a_signer_that_is_not_the_setter() {
+    let c = Ctx::new();
+
+    auth::allow(
+        &c.env,
+        &c.stranger,
+        &c.factory_id,
+        "freeze_pair",
+        auth_args!(&c.env, c.pair.clone()),
+    );
+    assert!(c.factory.try_freeze_pair(&c.pair).is_err(), "a stranger must not freeze a pair");
+    assert!(!c.factory.is_pair_frozen(&c.pair), "state must be unchanged");
+}
+
+#[test]
+fn unfreeze_pair_rejects_a_signer_that_is_not_the_setter() {
+    let c = Ctx::new();
+
+    auth::allow(
+        &c.env,
+        &c.stranger,
+        &c.factory_id,
+        "unfreeze_pair",
+        auth_args!(&c.env, c.pair.clone()),
+    );
+    assert!(c.factory.try_unfreeze_pair(&c.pair).is_err(), "a stranger must not unfreeze a pair");
+}
+
+/// A correct authorizer bound to the wrong *function* must not satisfy the
 /// call: authorizations are bound to a specific invocation, not to an address
 /// alone.
 #[test]
@@ -264,10 +301,13 @@ fn every_gated_entry_point_fails_with_no_authorization_at_all() {
     assert!(c.factory.try_set_pair_fee(&c.setter, &c.pair, &30).is_err());
     assert!(c.factory.try_set_fee_to_setter(&c.setter, &c.stranger).is_err());
     assert!(c.factory.try_deposit_protocol_fee(&c.pair, &c.token, &1_000i128).is_err());
+    assert!(c.factory.try_freeze_pair(&c.pair).is_err());
+    assert!(c.factory.try_unfreeze_pair(&c.pair).is_err());
 
     assert_eq!(c.factory.fee_to(), Some(c.recipient));
     assert_eq!(c.factory.get_pair_fee_override(&c.pair), None);
     assert_eq!(c.factory.fee_to_setter(), Some(c.setter));
+    assert!(!c.factory.is_pair_frozen(&c.pair), "no authorization must mean no freeze");
 }
 
 #[test]
