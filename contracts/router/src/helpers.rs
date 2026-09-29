@@ -1,4 +1,5 @@
 use crate::errors::RouterError;
+use coralswap_shared::{quote_input_amount, quote_output_amount, QuoteError};
 use soroban_sdk::{contractclient, Address, Env, Vec};
 
 #[contractclient(name = "FactoryClient")]
@@ -28,11 +29,22 @@ pub trait TokenInterface {
     fn balance(env: Env, id: Address) -> i128;
 }
 
-/// Computes output amount for an exact input swap using constant-product formula.
+/// Maps the shared quote error onto the router's error codes.
+fn map_quote_error(err: QuoteError) -> RouterError {
+    match err {
+        QuoteError::ZeroAmount => RouterError::ZeroAmount,
+        QuoteError::Dust => RouterError::DustAmount,
+        QuoteError::InsufficientLiquidity | QuoteError::Overflow | QuoteError::InvalidFee => {
+            RouterError::InsufficientLiquidity
+        }
+    }
+}
+
+/// Computes output amount for an exact input swap.
 ///
-/// Formula:
-/// amount_out = (amount_in * (10000 - fee_bps) * reserve_out)
-///              / (reserve_in * 10000 + amount_in * (10000 - fee_bps))
+/// Thin wrapper over [`coralswap_shared::quote_output_amount`] — the single
+/// quote implementation shared with the pair. `fee_bps` must already be the
+/// pair's effective fee (see [`get_pair_reserves_and_fee`]).
 #[allow(dead_code)]
 pub fn get_amount_out(
     _env: &Env,
@@ -41,40 +53,13 @@ pub fn get_amount_out(
     reserve_out: i128,
     fee_bps: u32,
 ) -> Result<i128, RouterError> {
-    if amount_in <= 0 {
-        return Err(RouterError::ZeroAmount);
-    }
-    if reserve_in <= 0 || reserve_out <= 0 {
-        return Err(RouterError::InsufficientLiquidity);
-    }
-
-    let amount_in_with_fee =
-        amount_in.checked_mul(10000 - fee_bps as i128).ok_or(RouterError::InsufficientLiquidity)?;
-
-    let numerator =
-        amount_in_with_fee.checked_mul(reserve_out).ok_or(RouterError::InsufficientLiquidity)?;
-
-    let denominator = reserve_in
-        .checked_mul(10000)
-        .ok_or(RouterError::InsufficientLiquidity)?
-        .checked_add(amount_in_with_fee)
-        .ok_or(RouterError::InsufficientLiquidity)?;
-
-    let out = numerator / denominator;
-    // Dust policy (issue 393): truncated zero outputs are typed errors.
-    // Note: small non-zero outputs are allowed so 1k-in/100k-pool quotes
-    // (~987 out) keep working; the pair enforces the reserve floor.
-    if out <= 0 {
-        return Err(RouterError::DustAmount);
-    }
-    Ok(out)
+    quote_output_amount(amount_in, reserve_in, reserve_out, fee_bps).map_err(map_quote_error)
 }
 
 /// Computes input amount required for an exact output swap.
 ///
-/// Formula:
-/// amount_in = (reserve_in * amount_out * 10000)
-///             / ((reserve_out - amount_out) * (10000 - fee_bps)) + 1
+/// Thin wrapper over [`coralswap_shared::quote_input_amount`]. `fee_bps` must
+/// already be the pair's effective fee (see [`get_pair_reserves_and_fee`]).
 #[allow(dead_code)]
 pub fn get_amount_in(
     _env: &Env,
@@ -83,24 +68,7 @@ pub fn get_amount_in(
     reserve_out: i128,
     fee_bps: u32,
 ) -> Result<i128, RouterError> {
-    if amount_out <= 0 {
-        return Err(RouterError::ZeroAmount);
-    }
-    if reserve_in <= 0 || reserve_out <= 0 || amount_out >= reserve_out {
-        return Err(RouterError::InsufficientLiquidity);
-    }
-
-    let numerator = reserve_in
-        .checked_mul(amount_out)
-        .ok_or(RouterError::InsufficientLiquidity)?
-        .checked_mul(10000)
-        .ok_or(RouterError::InsufficientLiquidity)?;
-
-    let denominator = (reserve_out - amount_out)
-        .checked_mul(10000 - fee_bps as i128)
-        .ok_or(RouterError::InsufficientLiquidity)?;
-
-    Ok((numerator / denominator) + 1)
+    quote_input_amount(amount_out, reserve_in, reserve_out, fee_bps).map_err(map_quote_error)
 }
 
 /// Given some amount of an asset and pair reserves,
@@ -195,6 +163,11 @@ pub fn get_pair_address(
 
 /// Returns (reserve_in, reserve_out, fee_bps) for a swap of token_in → token_out
 /// via the pair at the given address. Determines direction by sorting tokens.
+///
+/// This is the one place the router resolves a pair's fee: the pair's
+/// `get_current_fee_bps` already applies any per-pair override, so callers
+/// must pass the returned `fee_bps` straight into the quote helpers rather
+/// than re-deriving it.
 pub fn get_pair_reserves_and_fee(
     env: &Env,
     pair: &Address,

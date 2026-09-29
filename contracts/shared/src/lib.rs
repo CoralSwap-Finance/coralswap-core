@@ -193,6 +193,113 @@ pub const COMMIT_EXPIRY_HARD_CAP: u32 = 518_400;
 /// Scoped-authorization test helpers (issue #314). Only compiled when the
 /// `test-support` feature is enabled, which happens solely as a
 /// dev-dependency of the contract crates.
+// ─────────────────────────────────────────────
+// Constant-product quote math (router + pair)
+// ─────────────────────────────────────────────
+//
+// Single quote implementation shared by the router's path pricing and the
+// pair's own swap math so the two can never drift. Callers resolve the
+// effective fee (dynamic fee, per-pair override, ...) exactly once and pass
+// it in as `fee_bps`; these helpers never look fees up themselves.
+
+/// Basis-point denominator (100% = 10_000 bps).
+pub const BPS_DENOMINATOR: i128 = 10_000;
+
+/// Error cases for [`quote_output_amount`] / [`quote_input_amount`].
+/// Each contract maps these onto its own `contracterror` enum.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuoteError {
+    /// The requested input/output amount is `<= 0`.
+    ZeroAmount,
+    /// A reserve is `<= 0`, or the requested output drains the pool.
+    InsufficientLiquidity,
+    /// An intermediate product overflowed `i128`.
+    Overflow,
+    /// The quote truncated to zero (dust policy, issue #393).
+    Dust,
+    /// `fee_bps` is outside `0..10_000`.
+    InvalidFee,
+}
+
+/// Exact-input quote: output received for `amount_in` against
+/// `(reserve_in, reserve_out)` at an already-resolved `fee_bps`.
+///
+/// ```text
+/// amount_out = (amount_in * (10_000 - fee_bps) * reserve_out)
+///            / (reserve_in * 10_000 + amount_in * (10_000 - fee_bps))
+/// ```
+pub fn quote_output_amount(
+    amount_in: i128,
+    reserve_in: i128,
+    reserve_out: i128,
+    fee_bps: u32,
+) -> Result<i128, QuoteError> {
+    if amount_in <= 0 {
+        return Err(QuoteError::ZeroAmount);
+    }
+    if reserve_in <= 0 || reserve_out <= 0 {
+        return Err(QuoteError::InsufficientLiquidity);
+    }
+    let fee_factor = fee_factor(fee_bps)?;
+
+    let amount_in_with_fee = amount_in.checked_mul(fee_factor).ok_or(QuoteError::Overflow)?;
+    let numerator = amount_in_with_fee.checked_mul(reserve_out).ok_or(QuoteError::Overflow)?;
+    let denominator = reserve_in
+        .checked_mul(BPS_DENOMINATOR)
+        .ok_or(QuoteError::Overflow)?
+        .checked_add(amount_in_with_fee)
+        .ok_or(QuoteError::Overflow)?;
+
+    let out = numerator / denominator;
+    // Dust policy (issue 393): truncated zero outputs are typed errors.
+    if out <= 0 {
+        return Err(QuoteError::Dust);
+    }
+    Ok(out)
+}
+
+/// Exact-output quote: input required to receive `amount_out` from
+/// `(reserve_in, reserve_out)` at an already-resolved `fee_bps`.
+/// Rounds up by one stroop so the pool is never short-changed.
+///
+/// ```text
+/// amount_in = (reserve_in * amount_out * 10_000)
+///           / ((reserve_out - amount_out) * (10_000 - fee_bps)) + 1
+/// ```
+pub fn quote_input_amount(
+    amount_out: i128,
+    reserve_in: i128,
+    reserve_out: i128,
+    fee_bps: u32,
+) -> Result<i128, QuoteError> {
+    if amount_out <= 0 {
+        return Err(QuoteError::ZeroAmount);
+    }
+    if reserve_in <= 0 || reserve_out <= 0 || amount_out >= reserve_out {
+        return Err(QuoteError::InsufficientLiquidity);
+    }
+    let fee_factor = fee_factor(fee_bps)?;
+
+    let numerator = reserve_in
+        .checked_mul(amount_out)
+        .ok_or(QuoteError::Overflow)?
+        .checked_mul(BPS_DENOMINATOR)
+        .ok_or(QuoteError::Overflow)?;
+    let denominator =
+        (reserve_out - amount_out).checked_mul(fee_factor).ok_or(QuoteError::Overflow)?;
+
+    (numerator / denominator).checked_add(1).ok_or(QuoteError::Overflow)
+}
+
+/// `10_000 - fee_bps`, rejecting fees of 100% or more (which would zero the
+/// denominator of an exact-output quote).
+fn fee_factor(fee_bps: u32) -> Result<i128, QuoteError> {
+    if fee_bps as i128 >= BPS_DENOMINATOR {
+        return Err(QuoteError::InvalidFee);
+    }
+    Ok(BPS_DENOMINATOR - fee_bps as i128)
+}
+
 #[cfg(feature = "test-support")]
 pub mod test_support;
 
