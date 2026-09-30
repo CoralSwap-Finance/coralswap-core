@@ -254,6 +254,11 @@ impl Router {
     ///
     /// The path must have 2 to 4 entries: [token_in, ..., token_out].
     /// Intermediate tokens are sent to and forwarded by this router contract.
+    ///
+    /// Forward dust (issue #352): after the last hop, any residual balance of
+    /// the input token held by the router — e.g. a few stroops stranded by a
+    /// previously reverted path, or left by future forwarding changes — is
+    /// swept back to `to`, so the router never retains input tokens.
     pub fn swap_exact_tokens_multi_hop(
         env: Env,
         path: Vec<Address>,
@@ -310,6 +315,15 @@ impl Router {
                     get_pair_address(&env, &factory, &token_to, &path.get(i + 2).unwrap())?;
                 TokenClient::new(&env, &token_to).transfer(&router, &next_pair, &amount_out_hop);
             }
+        }
+
+        // Sweep forward dust back to the recipient (issue #352). Exact-in
+        // rounding and previously reverted paths can strand a few stroops of
+        // the input token on the router; drain whatever remains so no balance
+        // is ever stuck on the router after a swap.
+        let dust = TokenClient::new(&env, &token_in).balance(&router);
+        if dust > 0 {
+            TokenClient::new(&env, &token_in).transfer(&router, &to, &dust);
         }
 
         Ok(final_out)
