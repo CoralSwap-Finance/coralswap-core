@@ -21,6 +21,7 @@ pub trait PairInterface {
     fn swap(env: Env, amount_a_out: i128, amount_b_out: i128, to: Address);
     fn get_reserves(env: Env) -> (i128, i128, u64);
     fn get_current_fee_bps(env: Env) -> u32;
+    fn get_effective_fee_bps(env: Env) -> (u32, bool);
 }
 
 #[contractclient(name = "TokenClient")]
@@ -198,6 +199,9 @@ pub fn get_pair_address(
 
 /// Returns (reserve_in, reserve_out, fee_bps) for a swap of token_in → token_out
 /// via the pair at the given address. Determines direction by sorting tokens.
+///
+/// Issue #350: Uses `get_effective_fee_bps()` instead of `get_current_fee_bps()`
+/// to account for factory overrides, ensuring quotes match actual swap execution.
 pub fn get_pair_reserves_and_fee(
     env: &Env,
     pair: &Address,
@@ -206,7 +210,12 @@ pub fn get_pair_reserves_and_fee(
 ) -> Result<(i128, i128, u32), RouterError> {
     let pair_client = PairClient::new(env, pair);
     let (reserve_a, reserve_b, _) = pair_client.get_reserves();
-    let fee_bps = pair_client.get_current_fee_bps();
+    // NEW: Use effective fee (override-aware) instead of just current fee
+    let fee_result = pair_client.try_get_effective_fee_bps();
+    let (fee_bps, _is_override) = match fee_result {
+        Ok(Ok(result)) => result,
+        _ => return Err(RouterError::InternalError),
+    };
 
     let (token_0, _) = sort_tokens(token_in, token_out)?;
     if *token_in == token_0 {
