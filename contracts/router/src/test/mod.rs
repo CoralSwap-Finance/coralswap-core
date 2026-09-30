@@ -956,3 +956,52 @@ fn test_hop_check_validates_is_pair() {
     MockFactoryClient::new(&env, &factory_id).set_is_pair(&fake_pair, &true);
     assert!(MockFactoryClient::new(&env, &factory_id).is_pair(&fake_pair));
 }
+
+#[test]
+fn test_mid_path_price_crash_reverts() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (router_id, factory_id) = deploy_router(&env);
+    let router = RouterClient::new(&env, &router_id);
+
+    let tokens = generate_tokens(&env, 3);
+    let token_in = tokens.get(0).unwrap();
+    let hub = tokens.get(1).unwrap();
+    let token_out = tokens.get(2).unwrap();
+
+    // Set up 2-hop path: token_in -> hub -> token_out
+    // First hop: normal liquidity (token_in/hub)
+    setup_pair(&env, &factory_id, &token_in, &hub, 1_000_000, 1_000_000);
+    // Second hop: normal liquidity (hub/token_out)
+    setup_pair(&env, &factory_id, &hub, &token_out, 1_000_000, 1_000_000);
+
+    let mut path = Vec::new(&env);
+    path.push_back(token_in.clone());
+    path.push_back(hub.clone());
+    path.push_back(token_out.clone());
+
+    let user = Address::generate(&env);
+    let amount_in = 10_000;
+    let min_out = 9_000; // Global minimum output
+
+    // First, verify normal swap succeeds
+    let out = router.swap_exact_tokens_multi_hop(&path, &amount_in, &min_out, &user, &u64::MAX, &None);
+    assert!(out >= min_out, "normal swap should meet minimum");
+
+    // Now simulate mid-path price crash by draining the hub token reserves
+    // This causes extreme slippage on the first hop (token_in -> hub)
+    // The first hop will now produce very little hub tokens
+    let pair_1 = MockFactoryClient::new(&env, &factory_id)
+        .get_pair(&token_in, &hub)
+        .unwrap();
+    MockPairClient::new(&env, &pair_1).set_reserves(&1_000_000, &100); // Hub reserves drained to 100
+
+    // With the old implementation (final-hop only), this might succeed if the final hop
+    // compensates by having very favorable rates. But economically, the user would get
+    // a terrible deal on the intermediate transfer.
+    // With end-to-end protection, this should revert due to first hop failing its minimum.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        router.swap_exact_tokens_multi_hop(&path, &amount_in, &min_out, &user, &u64::MAX, &None);
+    }));
+    assert!(result.is_err(), "mid-path price crash must revert (InsufficientOutputAmount)");
+}
