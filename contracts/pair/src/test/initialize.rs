@@ -152,7 +152,7 @@ fn init_state_is_coherent() {
         let oracle = get_oracle_state(&env);
         assert_eq!(oracle.price_a_cumulative, 0);
         assert_eq!(oracle.price_b_cumulative, 0);
-        assert_eq!(oracle.observations.len(), 0);
+        assert_eq!(oracle.len(), 0);
 
         // Fee state starts with no accumulated volatility and a consistent range.
         assert_eq!(fee.vol_accumulator, 0);
