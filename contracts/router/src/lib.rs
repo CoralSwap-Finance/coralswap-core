@@ -460,37 +460,57 @@ impl Router {
             return Err(RouterError::IdenticalTokens);
         }
 
+        // Issue #357: Ensure tokens are in canonical order to match pair's storage.
+        // Pairs store tokens as (token_0, token_1) where token_0 < token_1.
+        // If caller provides tokens in reverse order, we must swap amounts
+        // to match the pair's reserve ordering.
+        let (token_0, token_1) = sort_tokens(&token_a, &token_b)?;
+        let swapped = token_0 != token_a;
+        let (amount_0_desired, amount_1_desired, amount_0_min, amount_1_min) = if swapped {
+            (amount_b_desired, amount_a_desired, amount_b_min, amount_a_min)
+        } else {
+            (amount_a_desired, amount_b_desired, amount_a_min, amount_b_min)
+        };
+
         // Get factory address
         let factory = get_factory(&env).ok_or(RouterError::PairNotFound)?;
 
-        // Get pair address from factory
-        let pair_address = get_pair_address(&env, &factory, &token_a, &token_b)?;
+        // Get pair address from factory (factory also sorts tokens internally)
+        let pair_address = get_pair_address(&env, &factory, &token_0, &token_1)?;
 
         // Get pair contract client and current reserves
+        // Reserves are returned as (reserve_0, reserve_1) matching (token_0, token_1)
         let pair_client = PairClient::new(&env, &pair_address);
-        let (reserve_a, reserve_b, _) = pair_client.get_reserves();
+        let (reserve_0, reserve_1, _) = pair_client.get_reserves();
 
         // Calculate optimal deposit amounts preserving pool ratio
-        let (amount_a, amount_b) = compute_optimal_amounts(
-            amount_a_desired,
-            amount_b_desired,
-            amount_a_min,
-            amount_b_min,
-            reserve_a,
-            reserve_b,
+        let (amount_0, amount_1) = compute_optimal_amounts(
+            amount_0_desired,
+            amount_1_desired,
+            amount_0_min,
+            amount_1_min,
+            reserve_0,
+            reserve_1,
         )?;
 
         // The user must provide authorization for token transfers
         to.require_auth();
 
-        // Transfer tokens from 'to' to the pair contract
-        TokenClient::new(&env, &token_a).transfer(&to, &pair_address, &amount_a);
-        TokenClient::new(&env, &token_b).transfer(&to, &pair_address, &amount_b);
+        // Transfer tokens from 'to' to the pair contract (in canonical order)
+        TokenClient::new(&env, &token_0).transfer(&to, &pair_address, &amount_0);
+        TokenClient::new(&env, &token_1).transfer(&to, &pair_address, &amount_1);
 
         // Mint LP tokens to the recipient
         let liquidity = pair_client.mint(&to);
 
-        Ok((amount_a, amount_b, liquidity))
+        // Return amounts in caller's original token order
+        let (ret_amount_a, ret_amount_b) = if swapped {
+            (amount_1, amount_0)
+        } else {
+            (amount_0, amount_1)
+        };
+
+        Ok((ret_amount_a, ret_amount_b, liquidity))
     }
 
     /// Commits to a future swap by storing a hash of the intended parameters.
@@ -699,11 +719,21 @@ impl Router {
             return Err(RouterError::IdenticalTokens);
         }
 
+        // Issue #357: Ensure tokens are in canonical order.
+        // Pair's burn() returns amounts in canonical order (token_0, token_1).
+        let (token_0, token_1) = sort_tokens(&token_a, &token_b)?;
+        let swapped = token_0 != token_a;
+        let (amount_0_min, amount_1_min) = if swapped {
+            (amount_b_min, amount_a_min)
+        } else {
+            (amount_a_min, amount_b_min)
+        };
+
         // Get factory address
         let factory = get_factory(&env).ok_or(RouterError::PairNotFound)?;
 
         // Get pair address
-        let pair_address = get_pair_address(&env, &factory, &token_a, &token_b)?;
+        let pair_address = get_pair_address(&env, &factory, &token_0, &token_1)?;
 
         // Get pair contract client
         let pair_client = PairClient::new(&env, &pair_address);
@@ -717,13 +747,21 @@ impl Router {
         pair_client.deposit_lp(&to, &liquidity);
 
         // Call Pair::burn(to) - this will burn LP tokens from the pair and transfer underlying tokens
-        let (amount_a, amount_b) = pair_client.burn(&to);
+        // Returns amounts in canonical order: (amount_0, amount_1)
+        let (amount_0, amount_1) = pair_client.burn(&to);
 
-        // Enforce minimum output amounts
-        if amount_a < amount_a_min || amount_b < amount_b_min {
+        // Enforce minimum output amounts (in canonical order)
+        if amount_0 < amount_0_min || amount_1 < amount_1_min {
             return Err(RouterError::InsufficientOutputAmount);
         }
 
-        Ok((amount_a, amount_b))
+        // Return amounts in caller's original token order
+        let (ret_amount_a, ret_amount_b) = if swapped {
+            (amount_1, amount_0)
+        } else {
+            (amount_0, amount_1)
+        };
+
+        Ok((ret_amount_a, ret_amount_b))
     }
 }

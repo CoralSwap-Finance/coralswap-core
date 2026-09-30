@@ -26,4 +26,6 @@ pub enum RouterError {
     TooManyCommits = 316,
     /// Invalid commit-config values (issue 389).
     InvalidCommitConfig = 317,
+    /// Token ordering doesn't match pair's canonical order (issue #357).
+    InvalidTokenOrder = 318,
 }

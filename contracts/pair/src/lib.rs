@@ -900,6 +900,32 @@ impl Pair {
         }
     }
 
+    /// Returns the fee that will actually be charged on the next swap (issue #350).
+    ///
+    /// Unlike `get_current_fee_bps()` which returns only the dynamic fee,
+    /// this function accounts for factory overrides, matching the fee
+    /// the `swap` function will use. Ensures router quotes match execution.
+    ///
+    /// Returns `(fee_bps, is_override)` where:
+    /// - `fee_bps`: The effective fee in basis points that will be applied
+    /// - `is_override`: `true` if this is a factory override, `false` for dynamic fee
+    ///
+    /// When the factory call fails or returns `None` or `Some(0)`, falls back
+    /// to the dynamic fee, matching the swap execution logic.
+    pub fn get_effective_fee_bps(env: Env) -> Result<(u32, bool), PairError> {
+        let state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+        let fee_state = get_fee_state(&env).ok_or(PairError::NotInitialized)?;
+
+        let dynamic_fee_bps = dynamic_fee::compute_fee_bps(&fee_state);
+        let contract_address = env.current_contract_address();
+
+        match FactoryClient::new(&env, &state.factory).try_get_pair_fee_override(&contract_address)
+        {
+            Ok(Ok(Some(override_bps))) if override_bps > 0 => Ok((override_bps, true)),
+            _ => Ok((dynamic_fee_bps, false)),
+        }
+    }
+
     /// Returns the fee configuration together with the fee model version so
     /// clients can interpret the values without off-chain config.
     pub fn get_fee_state(env: Env) -> Result<FeeStateView, PairError> {
