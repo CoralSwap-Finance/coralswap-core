@@ -418,10 +418,15 @@ fn advance_ledgers(env: &Env, by: u32) {
 fn test_guard_ttl_policy_covers_any_hold_window() {
     // The compile-time asserts in `coralswap_shared` enforce this too; the
     // runtime form keeps the relationship visible in the test report.
-    assert!(
-        coralswap_shared::REENTRANCY_TTL_THRESHOLD >= coralswap_shared::REENTRANCY_MAX_HOLD_LEDGERS
-    );
-    assert!(coralswap_shared::REENTRANCY_TTL_EXTEND_TO >= coralswap_shared::INSTANCE_TTL_EXTEND_TO);
+    const {
+        assert!(
+            coralswap_shared::REENTRANCY_TTL_THRESHOLD
+                >= coralswap_shared::REENTRANCY_MAX_HOLD_LEDGERS
+        );
+        assert!(
+            coralswap_shared::REENTRANCY_TTL_EXTEND_TO >= coralswap_shared::INSTANCE_TTL_EXTEND_TO
+        );
+    }
 }
 
 #[test]
