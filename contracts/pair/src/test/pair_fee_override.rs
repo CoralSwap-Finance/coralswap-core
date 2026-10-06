@@ -188,7 +188,6 @@ fn swap_with_override_does_not_panic_even_when_factory_missing() {
     assert_eq!(fee, 30, "must fall back to dynamic fee when factory unavailable");
 }
 
-
 // Issue #350: Test that get_effective_fee_bps returns override-aware fee
 #[test]
 fn get_effective_fee_bps_returns_override_when_set() {
@@ -203,7 +202,7 @@ fn get_effective_fee_bps_returns_override_when_set() {
     let (fee_bps, is_override) = result.unwrap().unwrap();
 
     assert_eq!(fee_bps, 50);
-    assert_eq!(is_override, true);
+    assert!(is_override);
 }
 
 #[test]
@@ -217,7 +216,7 @@ fn get_effective_fee_bps_returns_dynamic_when_no_override() {
 
     // Should return dynamic fee (baseline 30 bps in this case)
     assert_eq!(fee_bps, 30);
-    assert_eq!(is_override, false);
+    assert!(!is_override);
 }
 
 #[test]
@@ -234,5 +233,5 @@ fn get_effective_fee_bps_fallback_when_override_is_zero() {
 
     // Should return dynamic fee, not zero
     assert_eq!(fee_bps, 30);
-    assert_eq!(is_override, false);
+    assert!(!is_override);
 }
