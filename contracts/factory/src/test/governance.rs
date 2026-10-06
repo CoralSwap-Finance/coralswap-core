@@ -127,7 +127,7 @@ fn test_quorum_when_signers_are_revoked_one_by_one() {
         let q = quorum_threshold(n);
         let q_after = quorum_threshold(n - 1);
         assert!(q_after >= 1, "quorum never reaches zero");
-        assert!(q_after <= n - 1, "quorum stays reachable after revocation");
+        assert!(q_after < n, "quorum stays reachable after revocation");
         assert!(q_after <= q, "revocation never raises quorum");
         assert!(q - q_after <= 1, "quorum moves by at most one per revocation");
         n -= 1;
