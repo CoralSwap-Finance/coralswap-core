@@ -57,7 +57,7 @@ pub struct ReentrancyGuard {
 /// `oracle::update_cumulative_prices`, is not reachable from any pair entry
 /// point, so the two fields were dead storage that cost rent on every pool and
 /// implied a working TWAP that did not exist. Keeping the accumulators with the
-/// observations they feed makes the oracle self-contained: once #271 wires
+/// samples they feed makes the oracle self-contained: once #271 wires
 /// `update_cumulative_prices` into `swap`/`mint`/`burn`, a single
 /// `get_oracle_state` read serves both the accumulators and the buffer, and
 /// there is no second copy of the same numbers to fall out of sync.
@@ -68,8 +68,27 @@ pub struct OracleState {
     pub price_a_cumulative: i128,
     /// Running accumulator for token B.
     pub price_b_cumulative: i128,
-    /// Ring buffer of `(ledger_sequence, cumulative_a, cumulative_b)` samples.
-    pub observations: soroban_sdk::Vec<(u64, i128, i128)>,
+    /// Fixed-capacity storage for `(ledger_sequence, cumulative_a,
+    /// cumulative_b)` samples.
+    ///
+    /// This is the *physical* half of a ring buffer, so its order is not the
+    /// order a caller wants: the `count` live samples occupy slots `head`,
+    /// `head + 1`, … `head + count - 1` (modulo
+    /// [`crate::oracle::MAX_OBSERVATIONS`]), oldest first, and every other slot
+    /// is dead. Reusing a slot in place is what keeps an update O(1): the
+    /// previous implementation called `remove(0)` and re-appended, which moved
+    /// every live sample one position down on every update (issue #308).
+    ///
+    /// Read it through [`OracleState::sample`] / [`OracleState::len`] rather
+    /// than indexing it directly. Dead slots are deliberately not compacted away
+    /// — compacting is the shifting this type exists to avoid.
+    pub slots: soroban_sdk::Vec<(u64, i128, i128)>,
+    /// Physical index of the oldest live sample, i.e. the slot that is
+    /// overwritten once the ring is full.
+    pub head: u32,
+    /// Number of live samples. Never more than `MAX_OBSERVATIONS`, and never
+    /// more than `slots.len()`.
+    pub count: u32,
 }
 
 #[contracttype]
@@ -135,7 +154,9 @@ pub fn get_oracle_state(env: &Env) -> OracleState {
     env.storage().instance().get(&DataKey::OracleState).unwrap_or(OracleState {
         price_a_cumulative: 0,
         price_b_cumulative: 0,
-        observations: soroban_sdk::Vec::new(env),
+        slots: soroban_sdk::Vec::new(env),
+        head: 0,
+        count: 0,
     })
 }
 
