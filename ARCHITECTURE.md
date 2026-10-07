@@ -70,7 +70,11 @@ The Factory is the registry and governance hub of the protocol.
 
 ### Pair
 
-Each Pair contract holds reserves of two tokens and implements the constant-product AMM (`x * y = k`).
+Each Pair contract holds reserves of exactly two distinct tokens and implements
+the constant-product AMM (`x * y = k`). Factory creation and the Pair contract
+ABI are binary-only: a pool cannot contain three or more assets. Multi-asset
+pools are a future design direction, not a capability of the current contracts;
+see [Multi-Asset Pair Design](docs/MULTI_ASSET_PAIRS.md).
 
 - **Swap**: Validates the K invariant after fee deduction. Fees are dynamic — computed from a volatility-tracking EMA with configurable baseline, min, max, ramp-up, and cooldown parameters. A per-pair fee override from the Factory takes precedence when set.
 - **Mint**: Accepts token deposits and mints LP shares proportional to the deposit. On first mint, `MINIMUM_LIQUIDITY` shares are locked to the contract itself.
