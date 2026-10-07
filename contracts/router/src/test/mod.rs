@@ -991,15 +991,14 @@ fn test_mid_path_price_crash_reverts() {
     let min_out = 9_000; // Global minimum output
 
     // First, verify normal swap succeeds
-    let out = router.swap_exact_tokens_multi_hop(&path, &amount_in, &min_out, &user, &u64::MAX, &None);
+    let out =
+        router.swap_exact_tokens_multi_hop(&path, &amount_in, &min_out, &user, &u64::MAX, &None);
     assert!(out >= min_out, "normal swap should meet minimum");
 
     // Now simulate mid-path price crash by draining the hub token reserves
     // This causes extreme slippage on the first hop (token_in -> hub)
     // The first hop will now produce very little hub tokens
-    let pair_1 = MockFactoryClient::new(&env, &factory_id)
-        .get_pair(&token_in, &hub)
-        .unwrap();
+    let pair_1 = MockFactoryClient::new(&env, &factory_id).get_pair(&token_in, &hub).unwrap();
     MockPairClient::new(&env, &pair_1).set_reserves(&1_000_000, &100); // Hub reserves drained to 100
 
     // With the old implementation (final-hop only), this might succeed if the final hop
