@@ -604,6 +604,15 @@ impl LpToken {
                 expiration_ledger: allowance_entry.expiration_ledger,
             };
             env.storage().persistent().set(&key, &new_allowance_entry);
+
+            // Mirror `approve`: refresh the entry's TTL so the remaining
+            // allowance lives to its declared deadline. Without this the entry
+            // keeps whatever TTL the approve-time write left behind (capped by
+            // the network max entry TTL) and can expire mid-life, silently
+            // resetting a live partial allowance to zero.
+            let ledgers_to_live =
+                allowance_entry.expiration_ledger.saturating_sub(env.ledger().sequence());
+            env.storage().persistent().extend_ttl(&key, ledgers_to_live, ledgers_to_live);
         }
 
         Ok(())

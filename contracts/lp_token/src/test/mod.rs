@@ -280,6 +280,64 @@ fn test_transfer_extends_ttl_for_both_parties() {
 }
 
 #[test]
+fn test_spend_allowance_reextends_ttl_to_declared_deadline() {
+    let env = Env::default();
+    // BLANKET MOCK (issue #314): LP token accounting, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
+    env.mock_all_auths_allowing_non_root_auth();
+    let contract_id = env.register(LpToken, ());
+    let client = LpTokenClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let spender = Address::generate(&env);
+    let receiver = Address::generate(&env);
+
+    // Cap the network max entry TTL below the requested deadline. The
+    // approve-time extension is then clamped, so the storage entry would die
+    // long before the allowance's declared deadline unless a spend re-extends
+    // it (the issue's long-lived partial-allowance scenario).
+    env.ledger().set_max_entry_ttl(100_000);
+
+    let start = env.ledger().sequence();
+    let expiration = start + 150_000;
+
+    env.as_contract(&contract_id, || {
+        env.storage().instance().extend_ttl(100_000, 100_000);
+    });
+
+    client.approve(&owner, &spender, &100_i128, &expiration);
+
+    let allowance_key = LpTokenKey::Allowance(owner.clone(), spender.clone());
+    env.as_contract(&contract_id, || {
+        let ttl = env.storage().persistent().get_ttl(&allowance_key);
+        assert!(
+            ttl < expiration - start,
+            "Precondition: approve-time TTL ({ttl}) is capped below the declared deadline"
+        );
+    });
+
+    env.ledger().set_sequence_number(start + 60_000);
+
+    env.as_contract(&contract_id, || {
+        env.storage().persistent().set(&LpTokenKey::Balance(owner.clone()), &100_i128);
+    });
+
+    client.transfer_from(&spender, &owner, &receiver, &25_i128);
+
+    assert_eq!(client.allowance(&owner, &spender), 75);
+    assert_eq!(client.balance(&owner), 75);
+    assert_eq!(client.balance(&receiver), 25);
+
+    env.as_contract(&contract_id, || {
+        let ttl = env.storage().persistent().get_ttl(&allowance_key);
+        assert_eq!(
+            ttl,
+            expiration - env.ledger().sequence(),
+            "Allowance TTL should be re-extended to its declared deadline on spend"
+        );
+    });
+}
+
+#[test]
 fn test_metadata_custom_values_preserved() {
     let env = Env::default();
     // BLANKET MOCK (issue #314): LP token accounting, not authorization.
