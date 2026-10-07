@@ -26,4 +26,7 @@ pub enum FactoryError {
     /// call on the pair failed (pair not initialized, or an older pair WASM
     /// that does not implement the relay yet).
     PairFreezeFailed = 18,
+    /// `freeze_pair` / `unfreeze_pair` targeted an address this factory did
+    /// not create.
+    PairNotFound = 19,
 }

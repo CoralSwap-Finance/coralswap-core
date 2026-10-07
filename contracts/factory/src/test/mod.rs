@@ -703,7 +703,10 @@ mod factory_tests {
         let not_a_pair = Address::generate(&env);
         let guardian = Vec::from_array(&env, [setter]);
 
-        assert!(client.try_freeze_pair(&guardian, &not_a_pair).is_err());
+        assert_eq!(
+            client.try_freeze_pair(&guardian, &not_a_pair),
+            Err(Ok(FactoryError::PairNotFound))
+        );
         assert!(!client.is_pair_frozen(&not_a_pair));
     }
 

@@ -378,7 +378,7 @@ impl Factory {
     /// |---------------------|-------------------------------------------------|
     /// | `NotInitialized`    | Factory storage absent                          |
     /// | multisig errors     | `signers` is neither `[fee_to_setter]` nor a valid quorum |
-    /// | `Unauthorized`      | `pair` was not created by this factory          |
+    /// | `PairNotFound`      | `pair` was not created by this factory          |
     /// | `PairFreezeFailed`  | the pair rejected or could not be frozen        |
     pub fn freeze_pair(env: Env, signers: Vec<Address>, pair: Address) -> Result<(), FactoryError> {
         let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
@@ -405,7 +405,7 @@ impl Factory {
     /// |---------------------|--------------------------------------------|
     /// | `NotInitialized`    | Factory storage absent                     |
     /// | multisig errors     | `signers` is not a valid quorum            |
-    /// | `Unauthorized`      | `pair` was not created by this factory     |
+    /// | `PairNotFound`      | `pair` was not created by this factory     |
     /// | `PairFreezeFailed`  | the pair rejected or could not be thawed   |
     pub fn unfreeze_pair(
         env: Env,
@@ -424,7 +424,7 @@ impl Factory {
     /// flag (via `Pair::set_frozen`) and the factory registry, in one call.
     fn set_pair_frozen_state(env: &Env, pair: &Address, frozen: bool) -> Result<(), FactoryError> {
         if !storage::is_pair(env, pair) {
-            return Err(FactoryError::Unauthorized);
+            return Err(FactoryError::PairNotFound);
         }
         PairClient::new(env, pair)
             .try_set_frozen(&frozen)
