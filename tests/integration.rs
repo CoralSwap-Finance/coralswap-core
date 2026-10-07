@@ -264,7 +264,13 @@ mod integration_tests {
             &env,
             [Address::generate(&env), Address::generate(&env), Address::generate(&env)],
         );
-        factory_client.initialize(&signers, &pair_wasm_hash, &lp_token_wasm_hash, &fee_to_setter);
+        factory_client.initialize(
+            &signers,
+            &pair_wasm_hash,
+            &pair_wasm_hash,
+            &lp_token_wasm_hash,
+            &fee_to_setter,
+        );
 
         let router_client = RouterClient::new(&env, &router);
         router_client.initialize(&factory, &Vec::new(&env));
