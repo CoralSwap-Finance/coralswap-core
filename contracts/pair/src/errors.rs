@@ -13,7 +13,9 @@ pub enum PairError {
     Locked = 106,
     FlashLoanNotRepaid = 107,
     FlashPayloadTooLarge = 108,
-    Paused = 109,
+    /// Per-contract pause switch — same naming as `LpTokenError::ContractPaused`
+    /// (issue #382; renamed from `Paused` for the shared vocabulary).
+    ContractPaused = 109,
     Overflow = 110,
     ZeroAddress = 111,
     InsufficientLiquidityMinted = 112,

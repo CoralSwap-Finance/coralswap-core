@@ -140,7 +140,7 @@ stellar contract invoke \
   --fee_to_setter <FEE_SETTER_ADDRESS>
 ```
 
-The `signers` array accepts 1–10 addresses that form the multisig set for governance operations (pause, upgrade). The threshold is `ceil(n/2)`.
+The `signers` array accepts 1–10 addresses that form the multisig set for governance operations (pause, upgrade). The quorum is a strict majority (`n/2 + 1`); duplicate or unregistered signers do not count.
 
 ### 4. Deploy and Initialize the Router
 

@@ -106,12 +106,31 @@ pub fn extend_instance_ttl(env: &Env) {
 // Reentrancy-guard TTL (pair)
 // ─────────────────────────────────────────────
 
+/// Upper bound, in ledgers, on how long the reentrancy guard may be held.
+///
+/// The guard is held for the duration of one contract invocation, which lives
+/// inside a single ledger. 720 ledgers (~1 hour) is deliberately far above
+/// that so the TTL floor below never depends on a tight estimate.
+pub const REENTRANCY_MAX_HOLD_LEDGERS: u32 = 720;
+
 /// Threshold used when the reentrancy guard flips the lock flag.
 /// Previously bare `5_000` magic in `pair::reentrancy`.
+///
+/// Every lock flip leaves at least this many ledgers of TTL on the entry, so a
+/// held guard always outlives [`REENTRANCY_MAX_HOLD_LEDGERS`] (issue #362).
 pub const REENTRANCY_TTL_THRESHOLD: u32 = 5_000;
 
 /// Extend-to used when the reentrancy guard flips the lock flag.
 pub const REENTRANCY_TTL_EXTEND_TO: u32 = 120_960;
+
+// The guard lives in *instance* storage, i.e. in the same ledger entry as the
+// rest of the pair's state, so it cannot expire independently of that state;
+// what these checks protect is the guarantee that a lock flip always leaves the
+// shared entry alive for longer than any operation can hold the lock.
+const _: () = assert!(REENTRANCY_TTL_THRESHOLD >= REENTRANCY_MAX_HOLD_LEDGERS);
+const _: () = assert!(REENTRANCY_TTL_EXTEND_TO >= REENTRANCY_TTL_THRESHOLD);
+// A lock flip must never *lower* the policy the rest of the pair maintains.
+const _: () = assert!(REENTRANCY_TTL_EXTEND_TO >= INSTANCE_TTL_EXTEND_TO);
 
 /// Extend instance TTL for reentrancy-guard lock flips.
 pub fn extend_reentrancy_ttl(env: &Env) {
@@ -142,6 +161,16 @@ pub const LP_PERSISTENT_THRESHOLD: u32 = 518_400;
 
 /// LP persistent-entry extend-to: ~60 days.
 pub const LP_PERSISTENT_EXTEND_TO: u32 = 1_036_800;
+
+// ─────────────────────────────────────────────
+// Protocol version (issue #383)
+// ─────────────────────────────────────────────
+
+/// Protocol version reported by the pair's `version()` view and used as the
+/// factory's initial `protocol_version`. The factory bumps its stored version
+/// on every executed upgrade; the pair reports this constant so clients can
+/// verify they are talking to a known pair implementation.
+pub const PROTOCOL_VERSION: u32 = 1;
 
 // ─────────────────────────────────────────────
 // Minimum-reserve / dust policy (issue #393)

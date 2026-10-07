@@ -57,6 +57,21 @@ refactor(router): extracted deadline validation helper
 
 **Scopes:** `pair`, `factory`, `router`, `lp-token`, `flash`
 
+## Storage Lifetime Rules
+
+Soroban storage is rent-based: any ledger entry that is not extended
+eventually expires and the data is gone. CoralSwap therefore follows a
+written storage-lifetime contract (see
+[`docs/STORAGE_LIFETIMES.md`](docs/STORAGE_LIFETIMES.md)):
+
+- **Any new `storage().set` must be paired with an `extend_ttl` call** on
+  the same entry (or a documented group extension) in the same call path.
+- Instance writes in the core contracts pair with the shared policy helpers
+  (`coralswap_shared::extend_instance_ttl`, `extend_factory_instance_ttl`,
+  `extend_reentrancy_ttl`); LP-token persistent writes pair with the
+  `LP_PERSISTENT_THRESHOLD` / `LP_PERSISTENT_EXTEND_TO` policy.
+- Views never extend TTL; storage-key symbols are stable forever.
+
 ## Pull Request Process
 
 1. Fork the repo and create a branch: `feat/issue-NUMBER-short-description`

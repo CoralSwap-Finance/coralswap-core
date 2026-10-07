@@ -1,4 +1,5 @@
 use crate::errors::RouterError;
+use ethnum::U256;
 use soroban_sdk::{contractclient, Address, Env, Vec};
 
 #[contractclient(name = "FactoryClient")]
@@ -14,11 +15,13 @@ pub trait FactoryInterface {
 #[allow(dead_code)]
 pub trait PairInterface {
     fn burn(env: Env, to: Address) -> (i128, i128);
+    fn deposit_lp(env: Env, from: Address, amount: i128);
     fn mint(env: Env, to: Address) -> i128;
     fn lp_token(env: Env) -> Address;
     fn swap(env: Env, amount_a_out: i128, amount_b_out: i128, to: Address);
     fn get_reserves(env: Env) -> (i128, i128, u64);
     fn get_current_fee_bps(env: Env) -> u32;
+    fn get_effective_fee_bps(env: Env) -> (u32, bool);
 }
 
 #[contractclient(name = "TokenClient")]
@@ -73,8 +76,12 @@ pub fn get_amount_out(
 /// Computes input amount required for an exact output swap.
 ///
 /// Formula:
-/// amount_in = (reserve_in * amount_out * 10000)
-///             / ((reserve_out - amount_out) * (10000 - fee_bps)) + 1
+/// amount_in = ceil((reserve_in * amount_out * 10000)
+///               / ((reserve_out - amount_out) * (10000 - fee_bps)))
+///
+/// The ceiling is deliberate: the router must overfund by at most one unit,
+/// never underfund an exact-output swap. `U256` keeps the intermediate product
+/// exact when reserves are large even though the returned amount is `i128`.
 #[allow(dead_code)]
 pub fn get_amount_in(
     _env: &Env,
@@ -90,17 +97,14 @@ pub fn get_amount_in(
         return Err(RouterError::InsufficientLiquidity);
     }
 
-    let numerator = reserve_in
-        .checked_mul(amount_out)
-        .ok_or(RouterError::InsufficientLiquidity)?
-        .checked_mul(10000)
-        .ok_or(RouterError::InsufficientLiquidity)?;
-
-    let denominator = (reserve_out - amount_out)
-        .checked_mul(10000 - fee_bps as i128)
-        .ok_or(RouterError::InsufficientLiquidity)?;
-
-    Ok((numerator / denominator) + 1)
+    let numerator =
+        U256::from(reserve_in as u128) * U256::from(amount_out as u128) * U256::from(10_000u128);
+    let denominator =
+        U256::from((reserve_out - amount_out) as u128) * U256::from((10_000 - fee_bps) as u128);
+    let quotient = numerator / denominator;
+    let remainder = numerator % denominator;
+    let rounded = quotient + U256::from((remainder != U256::ZERO) as u8);
+    i128::try_from(rounded.as_u128()).map_err(|_| RouterError::InsufficientLiquidity)
 }
 
 /// Given some amount of an asset and pair reserves,
@@ -195,6 +199,9 @@ pub fn get_pair_address(
 
 /// Returns (reserve_in, reserve_out, fee_bps) for a swap of token_in → token_out
 /// via the pair at the given address. Determines direction by sorting tokens.
+///
+/// Issue #350: Uses `get_effective_fee_bps()` instead of `get_current_fee_bps()`
+/// to account for factory overrides, ensuring quotes match actual swap execution.
 pub fn get_pair_reserves_and_fee(
     env: &Env,
     pair: &Address,
@@ -203,7 +210,12 @@ pub fn get_pair_reserves_and_fee(
 ) -> Result<(i128, i128, u32), RouterError> {
     let pair_client = PairClient::new(env, pair);
     let (reserve_a, reserve_b, _) = pair_client.get_reserves();
-    let fee_bps = pair_client.get_current_fee_bps();
+    // NEW: Use effective fee (override-aware) instead of just current fee
+    let fee_result = pair_client.try_get_effective_fee_bps();
+    let (fee_bps, _is_override) = match fee_result {
+        Ok(Ok(result)) => result,
+        _ => return Err(RouterError::InternalError),
+    };
 
     let (token_0, _) = sort_tokens(token_in, token_out)?;
     if *token_in == token_0 {
@@ -240,4 +252,52 @@ pub fn get_path_amounts_out(
         amounts.push_back(current_amount);
     }
     Ok(amounts)
+}
+
+/// Computes minimum required output for each hop to achieve a global minimum output.
+/// Works backwards from the final minimum using the inverse swap formula.
+/// Returns a Vec of length path.len()-1 where min_amounts[i] is the minimum output
+/// required from swapping path[i] → path[i+1] to meet the global min_out.
+///
+/// Example for 2-hop (token_in -> hub -> token_out):
+/// - Hop 2 needs to produce at least amount_out_min
+/// - To achieve that, hop 2 needs a minimum input = get_amount_in(amount_out_min, hop2_reserves)
+/// - That minimum input IS the minimum output required from hop 1
+pub fn get_path_minimums(
+    env: &Env,
+    factory: &Address,
+    path: &Vec<Address>,
+    amount_out_min: i128,
+) -> Result<Vec<i128>, RouterError> {
+    if path.len() < 2 {
+        return Err(RouterError::InvalidPath);
+    }
+    let hops = path.len() - 1;
+    let mut min_amounts = Vec::new(env);
+    let mut current_min_output = amount_out_min;
+
+    // Walk backwards from final hop to first hop
+    for i in (0..hops).rev() {
+        let pair =
+            get_pair_address(env, factory, &path.get(i).unwrap(), &path.get(i + 1).unwrap())?;
+        let (reserve_in, reserve_out, fee_bps) = get_pair_reserves_and_fee(
+            env,
+            &pair,
+            &path.get(i).unwrap(),
+            &path.get(i + 1).unwrap(),
+        )?;
+        // For the current hop, we need to produce at least current_min_output
+        // This is the minimum output required from this hop
+        min_amounts.insert(0, current_min_output);
+        // Then compute the minimum input needed for this hop to achieve that output
+        // This becomes the minimum output required from the previous hop
+        // A zero minimum (caller opted out of slippage protection) constrains
+        // no earlier hop; get_amount_in rejects a zero output.
+        current_min_output = if current_min_output <= 0 {
+            0
+        } else {
+            get_amount_in(env, current_min_output, reserve_in, reserve_out, fee_bps)?
+        };
+    }
+    Ok(min_amounts)
 }

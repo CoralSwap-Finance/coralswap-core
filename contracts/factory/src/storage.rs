@@ -11,6 +11,7 @@ use coralswap_shared::{
 pub struct FactoryStorage {
     pub signers: Vec<Address>,
     pub pair_wasm_hash: BytesN<32>,
+    pub concentrated_pair_wasm_hash: BytesN<32>,
     pub lp_token_wasm_hash: BytesN<32>,
     pub pair_count: u32,
     pub protocol_version: u32,
@@ -38,6 +39,8 @@ pub enum DataKey {
     PairFrozen(Address),
     /// Fast boolean lookup for pair membership (issue #391).
     IsPair(Address),
+    /// Fast boolean lookup for LP-token membership.
+    IsLpToken(Address),
 }
 
 pub fn is_pair_frozen(env: &Env, pair: &Address) -> bool {
@@ -152,6 +155,19 @@ pub fn is_pair(env: &Env, pair: &Address) -> bool {
 pub fn set_is_pair(env: &Env, pair: &Address, is_pair: bool) {
     let key = DataKey::IsPair(pair.clone());
     if is_pair {
+        env.storage().instance().set(&key, &true);
+    } else {
+        env.storage().instance().remove(&key);
+    }
+}
+
+pub fn is_lp_token(env: &Env, token: &Address) -> bool {
+    env.storage().instance().get(&DataKey::IsLpToken(token.clone())).unwrap_or(false)
+}
+
+pub fn set_is_lp_token(env: &Env, token: &Address, is_lp_token: bool) {
+    let key = DataKey::IsLpToken(token.clone());
+    if is_lp_token {
         env.storage().instance().set(&key, &true);
     } else {
         env.storage().instance().remove(&key);

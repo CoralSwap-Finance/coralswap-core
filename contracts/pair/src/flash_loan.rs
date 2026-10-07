@@ -193,6 +193,11 @@ pub fn execute_flash_loan(
 
     // Each borrowed token's new balance must be >= old_reserve + fee.
     // Net effect: the pool gains exactly `fee` per token (or more).
+    //
+    // This is deliberately a FLOOR check (`>=`), not an equality: if the
+    // receiver returns more than principal + fee, the surplus is accepted
+    // and retained by the pool as a donation (issue #384). A refactor must
+    // not start rejecting overpayments.
     if amount_a > 0 {
         let required_a = state.reserve_a.checked_add(fee_a).ok_or(PairError::Overflow)?;
         if new_balance_a < required_a {
@@ -207,12 +212,18 @@ pub fn execute_flash_loan(
     }
 
     // -----------------------------------------------------------------------
-    // 8. Reserve update
+    // 8. Reserve update (Issue #351: sync to actual balances)
     // -----------------------------------------------------------------------
 
     // Reserves track the *actual* token balances, so an overpaid surplus is
     // credited to the pool rather than refunded to the receiver: it raises
     // `k` below and accrues to LPs.
+    //
+    // This sync handles direct transfers made during the callback: if someone
+    // donates tokens to the pair while the flash loan is in progress, those
+    // tokens are captured in the balances above and become part of the pool's
+    // reserves. This prevents "reserve dilution" — the reserves always match
+    // the actual holdings, so subsequent operations work with correct state.
     state.reserve_a = new_balance_a;
     state.reserve_b = new_balance_b;
 

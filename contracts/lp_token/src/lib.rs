@@ -385,6 +385,8 @@ impl LpToken {
 
     /// Mint new tokens to an address
     /// Only callable by admin (pair contract)
+    ///
+    /// Issue #349: Bounded to prevent unlimited emission attacks
     pub fn mint(env: Env, to: Address, amount: i128) -> Result<(), LpTokenError> {
         // Check if paused
         if Self::is_paused(env.clone()) {
@@ -397,6 +399,13 @@ impl LpToken {
 
         admin.require_auth();
 
+        // Issue #349: Bound mint amount per call to prevent atomic supply inflation attacks.
+        // Maximum LP tokens that can be minted in a single call (10^18).
+        const MAX_MINT_PER_CALL: i128 = 1_000_000_000_000_000_000;
+        if amount > MAX_MINT_PER_CALL {
+            return Err(LpTokenError::MintAmountTooLarge);
+        }
+
         // Increase balance
         let balance_key = LpTokenKey::Balance(to.clone());
         let current_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
@@ -407,6 +416,14 @@ impl LpToken {
         let total_supply: i128 =
             env.storage().instance().get(&LpTokenKey::TotalSupply).unwrap_or(0);
         let new_total_supply = total_supply.checked_add(amount).ok_or(LpTokenError::Overflow)?;
+
+        // Issue #349: Bound total supply to prevent long-term supply inflation.
+        // Maximum total supply (10^27). SAC tokens use i128 but realistic supply shouldn't exceed this.
+        const MAX_TOTAL_SUPPLY: i128 = 1_000_000_000_000_000_000_000_000_000;
+        if new_total_supply > MAX_TOTAL_SUPPLY {
+            return Err(LpTokenError::TotalSupplyExceeded);
+        }
+
         env.storage().instance().set(&LpTokenKey::TotalSupply, &new_total_supply);
 
         // Emit mint event
@@ -604,3 +621,36 @@ impl LpToken {
 
 #[cfg(test)]
 mod test;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Compile-time naming-convention checks (issue #382).
+//
+// Every emitted topic symbol must be lowercase snake_case and ≤ 9 chars for
+// `symbol_short!` topics. The list below mirrors every literal emitted by
+// this contract; update it when a symbol is added or renamed so the build
+// fails if the convention is broken. See docs/NAMING_CONVENTIONS.md.
+// ─────────────────────────────────────────────────────────────────────────
+
+const fn is_convention_symbol(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if !(b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+const _: () = assert!(is_convention_symbol("adm_xfer"));
+const _: () = assert!(is_convention_symbol("paused"));
+const _: () = assert!(is_convention_symbol("unpaused"));
+const _: () = assert!(is_convention_symbol("approve"));
+const _: () = assert!(is_convention_symbol("mint"));
+const _: () = assert!(is_convention_symbol("burn"));
+const _: () = assert!(is_convention_symbol("transfer"));
