@@ -351,6 +351,38 @@ WASM.
 
 ---
 
+## Balance-Delta Accounting Rule
+
+Any amount that backs reserves, shares, stakes, rewards, or repayments must be
+**measured, not assumed**. Contracts read the token balance they actually hold
+before and after a transfer and use the delta — never the nominal `amount`
+argument passed to `transfer`.
+
+The pair already works this way: `mint`, `swap`, `sync`, and the flash-loan
+repayment check all derive inputs from `balance - reserve`, and reserves are
+set from post-transfer balances. That is what keeps the pool solvent with
+fee-on-transfer, rebasing, or otherwise non-standard tokens, where the amount
+that arrives can be smaller than the amount sent.
+
+The rule, for every current and future contract (including the incentive and
+governance work in the #232-#237 area):
+
+- **Inbound funds:** credit `balance_after - balance_before` (or
+  `balance - tracked_reserve`), never the requested amount.
+- **Stored totals:** reserve-backed totals (reserves, staked balances, reward
+  pools) are reconciled against real balances, not incremented by nominal
+  amounts.
+- **Outbound funds:** when a payout must be exact, verify the balance change
+  or document why the nominal amount is safe for that token set.
+- **Tests:** any contract that accepts deposits must include a
+  fee-on-transfer (or short-delivery) token test showing the credited amount
+  equals what was actually received.
+
+Nominal-amount accounting is the root of the fee-on-transfer bug class fixed
+in the pair; copying it into a new contract re-introduces that bug.
+
+---
+
 ## V2 Architecture (Planned)
 
 The V2 architecture is expected to introduce:
