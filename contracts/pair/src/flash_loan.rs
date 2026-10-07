@@ -212,12 +212,18 @@ pub fn execute_flash_loan(
     }
 
     // -----------------------------------------------------------------------
-    // 8. Reserve update
+    // 8. Reserve update (Issue #351: sync to actual balances)
     // -----------------------------------------------------------------------
 
     // Reserves track the *actual* token balances, so an overpaid surplus is
     // credited to the pool rather than refunded to the receiver: it raises
     // `k` below and accrues to LPs.
+    //
+    // This sync handles direct transfers made during the callback: if someone
+    // donates tokens to the pair while the flash loan is in progress, those
+    // tokens are captured in the balances above and become part of the pool's
+    // reserves. This prevents "reserve dilution" — the reserves always match
+    // the actual holdings, so subsequent operations work with correct state.
     state.reserve_a = new_balance_a;
     state.reserve_b = new_balance_b;
 
