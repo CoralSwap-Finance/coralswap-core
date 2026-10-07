@@ -397,6 +397,7 @@ dependencies = [
  "coralswap-lp-token",
  "coralswap-pair",
  "coralswap-shared",
+ "ethnum",
  "soroban-sdk",
 ]
 
@@ -404,6 +405,7 @@ dependencies = [
 name = "coralswap-shared"
 version = "0.1.0"
 dependencies = [
+ "ethnum",
  "soroban-sdk",
 ]
 

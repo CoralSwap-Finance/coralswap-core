@@ -59,7 +59,7 @@ impl Ctx {
         let recipient = Address::generate(&env);
 
         let factory = FactoryClient::new(&env, &factory_id);
-        factory.initialize(&signers, &empty_wasm, &empty_wasm, &setter);
+        factory.initialize(&signers, &empty_wasm, &empty_wasm, &empty_wasm, &setter);
 
         Self { env, factory, factory_id, setter, stranger, pair, token, recipient }
     }
@@ -104,6 +104,25 @@ fn set_fee_to_is_authorized_by_the_setter() {
     );
     assert_eq!(c.factory.fee_to(), Some(c.recipient.clone()));
     assert_eq!(c.factory.fee_bps(), 30u32);
+}
+
+#[test]
+fn set_fee_config_is_atomic_and_rejects_invalid_combinations() {
+    let c = Ctx::new();
+
+    auth::allow(
+        &c.env,
+        &c.setter,
+        &c.factory_id,
+        "set_fee_config",
+        auth_args!(&c.env, c.setter.clone(), c.recipient.clone(), 20u32),
+    );
+    c.factory.set_fee_config(&c.setter, &Some(c.recipient.clone()), &20);
+    assert_eq!(c.factory.fee_to(), Some(c.recipient.clone()));
+    assert_eq!(c.factory.fee_bps(), 20);
+
+    assert!(c.factory.try_set_fee_config(&c.setter, &Some(c.recipient.clone()), &0).is_err());
+    assert_eq!(c.factory.fee_bps(), 20);
 }
 
 #[test]

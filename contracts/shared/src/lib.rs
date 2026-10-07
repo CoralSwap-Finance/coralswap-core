@@ -24,6 +24,7 @@
 //! ([`FACTORY_INSTANCE_THRESHOLD`] / [`FACTORY_INSTANCE_BUMP_AMOUNT`]) since
 //! it stores the pair registry.
 
+use ethnum::U256;
 use soroban_sdk::{xdr::ToXdr, Address, Bytes, Env, String};
 
 // ─────────────────────────────────────────────
@@ -106,12 +107,31 @@ pub fn extend_instance_ttl(env: &Env) {
 // Reentrancy-guard TTL (pair)
 // ─────────────────────────────────────────────
 
+/// Upper bound, in ledgers, on how long the reentrancy guard may be held.
+///
+/// The guard is held for the duration of one contract invocation, which lives
+/// inside a single ledger. 720 ledgers (~1 hour) is deliberately far above
+/// that so the TTL floor below never depends on a tight estimate.
+pub const REENTRANCY_MAX_HOLD_LEDGERS: u32 = 720;
+
 /// Threshold used when the reentrancy guard flips the lock flag.
 /// Previously bare `5_000` magic in `pair::reentrancy`.
+///
+/// Every lock flip leaves at least this many ledgers of TTL on the entry, so a
+/// held guard always outlives [`REENTRANCY_MAX_HOLD_LEDGERS`] (issue #362).
 pub const REENTRANCY_TTL_THRESHOLD: u32 = 5_000;
 
 /// Extend-to used when the reentrancy guard flips the lock flag.
 pub const REENTRANCY_TTL_EXTEND_TO: u32 = 120_960;
+
+// The guard lives in *instance* storage, i.e. in the same ledger entry as the
+// rest of the pair's state, so it cannot expire independently of that state;
+// what these checks protect is the guarantee that a lock flip always leaves the
+// shared entry alive for longer than any operation can hold the lock.
+const _: () = assert!(REENTRANCY_TTL_THRESHOLD >= REENTRANCY_MAX_HOLD_LEDGERS);
+const _: () = assert!(REENTRANCY_TTL_EXTEND_TO >= REENTRANCY_TTL_THRESHOLD);
+// A lock flip must never *lower* the policy the rest of the pair maintains.
+const _: () = assert!(REENTRANCY_TTL_EXTEND_TO >= INSTANCE_TTL_EXTEND_TO);
 
 /// Extend instance TTL for reentrancy-guard lock flips.
 pub fn extend_reentrancy_ttl(env: &Env) {
@@ -280,15 +300,22 @@ pub fn quote_input_amount(
     }
     let fee_factor = fee_factor(fee_bps)?;
 
-    let numerator = reserve_in
-        .checked_mul(amount_out)
-        .ok_or(QuoteError::Overflow)?
-        .checked_mul(BPS_DENOMINATOR)
+    // Exact ceiling in 256 bits: the input must cover the output, rounded up by
+    // at most one unit only when the division leaves a remainder, and large
+    // reserves must not overflow the intermediate product.
+    let numerator = U256::from(reserve_in as u128)
+        .checked_mul(U256::from(amount_out as u128))
+        .and_then(|n| n.checked_mul(U256::from(BPS_DENOMINATOR as u128)))
         .ok_or(QuoteError::Overflow)?;
-    let denominator =
-        (reserve_out - amount_out).checked_mul(fee_factor).ok_or(QuoteError::Overflow)?;
-
-    (numerator / denominator).checked_add(1).ok_or(QuoteError::Overflow)
+    let denominator = U256::from((reserve_out - amount_out) as u128)
+        .checked_mul(U256::from(fee_factor as u128))
+        .ok_or(QuoteError::Overflow)?;
+    let quotient = numerator / denominator;
+    let rounded = quotient + U256::from((numerator % denominator != U256::ZERO) as u8);
+    if rounded > U256::from(i128::MAX as u128) {
+        return Err(QuoteError::Overflow);
+    }
+    Ok(rounded.as_u128() as i128)
 }
 
 /// `10_000 - fee_bps`, rejecting fees of 100% or more (which would zero the
@@ -338,5 +365,34 @@ mod tests {
 
         assert_ne!(name_ab, name_ac);
         assert_ne!(symbol_ab, symbol_ac);
+    }
+}
+
+#[cfg(test)]
+mod quote_input_amount_tests {
+    use super::{quote_input_amount, QuoteError};
+
+    #[test]
+    fn exact_division_is_not_rounded_up() {
+        // 1000 * 100 * 10_000 / ((1000 - 100) * 10_000) = 111.11.. -> 112, while a
+        // zero-fee quote that divides exactly must not add a unit.
+        assert_eq!(quote_input_amount(100, 1_000, 1_000, 0), Ok(112));
+        assert_eq!(quote_input_amount(500, 1_000, 1_000, 0), Ok(1_000));
+    }
+
+    #[test]
+    fn large_reserves_do_not_overflow() {
+        // reserve_in * amount_out * 10_000 exceeds i128 here; the 256-bit path
+        // must still return the exact quote instead of Overflow.
+        let reserve = 10i128.pow(30);
+        assert_eq!(quote_input_amount(reserve / 2, reserve, reserve, 0), Ok(reserve));
+    }
+
+    #[test]
+    fn quote_that_exceeds_i128_reports_overflow() {
+        assert_eq!(
+            quote_input_amount(i128::MAX - 1, i128::MAX, i128::MAX, 0),
+            Err(QuoteError::Overflow)
+        );
     }
 }

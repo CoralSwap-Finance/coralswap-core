@@ -1,4 +1,5 @@
 mod auth_matrix;
+mod governance;
 
 use soroban_sdk::Env;
 
@@ -71,7 +72,13 @@ mod factory_tests {
 
         let signers = Vec::from_array(&env, [signer_1.clone(), signer_2.clone(), signer_3.clone()]);
 
-        client.initialize(&signers, &pair_wasm_hash, &lp_token_wasm_hash, &fee_to_setter);
+        client.initialize(
+            &signers,
+            &pair_wasm_hash,
+            &pair_wasm_hash,
+            &lp_token_wasm_hash,
+            &fee_to_setter,
+        );
 
         let token_a = Address::generate(&env);
         let token_b = Address::generate(&env);
@@ -99,6 +106,7 @@ mod factory_tests {
         client.initialize(
             &Vec::from_array(&env, [signer_1, signer_2, signer_3]),
             &pair_wasm_hash,
+            &pair_wasm_hash,
             &lp_token_wasm_hash,
             &fee_to_setter,
         );
@@ -124,6 +132,7 @@ mod factory_tests {
         let result = client.try_initialize(
             &Vec::from_array(&env, [signer]),
             &pair_wasm_hash,
+            &pair_wasm_hash,
             &lp_token_wasm_hash,
             &fee_to_setter,
         );
@@ -145,6 +154,7 @@ mod factory_tests {
         // Empty signers should fail with InvalidSignerCount (error code 4)
         let result = client.try_initialize(
             &Vec::new(&env),
+            &pair_wasm_hash,
             &pair_wasm_hash,
             &lp_token_wasm_hash,
             &fee_to_setter,
@@ -168,8 +178,13 @@ mod factory_tests {
             signers.push_back(Address::generate(&env));
         }
 
-        let result =
-            client.try_initialize(&signers, &pair_wasm_hash, &lp_token_wasm_hash, &fee_to_setter);
+        let result = client.try_initialize(
+            &signers,
+            &pair_wasm_hash,
+            &pair_wasm_hash,
+            &lp_token_wasm_hash,
+            &fee_to_setter,
+        );
         assert!(result.is_err());
     }
 
@@ -187,6 +202,7 @@ mod factory_tests {
         // 1 signer is the minimum valid count
         client.initialize(
             &Vec::from_array(&env, [signer]),
+            &pair_wasm_hash,
             &pair_wasm_hash,
             &lp_token_wasm_hash,
             &fee_to_setter,
@@ -211,7 +227,13 @@ mod factory_tests {
             signers.push_back(Address::generate(&env));
         }
 
-        client.initialize(&signers, &pair_wasm_hash, &lp_token_wasm_hash, &fee_to_setter);
+        client.initialize(
+            &signers,
+            &pair_wasm_hash,
+            &pair_wasm_hash,
+            &lp_token_wasm_hash,
+            &fee_to_setter,
+        );
 
         assert!(!client.is_paused());
     }
@@ -228,39 +250,41 @@ mod factory_tests {
 
     #[test]
     fn test_propose_upgrade_stores_proposal() {
-        let (env, client, _, _, _, _, _) = setup_env();
+        let (env, client, _, _, _, _, signers) = setup_env();
         let new_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
-        let signers = Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
-        client.propose_upgrade(&signers, &new_hash);
+        // Strict-majority quorum (issue #362): present 2 of the 3 registered
+        // signers; unregistered addresses are rejected with Unauthorized.
+        let quorum = Vec::from_array(&env, [signers.get(0).unwrap(), signers.get(1).unwrap()]);
+        client.propose_upgrade(&quorum, &new_hash);
     }
 
     #[test]
     fn test_propose_upgrade_duplicate_rejected() {
-        let (env, client, _, _, _, _, _) = setup_env();
+        let (env, client, _, _, _, _, signers) = setup_env();
         let new_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
-        let signers = Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
-        client.propose_upgrade(&signers, &new_hash);
-        let result = client.try_propose_upgrade(&signers, &new_hash);
+        let quorum = Vec::from_array(&env, [signers.get(0).unwrap(), signers.get(1).unwrap()]);
+        client.propose_upgrade(&quorum, &new_hash);
+        let result = client.try_propose_upgrade(&quorum, &new_hash);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_execute_upgrade_too_early_fails() {
-        let (env, client, _, _, _, _, _) = setup_env();
+        let (env, client, _, _, _, _, signers) = setup_env();
         let new_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
-        let signers = Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
-        client.propose_upgrade(&signers, &new_hash);
+        let quorum = Vec::from_array(&env, [signers.get(0).unwrap(), signers.get(1).unwrap()]);
+        client.propose_upgrade(&quorum, &new_hash);
         let result = client.try_execute_upgrade();
         assert!(result.is_err());
     }
 
     #[test]
     fn test_cancel_upgrade_clears_proposal() {
-        let (env, client, _, _, _, _, _) = setup_env();
+        let (env, client, _, _, _, _, signers) = setup_env();
         let new_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
-        let signers = Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
-        client.propose_upgrade(&signers, &new_hash);
-        client.cancel_upgrade(&signers);
+        let quorum = Vec::from_array(&env, [signers.get(0).unwrap(), signers.get(1).unwrap()]);
+        client.propose_upgrade(&quorum, &new_hash);
+        client.cancel_upgrade(&quorum);
         let result = client.try_execute_upgrade();
         assert!(result.is_err());
     }
@@ -289,6 +313,7 @@ mod factory_tests {
         client.initialize(
             &Vec::from_array(&env, [s1, s2, s3]),
             &pair_wasm_hash,
+            &pair_wasm_hash,
             &lp_token_wasm_hash,
             &fee_to_setter,
         );
@@ -316,6 +341,7 @@ mod factory_tests {
                 &env,
                 [Address::generate(&env), Address::generate(&env), Address::generate(&env)],
             ),
+            &pair_wasm_hash,
             &pair_wasm_hash,
             &lp_token_wasm_hash,
             &fee_to_setter,
@@ -560,6 +586,7 @@ mod factory_tests {
         client.initialize(
             &Vec::from_array(&env, [s1, s2, s3]),
             &pair_wasm_hash,
+            &pair_wasm_hash,
             &lp_token_wasm_hash,
             &fee_to_setter,
         );
@@ -583,6 +610,7 @@ mod factory_tests {
         let s3 = Address::generate(&env);
         client.initialize(
             &Vec::from_array(&env, [s1, s2, s3]),
+            &pair_wasm_hash,
             &pair_wasm_hash,
             &lp_token_wasm_hash,
             &fee_to_setter,
@@ -942,7 +970,13 @@ mod factory_tests {
             &env,
             [Address::generate(&env), Address::generate(&env), Address::generate(&env)],
         );
-        client.initialize(&signers, &dummy_pair_wasm, &dummy_lp_wasm, &fee_to_setter);
+        client.initialize(
+            &signers,
+            &dummy_pair_wasm,
+            &dummy_pair_wasm,
+            &dummy_lp_wasm,
+            &fee_to_setter,
+        );
 
         (env, client, fee_to_setter)
     }
@@ -1053,12 +1087,20 @@ mod factory_tests {
         let client = FactoryClient::new(&env, &factory_address);
 
         let pair_wasm_hash = BytesN::from_array(&env, &[1u8; 32]);
+        let concentrated_pair_wasm_hash = BytesN::from_array(&env, &[3u8; 32]);
         let lp_token_wasm_hash = BytesN::from_array(&env, &[2u8; 32]);
         let signers = Vec::from_array(&env, [Address::generate(&env)]);
 
-        client.initialize(&signers, &pair_wasm_hash, &lp_token_wasm_hash, &Address::generate(&env));
+        client.initialize(
+            &signers,
+            &pair_wasm_hash,
+            &concentrated_pair_wasm_hash,
+            &lp_token_wasm_hash,
+            &Address::generate(&env),
+        );
 
         assert_eq!(client.get_pair_wasm_hash(), pair_wasm_hash);
+        assert_eq!(client.get_concentrated_pair_wasm_hash(), concentrated_pair_wasm_hash);
         assert_eq!(client.get_lp_token_wasm_hash(), lp_token_wasm_hash);
     }
 
