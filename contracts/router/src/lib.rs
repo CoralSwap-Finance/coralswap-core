@@ -518,11 +518,8 @@ impl Router {
         let liquidity = pair_client.mint(&to);
 
         // Return amounts in caller's original token order
-        let (ret_amount_a, ret_amount_b) = if swapped {
-            (amount_1, amount_0)
-        } else {
-            (amount_0, amount_1)
-        };
+        let (ret_amount_a, ret_amount_b) =
+            if swapped { (amount_1, amount_0) } else { (amount_0, amount_1) };
 
         Ok((ret_amount_a, ret_amount_b, liquidity))
     }
@@ -737,11 +734,8 @@ impl Router {
         // Pair's burn() returns amounts in canonical order (token_0, token_1).
         let (token_0, token_1) = sort_tokens(&token_a, &token_b)?;
         let swapped = token_0 != token_a;
-        let (amount_0_min, amount_1_min) = if swapped {
-            (amount_b_min, amount_a_min)
-        } else {
-            (amount_a_min, amount_b_min)
-        };
+        let (amount_0_min, amount_1_min) =
+            if swapped { (amount_b_min, amount_a_min) } else { (amount_a_min, amount_b_min) };
 
         // Get factory address
         let factory = get_factory(&env).ok_or(RouterError::PairNotFound)?;
@@ -770,11 +764,8 @@ impl Router {
         }
 
         // Return amounts in caller's original token order
-        let (ret_amount_a, ret_amount_b) = if swapped {
-            (amount_1, amount_0)
-        } else {
-            (amount_0, amount_1)
-        };
+        let (ret_amount_a, ret_amount_b) =
+            if swapped { (amount_1, amount_0) } else { (amount_0, amount_1) };
 
         Ok((ret_amount_a, ret_amount_b))
     }
