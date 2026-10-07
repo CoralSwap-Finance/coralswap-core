@@ -11,6 +11,8 @@
 //! | `set_fee_to`               | `(setter, fee_to, fee_bps)`                                   | the `fee_to_setter` |
 //! | `set_fee_to_setter`        | `(setter, new_setter)`                                        | the `fee_to_setter` |
 //! | `set_pair_fee`             | `(setter, pair, fee_bps)`                                     | the `fee_to_setter` |
+//! | `set_pair_lp_token_paused` | `(setter, pair, paused)`                                      | the `fee_to_setter` |
+//! | `set_pair_stale_threshold`  | `(setter, pair, threshold)`                                   | the `fee_to_setter` |
 //! | `deposit_protocol_fee`     | `(pair, token, amount)`                                       | the `pair`          |
 //!
 //! Each setter entry point takes the claimed setter as an explicit argument and
@@ -233,6 +235,40 @@ fn set_fee_to_setter_rejects_a_stranger() {
     assert_eq!(c.factory.fee_to_setter(), Some(c.setter));
 }
 
+#[test]
+fn set_pair_lp_token_paused_rejects_a_stranger() {
+    let c = Ctx::new();
+
+    auth::allow(
+        &c.env,
+        &c.stranger,
+        &c.factory_id,
+        "set_pair_lp_token_paused",
+        auth_args!(&c.env, c.stranger.clone(), c.pair.clone(), true),
+    );
+    assert!(
+        c.factory.try_set_pair_lp_token_paused(&c.stranger, &c.pair, &true).is_err(),
+        "a stranger must not pause or unpause a pair lp token"
+    );
+}
+
+#[test]
+fn set_pair_stale_threshold_rejects_a_stranger() {
+    let c = Ctx::new();
+
+    auth::allow(
+        &c.env,
+        &c.stranger,
+        &c.factory_id,
+        "set_pair_stale_threshold",
+        auth_args!(&c.env, c.stranger.clone(), c.pair.clone(), 500u32),
+    );
+    assert!(
+        c.factory.try_set_pair_stale_threshold(&c.stranger, &c.pair, &500).is_err(),
+        "a stranger must not retune the oracle stale threshold"
+    );
+}
+
 /// A correct authorizer bound to the wrong *arguments* must not satisfy the
 /// call: authorizations are bound to a specific invocation, not to an address
 /// alone.
@@ -281,6 +317,8 @@ fn every_gated_entry_point_fails_with_no_authorization_at_all() {
 
     assert!(c.factory.try_set_fee_to(&c.setter, &Some(c.stranger.clone()), &30).is_err());
     assert!(c.factory.try_set_pair_fee(&c.setter, &c.pair, &30).is_err());
+    assert!(c.factory.try_set_pair_lp_token_paused(&c.setter, &c.pair, &true).is_err());
+    assert!(c.factory.try_set_pair_stale_threshold(&c.setter, &c.pair, &500u32).is_err());
     assert!(c.factory.try_set_fee_to_setter(&c.setter, &c.stranger).is_err());
     assert!(c.factory.try_deposit_protocol_fee(&c.pair, &c.token, &1_000i128).is_err());
 
