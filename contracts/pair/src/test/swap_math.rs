@@ -210,13 +210,8 @@ mod swap_math_tests {
 
         let output_without_donation =
             get_amount_out(amount_in, reserve_in, reserve_out, fee_bps).unwrap();
-        let output_with_donation = get_amount_out(
-            amount_in + donation,
-            reserve_in,
-            reserve_out,
-            fee_bps,
-        )
-        .unwrap();
+        let output_with_donation =
+            get_amount_out(amount_in + donation, reserve_in, reserve_out, fee_bps).unwrap();
         let extra_output_allowed = output_with_donation - output_without_donation;
 
         assert!(extra_output_allowed > 0, "donation should increase the input attributed to swap");
