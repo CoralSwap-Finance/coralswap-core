@@ -72,6 +72,19 @@ written storage-lifetime contract (see
   `LP_PERSISTENT_THRESHOLD` / `LP_PERSISTENT_EXTEND_TO` policy.
 - Views never extend TTL; storage-key symbols are stable forever.
 
+## Token Accounting Rules
+
+Reserve-backed amounts must be measured from **balance deltas**, not from the
+nominal amount passed to `transfer` (see
+[Balance-Delta Accounting Rule](ARCHITECTURE.md#balance-delta-accounting-rule)):
+
+- Credit deposits as `balance_after - balance_before` (or
+  `balance - tracked_reserve`).
+- Reconcile stored totals (reserves, stakes, reward pools) against actual
+  balances.
+- New contracts that accept tokens (incentives, governance, staking, ...) must
+  follow this rule and ship a fee-on-transfer / short-delivery test.
+
 ## Pull Request Process
 
 1. Fork the repo and create a branch: `feat/issue-NUMBER-short-description`
@@ -137,6 +150,9 @@ any PR whose member lands below the floor recorded in
   - The pinned stable version (matching `Cargo.toml`) is **required** to pass.
   - Newer stable and preview/RC versions are **warn-only** -- their failures are
     allowed but reported as annotations and in the run summary.
+- Reviewers additionally check the PR template's accounting item: any code that
+  moves tokens into a contract must credit balance deltas, not nominal
+  transfer amounts (see [Token Accounting Rules](#token-accounting-rules)).
 - It also runs on a weekly schedule and via manual `workflow_dispatch`. When adopting
   a newer SDK, bump the pinned versions in `Cargo.toml` and the matrix entries together.
 

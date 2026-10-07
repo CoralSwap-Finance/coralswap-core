@@ -1,4 +1,5 @@
 use crate::errors::RouterError;
+use coralswap_shared::{quote_input_amount, quote_output_amount, QuoteError};
 use soroban_sdk::{contractclient, Address, Env, Vec};
 
 #[contractclient(name = "FactoryClient")]
@@ -14,11 +15,13 @@ pub trait FactoryInterface {
 #[allow(dead_code)]
 pub trait PairInterface {
     fn burn(env: Env, to: Address) -> (i128, i128);
+    fn deposit_lp(env: Env, from: Address, amount: i128);
     fn mint(env: Env, to: Address) -> i128;
     fn lp_token(env: Env) -> Address;
     fn swap(env: Env, amount_a_out: i128, amount_b_out: i128, to: Address);
     fn get_reserves(env: Env) -> (i128, i128, u64);
     fn get_current_fee_bps(env: Env) -> u32;
+    fn get_effective_fee_bps(env: Env) -> (u32, bool);
 }
 
 #[contractclient(name = "TokenClient")]
@@ -28,11 +31,22 @@ pub trait TokenInterface {
     fn balance(env: Env, id: Address) -> i128;
 }
 
-/// Computes output amount for an exact input swap using constant-product formula.
+/// Maps the shared quote error onto the router's error codes.
+fn map_quote_error(err: QuoteError) -> RouterError {
+    match err {
+        QuoteError::ZeroAmount => RouterError::ZeroAmount,
+        QuoteError::Dust => RouterError::DustAmount,
+        QuoteError::InsufficientLiquidity | QuoteError::Overflow | QuoteError::InvalidFee => {
+            RouterError::InsufficientLiquidity
+        }
+    }
+}
+
+/// Computes output amount for an exact input swap.
 ///
-/// Formula:
-/// amount_out = (amount_in * (10000 - fee_bps) * reserve_out)
-///              / (reserve_in * 10000 + amount_in * (10000 - fee_bps))
+/// Thin wrapper over [`coralswap_shared::quote_output_amount`] — the single
+/// quote implementation shared with the pair. `fee_bps` must already be the
+/// pair's effective fee (see [`get_pair_reserves_and_fee`]).
 #[allow(dead_code)]
 pub fn get_amount_out(
     _env: &Env,
@@ -41,40 +55,13 @@ pub fn get_amount_out(
     reserve_out: i128,
     fee_bps: u32,
 ) -> Result<i128, RouterError> {
-    if amount_in <= 0 {
-        return Err(RouterError::ZeroAmount);
-    }
-    if reserve_in <= 0 || reserve_out <= 0 {
-        return Err(RouterError::InsufficientLiquidity);
-    }
-
-    let amount_in_with_fee =
-        amount_in.checked_mul(10000 - fee_bps as i128).ok_or(RouterError::InsufficientLiquidity)?;
-
-    let numerator =
-        amount_in_with_fee.checked_mul(reserve_out).ok_or(RouterError::InsufficientLiquidity)?;
-
-    let denominator = reserve_in
-        .checked_mul(10000)
-        .ok_or(RouterError::InsufficientLiquidity)?
-        .checked_add(amount_in_with_fee)
-        .ok_or(RouterError::InsufficientLiquidity)?;
-
-    let out = numerator / denominator;
-    // Dust policy (issue 393): truncated zero outputs are typed errors.
-    // Note: small non-zero outputs are allowed so 1k-in/100k-pool quotes
-    // (~987 out) keep working; the pair enforces the reserve floor.
-    if out <= 0 {
-        return Err(RouterError::DustAmount);
-    }
-    Ok(out)
+    quote_output_amount(amount_in, reserve_in, reserve_out, fee_bps).map_err(map_quote_error)
 }
 
 /// Computes input amount required for an exact output swap.
 ///
-/// Formula:
-/// amount_in = (reserve_in * amount_out * 10000)
-///             / ((reserve_out - amount_out) * (10000 - fee_bps)) + 1
+/// Thin wrapper over [`coralswap_shared::quote_input_amount`]. `fee_bps` must
+/// already be the pair's effective fee (see [`get_pair_reserves_and_fee`]).
 #[allow(dead_code)]
 pub fn get_amount_in(
     _env: &Env,
@@ -83,24 +70,7 @@ pub fn get_amount_in(
     reserve_out: i128,
     fee_bps: u32,
 ) -> Result<i128, RouterError> {
-    if amount_out <= 0 {
-        return Err(RouterError::ZeroAmount);
-    }
-    if reserve_in <= 0 || reserve_out <= 0 || amount_out >= reserve_out {
-        return Err(RouterError::InsufficientLiquidity);
-    }
-
-    let numerator = reserve_in
-        .checked_mul(amount_out)
-        .ok_or(RouterError::InsufficientLiquidity)?
-        .checked_mul(10000)
-        .ok_or(RouterError::InsufficientLiquidity)?;
-
-    let denominator = (reserve_out - amount_out)
-        .checked_mul(10000 - fee_bps as i128)
-        .ok_or(RouterError::InsufficientLiquidity)?;
-
-    Ok((numerator / denominator) + 1)
+    quote_input_amount(amount_out, reserve_in, reserve_out, fee_bps).map_err(map_quote_error)
 }
 
 /// Given some amount of an asset and pair reserves,
@@ -195,6 +165,9 @@ pub fn get_pair_address(
 
 /// Returns (reserve_in, reserve_out, fee_bps) for a swap of token_in → token_out
 /// via the pair at the given address. Determines direction by sorting tokens.
+///
+/// Issue #350: Uses `get_effective_fee_bps()` instead of `get_current_fee_bps()`
+/// to account for factory overrides, ensuring quotes match actual swap execution.
 pub fn get_pair_reserves_and_fee(
     env: &Env,
     pair: &Address,
@@ -202,8 +175,25 @@ pub fn get_pair_reserves_and_fee(
     token_out: &Address,
 ) -> Result<(i128, i128, u32), RouterError> {
     let pair_client = PairClient::new(env, pair);
-    let (reserve_a, reserve_b, _) = pair_client.get_reserves();
-    let fee_bps = pair_client.get_current_fee_bps();
+    // A registered address that does not implement the pair interface (or has
+    // no usable reserves) is rejected before quoting.
+    let (reserve_a, reserve_b, _) = pair_client
+        .try_get_reserves()
+        .map_err(|_| RouterError::PairNotFound)?
+        .map_err(|_| RouterError::PairNotFound)?;
+    if reserve_a <= 0 || reserve_b <= 0 || reserve_a.checked_mul(reserve_b).is_none() {
+        return Err(RouterError::InsufficientLiquidity);
+    }
+    // Override-aware fee, so quotes match what the pair charges on execution.
+    // 0 bps is a valid pool configuration; above the factory's 100 bps cap the
+    // contract is not a CoralSwap pair.
+    let (fee_bps, _is_override) = pair_client
+        .try_get_effective_fee_bps()
+        .map_err(|_| RouterError::PairNotFound)?
+        .map_err(|_| RouterError::PairNotFound)?;
+    if fee_bps > 100 {
+        return Err(RouterError::PairNotFound);
+    }
 
     let (token_0, _) = sort_tokens(token_in, token_out)?;
     if *token_in == token_0 {
@@ -240,4 +230,52 @@ pub fn get_path_amounts_out(
         amounts.push_back(current_amount);
     }
     Ok(amounts)
+}
+
+/// Computes minimum required output for each hop to achieve a global minimum output.
+/// Works backwards from the final minimum using the inverse swap formula.
+/// Returns a Vec of length path.len()-1 where min_amounts[i] is the minimum output
+/// required from swapping path[i] → path[i+1] to meet the global min_out.
+///
+/// Example for 2-hop (token_in -> hub -> token_out):
+/// - Hop 2 needs to produce at least amount_out_min
+/// - To achieve that, hop 2 needs a minimum input = get_amount_in(amount_out_min, hop2_reserves)
+/// - That minimum input IS the minimum output required from hop 1
+pub fn get_path_minimums(
+    env: &Env,
+    factory: &Address,
+    path: &Vec<Address>,
+    amount_out_min: i128,
+) -> Result<Vec<i128>, RouterError> {
+    if path.len() < 2 {
+        return Err(RouterError::InvalidPath);
+    }
+    let hops = path.len() - 1;
+    let mut min_amounts = Vec::new(env);
+    let mut current_min_output = amount_out_min;
+
+    // Walk backwards from final hop to first hop
+    for i in (0..hops).rev() {
+        let pair =
+            get_pair_address(env, factory, &path.get(i).unwrap(), &path.get(i + 1).unwrap())?;
+        let (reserve_in, reserve_out, fee_bps) = get_pair_reserves_and_fee(
+            env,
+            &pair,
+            &path.get(i).unwrap(),
+            &path.get(i + 1).unwrap(),
+        )?;
+        // For the current hop, we need to produce at least current_min_output
+        // This is the minimum output required from this hop
+        min_amounts.insert(0, current_min_output);
+        // Then compute the minimum input needed for this hop to achieve that output
+        // This becomes the minimum output required from the previous hop
+        // A zero minimum (caller opted out of slippage protection) constrains
+        // no earlier hop; get_amount_in rejects a zero output.
+        current_min_output = if current_min_output <= 0 {
+            0
+        } else {
+            get_amount_in(env, current_min_output, reserve_in, reserve_out, fee_bps)?
+        };
+    }
+    Ok(min_amounts)
 }

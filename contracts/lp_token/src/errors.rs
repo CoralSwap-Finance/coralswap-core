@@ -16,4 +16,8 @@ pub enum LpTokenError {
     InvalidSignature = 209,
     /// Metadata failed SAC-parity validation (issue 392).
     InvalidMetadata = 210,
+    /// Mint amount exceeds per-call limit (issue #349).
+    MintAmountTooLarge = 211,
+    /// Total supply would exceed maximum allowed (issue #349).
+    TotalSupplyExceeded = 212,
 }

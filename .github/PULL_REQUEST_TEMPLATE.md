@@ -28,3 +28,4 @@ Closes #
 - [ ] Commit messages follow conventional format
 - [ ] No unrelated changes included
 - [ ] Any new `storage().set` writes are paired with an `extend_ttl` call (see docs/STORAGE_LIFETIMES.md)
+- [ ] Any token amounts that back reserves, stakes, rewards, or repayments are measured from balance deltas, not nominal `transfer` amounts (see ARCHITECTURE.md → Balance-Delta Accounting Rule)

@@ -133,26 +133,40 @@ fn test_set_stale_threshold_boundary_max() {
 #[test]
 fn test_set_stale_threshold_requires_factory_auth() {
     let env = Env::default();
-    let (pair_client, _factory, _, _, _) = setup_pair(&env);
+    let (pair_client, factory, _, _, pair_id) = setup_pair(&env);
 
-    // Do NOT mock all auths — try to call without proper auth
-    // Any address other than the factory must not be able to authorize
-    let _unauthorized = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    coralswap_shared::test_support::allow(
+        &env,
+        &stranger,
+        &pair_id,
+        "set_stale_threshold",
+        coralswap_shared::auth_args!(&env, 500u32),
+    );
+    let result_stranger = pair_client.try_set_stale_threshold(&500u32);
+    assert!(result_stranger.is_err());
 
-    // Mock auth for the unauthorized address
-    // BLANKET MOCK (issue #314): oracle staleness arithmetic, not authorization.
-    // Guards are covered by the per-contract `auth_matrix` module.
-    env.mock_all_auths_allowing_non_root_auth();
+    coralswap_shared::test_support::allow_nothing(&env);
+    let result_no_auth = pair_client.try_set_stale_threshold(&500u32);
+    assert!(result_no_auth.is_err());
 
-    // Attempt to set stale threshold without proper authorization
-    // (In this test setup with mock_all_auths, it will succeed, but in real scenario it would fail)
-    // We'll test the authorization path via factory mock instead
+    coralswap_shared::test_support::allow(
+        &env,
+        &factory,
+        &pair_id,
+        "set_stale_threshold",
+        coralswap_shared::auth_args!(&env, 500u32),
+    );
+    let result_factory = pair_client.try_set_stale_threshold(&500u32);
+    assert!(result_factory.is_ok());
 
-    // For proper testing, we'd need a real factory contract that validates signers.
-    // For now, verify the function exists and can be called.
-    let result = pair_client.try_set_stale_threshold(&500u32);
-
-    assert!(result.is_ok());
+    coralswap_shared::test_support::assert_authorized(
+        &env,
+        &factory,
+        &pair_id,
+        "set_stale_threshold",
+        coralswap_shared::auth_args!(&env, 500u32),
+    );
 }
 
 #[test]

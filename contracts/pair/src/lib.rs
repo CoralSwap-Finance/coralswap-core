@@ -27,8 +27,9 @@ use soroban_sdk::{
     Address, Bytes, Env, Symbol,
 };
 use storage::{
-    get_fee_state, get_frozen, get_lp_token_paused, get_pair_state, set_fee_state, set_frozen,
-    set_lp_token_paused, set_pair_state, set_reentrancy_guard, FeeState, ReentrancyGuard,
+    get_fee_state, get_frozen, get_lp_token_paused, get_pair_state, get_pending_lp,
+    get_pending_lp_total, set_fee_state, set_frozen, set_lp_token_paused, set_pair_state,
+    set_pending_lp, set_pending_lp_total, set_reentrancy_guard, FeeState, ReentrancyGuard,
 };
 
 /// Error surface of the LP-token client declared above.
@@ -97,8 +98,11 @@ fn ensure_lp_token_not_paused(env: &Env) -> Result<(), PairError> {
     Ok(())
 }
 
-/// Guard for every value-changing entry point while the factory admin has this
-/// pool frozen.
+/// Guard for the price-moving and value-creating entry points (`swap`, `mint`,
+/// `mint_with_one_token`, `burn_single_side`, `flash_loan`) while the pool is
+/// frozen. A proportional `burn` is deliberately not guarded: it moves no price
+/// and lets LPs withdraw their share during an incident, so a freeze can never
+/// lock funds in the pool.
 ///
 /// Returns [`PairError::ContractFrozen`] so an incident-response freeze is
 /// distinguishable at the call site from an LP-token pause, an authorization
@@ -107,7 +111,7 @@ fn ensure_lp_token_not_paused(env: &Env) -> Result<(), PairError> {
 /// The flag is the pair's own copy: `Factory::freeze_pair` sets it through
 /// [`Pair::set_frozen`], and both writes land in the same transaction, so the
 /// copy can never disagree with the factory's registry. Reading it locally
-/// keeps a nested sub-invocation off the `swap` / `mint` / `burn` hot path.
+/// keeps a nested sub-invocation off the `swap` / `mint` hot path.
 fn ensure_not_frozen(env: &Env) -> Result<(), PairError> {
     if get_frozen(env) {
         return Err(PairError::ContractFrozen);
@@ -156,6 +160,28 @@ impl Pair {
 
         // 2. Identical-token guard
         if token_a == token_b {
+            return Err(PairError::InvalidInput);
+        }
+
+        // A pool token must never be a contract identity controlled by this
+        // deployment or by an existing pool from the same factory. Otherwise
+        // reserve accounting can become circular or self-referential.
+        if token_a == factory
+            || token_b == factory
+            || token_a == env.current_contract_address()
+            || token_b == env.current_contract_address()
+            || token_a == lp_token
+            || token_b == lp_token
+        {
+            return Err(PairError::InvalidInput);
+        }
+
+        let factory_client = FactoryClient::new(&env, &factory);
+        let token_is_known_contract = |token: &Address| {
+            factory_client.try_is_pair(token).is_ok_and(|result| result.unwrap_or(false))
+                || factory_client.try_is_lp_token(token).is_ok_and(|result| result.unwrap_or(false))
+        };
+        if token_is_known_contract(&token_a) || token_is_known_contract(&token_b) {
             return Err(PairError::InvalidInput);
         }
 
@@ -511,13 +537,77 @@ impl Pair {
     // Burn
     // ─────────────────────────────────────────
 
+    /// Moves `amount` LP tokens from `from` into the pair and attributes them to
+    /// `from`, ready for a later [`Pair::burn`] by the same address.
+    ///
+    /// This is the concurrency-safe way to stage a withdrawal (issue #363):
+    /// because the LP is *attributed*, another user's `burn` — or a second
+    /// deposit that lands between this call and the caller's own `burn` — can
+    /// never consume it. A bare LP `transfer` to the pair carries no owner
+    /// information, so it cannot be protected this way.
+    ///
+    /// Requires authorization from `from`. Multiple deposits accumulate.
+    ///
+    /// # Errors
+    /// `InvalidInput` for a non-positive `amount` or `from` being the pair
+    /// itself (which would let the locked seed be re-attributed);
+    /// `LpTokenPaused` while the LP token is paused; `Locked` on reentrancy.
+    pub fn deposit_lp(env: Env, from: Address, amount: i128) -> Result<(), PairError> {
+        from.require_auth();
+
+        let _guard = reentrancy::ReentrancyGuard::acquire(&env)?;
+
+        let state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+        let contract = env.current_contract_address();
+
+        ensure_lp_token_not_paused(&env)?;
+
+        if amount <= 0 || from == contract {
+            return Err(PairError::InvalidInput);
+        }
+
+        TokenClient::new(&env, &state.lp_token).transfer(&from, &contract, &amount);
+
+        let pending = get_pending_lp(&env, &from).checked_add(amount).ok_or(PairError::Overflow)?;
+        let total = get_pending_lp_total(&env).checked_add(amount).ok_or(PairError::Overflow)?;
+        set_pending_lp(&env, &from, pending);
+        set_pending_lp_total(&env, total);
+        Self::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// LP tokens `who` has staged via [`Pair::deposit_lp`] and not yet burned.
+    pub fn pending_lp(env: Env, who: Address) -> i128 {
+        get_pending_lp(&env, &who)
+    }
+
+    /// Burns LP tokens held by the pair on behalf of `to` and pays out the
+    /// underlying reserves to `to`.
+    ///
+    /// # LP attribution (issue #363)
+    ///
+    /// The pair holds LP that does not belong to `to`: the permanent
+    /// `MINIMUM_LIQUIDITY` seed, and any LP other users have staged for their own
+    /// burn. Only LP attributable to the caller is redeemed:
+    ///
+    /// 1. If `to` has staged LP via [`Pair::deposit_lp`], exactly that amount is
+    ///    burned and nothing else.
+    /// 2. Otherwise (a raw LP `transfer` to the pair, as UniswapV2 does) the
+    ///    *unattributed* remainder is burned:
+    ///    `balance - MINIMUM_LIQUIDITY - total staged by everyone`. Raw
+    ///    transfers carry no owner, so the first caller claims them; use
+    ///    `deposit_lp` (as the router does) whenever more than one withdrawal
+    ///    may be in flight.
+    ///
+    /// The seed and other users' staged LP are never touched.
     pub fn burn(env: Env, to: Address) -> Result<(i128, i128), PairError> {
         to.require_auth();
 
         let _guard = reentrancy::ReentrancyGuard::acquire(&env)?;
 
-        // A frozen pool releases no reserves (incident response).
-        ensure_not_frozen(&env)?;
+        // Deliberately open while the pool is frozen: a proportional exit moves
+        // no price, and LPs must always be able to withdraw (see `set_frozen`).
 
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
         let contract = env.current_contract_address();
@@ -543,9 +633,16 @@ impl Pair {
             return Err(PairError::InsufficientLiquidityBurned);
         }
 
-        let burn_lp = lp_balance
-            .checked_sub(MINIMUM_LIQUIDITY)
-            .ok_or(PairError::InsufficientLiquidityBurned)?;
+        let pending = get_pending_lp(&env, &to);
+        let pending_total = get_pending_lp_total(&env);
+        let burn_lp = if pending > 0 {
+            pending
+        } else {
+            lp_balance
+                .checked_sub(MINIMUM_LIQUIDITY)
+                .and_then(|v| v.checked_sub(pending_total))
+                .ok_or(PairError::InsufficientLiquidityBurned)?
+        };
 
         if burn_lp <= 0 {
             return Err(PairError::InsufficientLiquidityBurned);
@@ -573,6 +670,11 @@ impl Pair {
         }
 
         LpTokenClient::new(&env, &state.lp_token).burn(&contract, &burn_lp);
+
+        if pending > 0 {
+            set_pending_lp(&env, &to, 0);
+            set_pending_lp_total(&env, pending_total - pending);
+        }
 
         TokenClient::new(&env, &state.token_a).transfer(&contract, &to, &amount_a);
 
@@ -677,27 +779,27 @@ impl Pair {
         let reserve_unwanted_post_burn =
             reserve_unwanted.checked_sub(share_unwanted).ok_or(PairError::Overflow)?;
 
-        let fee_bps = dynamic_fee::compute_fee_bps(&fee_state) as i128;
-        let fee_factor = 10_000i128 - fee_bps;
+        let fee_bps = dynamic_fee::compute_fee_bps(&fee_state);
 
-        let amount_in_with_fee =
-            share_unwanted.checked_mul(fee_factor).ok_or(PairError::Overflow)?;
-
-        let swap_numerator = amount_in_with_fee
-            .checked_mul(reserve_preferred_post_burn)
-            .ok_or(PairError::Overflow)?;
-
-        let swap_denominator = reserve_unwanted_post_burn
-            .checked_mul(10_000)
-            .ok_or(PairError::Overflow)?
-            .checked_add(amount_in_with_fee)
-            .ok_or(PairError::Overflow)?;
-
-        if swap_denominator == 0 {
-            return Err(PairError::InsufficientLiquidity);
-        }
-
-        let swap_out = swap_numerator / swap_denominator;
+        // Same quote math as swaps and the router (shared implementation).
+        // A dust-sized swap leg is tolerated here and simply yields 0 out.
+        // With the preferred side already drained by the burn there is nothing to
+        // swap into, so the leg yields 0 (the shared quote rejects a 0 reserve).
+        let swap_out = if reserve_preferred_post_burn == 0 {
+            0
+        } else {
+            match math::get_amount_out(
+                share_unwanted,
+                reserve_unwanted_post_burn,
+                reserve_preferred_post_burn,
+                fee_bps,
+            ) {
+                Ok(out) => out,
+                Err(PairError::DustAmount) => 0,
+                Err(err) => return Err(err),
+            }
+        };
+        let fee_bps = fee_bps as i128;
 
         let total_out = share_preferred.checked_add(swap_out).ok_or(PairError::Overflow)?;
 
@@ -717,11 +819,12 @@ impl Pair {
             .checked_mul(100_000_000)
             .ok_or(PairError::Overflow)?;
 
-        let balance_preferred_adj =
-            reserve_preferred_final.checked_mul(10_000).ok_or(PairError::Overflow)?;
+        let balance_preferred_adj = reserve_preferred_final
+            .checked_mul(math::BPS_DENOMINATOR)
+            .ok_or(PairError::Overflow)?;
 
         let balance_unwanted_adj = reserve_unwanted_final
-            .checked_mul(10_000)
+            .checked_mul(math::BPS_DENOMINATOR)
             .ok_or(PairError::Overflow)?
             .checked_sub(share_unwanted.checked_mul(fee_bps).ok_or(PairError::Overflow)?)
             .ok_or(PairError::Overflow)?;
@@ -838,6 +941,32 @@ impl Pair {
         }
     }
 
+    /// Returns the fee that will actually be charged on the next swap (issue #350).
+    ///
+    /// Unlike `get_current_fee_bps()` which returns only the dynamic fee,
+    /// this function accounts for factory overrides, matching the fee
+    /// the `swap` function will use. Ensures router quotes match execution.
+    ///
+    /// Returns `(fee_bps, is_override)` where:
+    /// - `fee_bps`: The effective fee in basis points that will be applied
+    /// - `is_override`: `true` if this is a factory override, `false` for dynamic fee
+    ///
+    /// When the factory call fails or returns `None` or `Some(0)`, falls back
+    /// to the dynamic fee, matching the swap execution logic.
+    pub fn get_effective_fee_bps(env: Env) -> Result<(u32, bool), PairError> {
+        let state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+        let fee_state = get_fee_state(&env).ok_or(PairError::NotInitialized)?;
+
+        let dynamic_fee_bps = dynamic_fee::compute_fee_bps(&fee_state);
+        let contract_address = env.current_contract_address();
+
+        match FactoryClient::new(&env, &state.factory).try_get_pair_fee_override(&contract_address)
+        {
+            Ok(Ok(Some(override_bps))) if override_bps > 0 => Ok((override_bps, true)),
+            _ => Ok((dynamic_fee_bps, false)),
+        }
+    }
+
     /// Returns the fee configuration together with the fee model version so
     /// clients can interpret the values without off-chain config.
     pub fn get_fee_state(env: Env) -> Result<FeeStateView, PairError> {
@@ -868,6 +997,9 @@ impl Pair {
     // ─────────────────────────────────────────
 
     /// Syncs reserves to actual token balances and updates the oracle timestamp.
+    ///
+    /// Call after an unsolicited token transfer when the caller wants the
+    /// donation recognized as reserves before the next swap.
     pub fn sync(env: Env) -> Result<(), PairError> {
         let _guard = reentrancy::ReentrancyGuard::acquire(&env)?;
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
@@ -945,6 +1077,10 @@ impl Pair {
             TokenClient::new(env, &pair.token_b).transfer(&contract_address, to, &amount_b_out);
         }
 
+        // Token transfers made before this call are counted as swap input,
+        // including unsolicited donations. Such a donation can relax the
+        // fee-adjusted K check only by its own input amount; it does not bypass
+        // the invariant. Call sync() first to recognize it as reserves instead.
         let balance_a = TokenClient::new(env, &pair.token_a).balance(&contract_address);
 
         let balance_b = TokenClient::new(env, &pair.token_b).balance(&contract_address);
@@ -960,13 +1096,13 @@ impl Pair {
         let fee = fee_bps as i128;
 
         let balance_a_adj = balance_a
-            .checked_mul(10_000)
+            .checked_mul(math::BPS_DENOMINATOR)
             .ok_or(PairError::Overflow)?
             .checked_sub(amount_a_in * fee)
             .ok_or(PairError::Overflow)?;
 
         let balance_b_adj = balance_b
-            .checked_mul(10_000)
+            .checked_mul(math::BPS_DENOMINATOR)
             .ok_or(PairError::Overflow)?
             .checked_sub(amount_b_in * fee)
             .ok_or(PairError::Overflow)?;
@@ -1111,6 +1247,8 @@ impl Pair {
         PairEvents::swap(
             env,
             to,
+            &pair.token_a,
+            &pair.token_b,
             amount_a_in,
             amount_b_in,
             amount_a_out,
@@ -1267,11 +1405,10 @@ impl Pair {
     /// satisfies the guard without an off-chain signature.
     ///
     /// # Effect
-    /// While frozen, `swap`, `mint`, `mint_with_one_token`, `burn`,
-    /// `burn_single_side` and `flash_loan` all fail with
-    /// [`PairError::ContractFrozen`]. Views, `sync` and LP-token transfers are
-    /// unaffected, so a frozen pool remains observable and its reserves
-    /// remain synchronisable.
+    /// While frozen, `swap`, `mint`, `mint_with_one_token`, `burn_single_side`
+    /// and `flash_loan` fail with [`PairError::ContractFrozen`]. A proportional
+    /// `burn` stays open so LPs can always withdraw, and views, `sync` and
+    /// LP-token transfers are unaffected.
     ///
     /// # Errors
     /// | Error              | Condition                       |
