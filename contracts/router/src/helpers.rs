@@ -291,8 +291,13 @@ pub fn get_path_minimums(
         min_amounts.insert(0, current_min_output);
         // Then compute the minimum input needed for this hop to achieve that output
         // This becomes the minimum output required from the previous hop
-        current_min_output =
-            get_amount_in(env, current_min_output, reserve_in, reserve_out, fee_bps)?;
+        // A zero minimum (caller opted out of slippage protection) constrains
+        // no earlier hop; get_amount_in rejects a zero output.
+        current_min_output = if current_min_output <= 0 {
+            0
+        } else {
+            get_amount_in(env, current_min_output, reserve_in, reserve_out, fee_bps)?
+        };
     }
     Ok(min_amounts)
 }
