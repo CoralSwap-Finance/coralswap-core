@@ -202,6 +202,7 @@ mod factory_tests {
         client.initialize(
             &Vec::from_array(&env, [signer]),
             &pair_wasm_hash,
+            &pair_wasm_hash,
             &lp_token_wasm_hash,
             &fee_to_setter,
         );
