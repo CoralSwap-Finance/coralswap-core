@@ -974,6 +974,37 @@ fn test_hop_check_validates_is_pair() {
 }
 
 #[test]
+fn test_multi_hop_rejects_forged_registered_pair() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (router_id, factory_id) = deploy_router(&env);
+    let router = RouterClient::new(&env, &router_id);
+
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    let forged_pair = Address::generate(&env);
+    let factory = MockFactoryClient::new(&env, &factory_id);
+    factory.set_pair(&token_a, &token_b, &forged_pair);
+    factory.set_is_pair(&forged_pair, &true);
+
+    let mut path = Vec::new(&env);
+    path.push_back(token_a);
+    path.push_back(token_b);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        router.swap_exact_tokens_multi_hop(
+            &path,
+            &1_000,
+            &1,
+            &Address::generate(&env),
+            &u64::MAX,
+            &None,
+        );
+    }));
+    assert!(result.is_err(), "a registered address without the pair interface must be rejected");
+}
+
+#[test]
 fn test_mid_path_price_crash_reverts() {
     let env = Env::default();
     env.mock_all_auths();

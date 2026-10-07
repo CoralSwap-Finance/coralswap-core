@@ -175,13 +175,25 @@ pub fn get_pair_reserves_and_fee(
     token_out: &Address,
 ) -> Result<(i128, i128, u32), RouterError> {
     let pair_client = PairClient::new(env, pair);
-    let (reserve_a, reserve_b, _) = pair_client.get_reserves();
-    // NEW: Use effective fee (override-aware) instead of just current fee
-    let fee_result = pair_client.try_get_effective_fee_bps();
-    let (fee_bps, _is_override) = match fee_result {
-        Ok(Ok(result)) => result,
-        _ => return Err(RouterError::InternalError),
-    };
+    // A registered address that does not implement the pair interface (or has
+    // no usable reserves) is rejected before quoting.
+    let (reserve_a, reserve_b, _) = pair_client
+        .try_get_reserves()
+        .map_err(|_| RouterError::PairNotFound)?
+        .map_err(|_| RouterError::PairNotFound)?;
+    if reserve_a <= 0 || reserve_b <= 0 || reserve_a.checked_mul(reserve_b).is_none() {
+        return Err(RouterError::InsufficientLiquidity);
+    }
+    // Override-aware fee, so quotes match what the pair charges on execution.
+    // 0 bps is a valid pool configuration; above the factory's 100 bps cap the
+    // contract is not a CoralSwap pair.
+    let (fee_bps, _is_override) = pair_client
+        .try_get_effective_fee_bps()
+        .map_err(|_| RouterError::PairNotFound)?
+        .map_err(|_| RouterError::PairNotFound)?;
+    if fee_bps > 100 {
+        return Err(RouterError::PairNotFound);
+    }
 
     let (token_0, _) = sort_tokens(token_in, token_out)?;
     if *token_in == token_0 {
