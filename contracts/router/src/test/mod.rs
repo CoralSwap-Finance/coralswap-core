@@ -112,6 +112,12 @@ impl MockPair {
     pub fn get_current_fee_bps(_env: Env) -> u32 {
         30
     }
+
+    // The router quotes with the override-aware fee since #441; no factory
+    // override is set in these tests.
+    pub fn get_effective_fee_bps(_env: Env) -> (u32, bool) {
+        (30, false)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +191,7 @@ pub trait RouterInterface {
         amount_out_min: i128,
         to: Address,
         deadline: u64,
+        deadline_ledger: Option<u32>,
     ) -> i128;
     fn swap_exact_tokens_for_tokens(
         env: Env,
@@ -193,6 +200,7 @@ pub trait RouterInterface {
         path: Vec<Address>,
         to: Address,
         deadline: u64,
+        deadline_ledger: Option<u32>,
     ) -> Vec<i128>;
     fn swap_tokens_for_exact_tokens(
         env: Env,
@@ -201,6 +209,7 @@ pub trait RouterInterface {
         path: Vec<Address>,
         to: Address,
         deadline: u64,
+        deadline_ledger: Option<u32>,
     ) -> Vec<i128>;
     fn add_liquidity(
         env: Env,
@@ -212,6 +221,7 @@ pub trait RouterInterface {
         amount_b_min: i128,
         to: Address,
         deadline: u64,
+        deadline_ledger: Option<u32>,
     ) -> (i128, i128, i128);
     fn remove_liquidity(
         env: Env,
@@ -222,6 +232,7 @@ pub trait RouterInterface {
         amount_b_min: i128,
         to: Address,
         deadline: u64,
+        deadline_ledger: Option<u32>,
     ) -> (i128, i128);
     fn commit_swap(env: Env, sender: Address, hash: BytesN<32>);
     fn reveal_swap(
@@ -236,6 +247,8 @@ pub trait RouterInterface {
     ) -> i128;
 }
 
+mod add_liquidity_boundary;
+mod deadline;
 mod helpers_test;
 
 // ---------------------------------------------------------------------------
@@ -432,6 +445,7 @@ fn test_swap_multi_hop_expired_deadline() {
             &1,
             &Address::generate(&env),
             &1, // deadline in the past (ledger timestamp is 2000)
+            &None,
         );
     }));
     assert!(result.is_err(), "expired deadline must fail");
@@ -446,7 +460,14 @@ fn test_swap_multi_hop_zero_amount() {
     let path = make_path(&env, &tokens);
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        router.swap_exact_tokens_multi_hop(&path, &0, &1, &Address::generate(&env), &u64::MAX);
+        router.swap_exact_tokens_multi_hop(
+            &path,
+            &0,
+            &1,
+            &Address::generate(&env),
+            &u64::MAX,
+            &None,
+        );
     }));
     assert!(result.is_err(), "zero amount must fail");
 }
@@ -460,7 +481,14 @@ fn test_swap_multi_hop_invalid_path_too_short() {
     path.push_back(Address::generate(&env));
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        router.swap_exact_tokens_multi_hop(&path, &1000, &1, &Address::generate(&env), &u64::MAX);
+        router.swap_exact_tokens_multi_hop(
+            &path,
+            &1000,
+            &1,
+            &Address::generate(&env),
+            &u64::MAX,
+            &None,
+        );
     }));
     assert!(result.is_err(), "too-short path must fail");
 }
@@ -474,7 +502,14 @@ fn test_swap_multi_hop_invalid_path_too_long() {
     let path = make_path(&env, &tokens);
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        router.swap_exact_tokens_multi_hop(&path, &1000, &1, &Address::generate(&env), &u64::MAX);
+        router.swap_exact_tokens_multi_hop(
+            &path,
+            &1000,
+            &1,
+            &Address::generate(&env),
+            &u64::MAX,
+            &None,
+        );
     }));
     assert!(result.is_err(), "too-long path (4+ hops) must fail");
 }
@@ -490,7 +525,14 @@ fn test_swap_exact_out_expired_deadline() {
     let path = make_path(&env, &tokens);
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        router.swap_tokens_for_exact_tokens(&100, &1000, &path, &Address::generate(&env), &1);
+        router.swap_tokens_for_exact_tokens(
+            &100,
+            &1000,
+            &path,
+            &Address::generate(&env),
+            &1,
+            &None,
+        );
     }));
     assert!(result.is_err(), "expired deadline must fail");
 }
@@ -504,7 +546,14 @@ fn test_swap_exact_out_zero_amount() {
     let path = make_path(&env, &tokens);
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        router.swap_tokens_for_exact_tokens(&0, &1000, &path, &Address::generate(&env), &u64::MAX);
+        router.swap_tokens_for_exact_tokens(
+            &0,
+            &1000,
+            &path,
+            &Address::generate(&env),
+            &u64::MAX,
+            &None,
+        );
     }));
     assert!(result.is_err(), "zero output amount must fail");
 }
@@ -524,6 +573,7 @@ fn test_swap_exact_out_invalid_path() {
             &path,
             &Address::generate(&env),
             &u64::MAX,
+            &None,
         );
     }));
     assert!(result.is_err(), "too-short path must fail");
@@ -904,7 +954,7 @@ fn test_hop_check_validates_is_pair() {
 
     let user = Address::generate(&env);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        router.swap_exact_tokens_multi_hop(&path, &1000, &1, &user, &u64::MAX);
+        router.swap_exact_tokens_multi_hop(&path, &1000, &1, &user, &u64::MAX, &None);
     }));
     assert!(result.is_err(), "hop check must fail when is_pair is false");
 
