@@ -357,3 +357,31 @@ fn test_flash_loan_negative_amount_fails() {
     let result_neg_b = setup.pair_client.try_flash_loan(&setup.honest_receiver, &0, &-1, &data);
     assert_eq!(result_neg_b, Err(Ok(PairError::InsufficientInputAmount)));
 }
+
+// ── Zero-fee semantics (0-bps pools) ────────────────────────────────────────
+
+#[test]
+fn compute_flash_fee_zero_bps_quotes_zero() {
+    assert_eq!(crate::flash_loan::compute_flash_fee(1, 0), Ok(0));
+    assert_eq!(crate::flash_loan::compute_flash_fee(1_000_000, 0), Ok(0));
+    assert_eq!(crate::flash_loan::compute_flash_fee(i128::MAX, 0), Ok(0));
+}
+
+#[test]
+fn compute_flash_fee_nonzero_bps_applies_floor_and_one_stroop_minimum() {
+    // 1 bps is below the 5 bps floor → floor applies.
+    assert_eq!(crate::flash_loan::compute_flash_fee(1_000_000, 1), Ok(500));
+    // Rounds to zero at the floor rate → 1-stroop minimum applies.
+    assert_eq!(crate::flash_loan::compute_flash_fee(1, 1), Ok(1));
+    assert_eq!(crate::flash_loan::compute_flash_fee(1, 30), Ok(1));
+    // Above the floor → pool rate applies.
+    assert_eq!(crate::flash_loan::compute_flash_fee(1_000_000, 30), Ok(3_000));
+}
+
+#[test]
+fn compute_flash_fee_rejects_fee_above_100_percent() {
+    assert_eq!(
+        crate::flash_loan::compute_flash_fee(1_000, 10_001),
+        Err(PairError::FlashLoanFeeTooHigh)
+    );
+}

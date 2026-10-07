@@ -5,9 +5,21 @@ pub struct PairEvents;
 // `deprecated`: Events::publish is superseded by the #[contractevent] macro; migration pending. // `dead_code`: reward_* emitters are wired to their feature in an upcoming change and exercised by tests only.
 #[allow(dead_code, deprecated)]
 impl PairEvents {
+    /// Emits a swap event.
+    ///
+    /// Topics: `("swap", sender, token_a, token_b)` — `token_a`/`token_b` are
+    /// the pair's canonical (sorted) tokens, so indexers can filter swaps by
+    /// token without a separate pair lookup. The first two topics are
+    /// unchanged from the original shape; the token topics are appended.
+    ///
+    /// Data: `(amount_a_in, amount_b_in, amount_a_out, amount_b_out, fee_bps, to)`
+    /// where the `_a`/`_b` amounts refer to `token_a`/`token_b` respectively.
+    #[allow(clippy::too_many_arguments)]
     pub fn swap(
         env: &Env,
         sender: &Address,
+        token_a: &Address,
+        token_b: &Address,
         amount_a_in: i128,
         amount_b_in: i128,
         amount_a_out: i128,
@@ -16,7 +28,7 @@ impl PairEvents {
         to: &Address,
     ) {
         env.events().publish(
-            (symbol_short!("swap"), sender),
+            (symbol_short!("swap"), sender, token_a, token_b),
             (amount_a_in, amount_b_in, amount_a_out, amount_b_out, fee_bps, to),
         );
     }

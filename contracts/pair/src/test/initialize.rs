@@ -1,7 +1,21 @@
 use crate::errors::PairError;
 use crate::storage::{get_fee_state, get_oracle_state, get_pair_state, get_reentrancy_guard};
 use crate::{Pair, PairClient};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Env};
+
+#[contract]
+struct MockFactory;
+
+#[contractimpl]
+impl MockFactory {
+    pub fn is_pair(_env: Env, _pair: Address) -> bool {
+        false
+    }
+
+    pub fn is_lp_token(_env: Env, _token: Address) -> bool {
+        true
+    }
+}
 
 fn setup_env() -> (Env, Address, Address, Address, Address, Address) {
     let env = Env::default();
@@ -58,6 +72,19 @@ fn identical_tokens_returns_error() {
     let client = PairClient::new(&env, &contract_id);
 
     let result = client.try_initialize(&factory, &token_a, &token_a, &lp_token);
+    assert_eq!(result, Err(Ok(PairError::InvalidInput)));
+}
+
+#[test]
+fn nested_pool_using_existing_lp_token_returns_error() {
+    let env = Env::default();
+    let contract_id = env.register(Pair, ());
+    let factory_id = env.register(MockFactory, ());
+    let token_b = Address::generate(&env);
+    let lp_token = Address::generate(&env);
+    let client = PairClient::new(&env, &contract_id);
+
+    let result = client.try_initialize(&factory_id, &lp_token, &token_b, &Address::generate(&env));
     assert_eq!(result, Err(Ok(PairError::InvalidInput)));
 }
 
@@ -125,7 +152,7 @@ fn init_state_is_coherent() {
         let oracle = get_oracle_state(&env);
         assert_eq!(oracle.price_a_cumulative, 0);
         assert_eq!(oracle.price_b_cumulative, 0);
-        assert_eq!(oracle.observations.len(), 0);
+        assert_eq!(oracle.len(), 0);
 
         // Fee state starts with no accumulated volatility and a consistent range.
         assert_eq!(fee.vol_accumulator, 0);

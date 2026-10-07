@@ -24,6 +24,7 @@
 //! ([`FACTORY_INSTANCE_THRESHOLD`] / [`FACTORY_INSTANCE_BUMP_AMOUNT`]) since
 //! it stores the pair registry.
 
+use ethnum::U256;
 use soroban_sdk::{xdr::ToXdr, Address, Bytes, Env, String};
 
 // ─────────────────────────────────────────────
@@ -106,12 +107,31 @@ pub fn extend_instance_ttl(env: &Env) {
 // Reentrancy-guard TTL (pair)
 // ─────────────────────────────────────────────
 
+/// Upper bound, in ledgers, on how long the reentrancy guard may be held.
+///
+/// The guard is held for the duration of one contract invocation, which lives
+/// inside a single ledger. 720 ledgers (~1 hour) is deliberately far above
+/// that so the TTL floor below never depends on a tight estimate.
+pub const REENTRANCY_MAX_HOLD_LEDGERS: u32 = 720;
+
 /// Threshold used when the reentrancy guard flips the lock flag.
 /// Previously bare `5_000` magic in `pair::reentrancy`.
+///
+/// Every lock flip leaves at least this many ledgers of TTL on the entry, so a
+/// held guard always outlives [`REENTRANCY_MAX_HOLD_LEDGERS`] (issue #362).
 pub const REENTRANCY_TTL_THRESHOLD: u32 = 5_000;
 
 /// Extend-to used when the reentrancy guard flips the lock flag.
 pub const REENTRANCY_TTL_EXTEND_TO: u32 = 120_960;
+
+// The guard lives in *instance* storage, i.e. in the same ledger entry as the
+// rest of the pair's state, so it cannot expire independently of that state;
+// what these checks protect is the guarantee that a lock flip always leaves the
+// shared entry alive for longer than any operation can hold the lock.
+const _: () = assert!(REENTRANCY_TTL_THRESHOLD >= REENTRANCY_MAX_HOLD_LEDGERS);
+const _: () = assert!(REENTRANCY_TTL_EXTEND_TO >= REENTRANCY_TTL_THRESHOLD);
+// A lock flip must never *lower* the policy the rest of the pair maintains.
+const _: () = assert!(REENTRANCY_TTL_EXTEND_TO >= INSTANCE_TTL_EXTEND_TO);
 
 /// Extend instance TTL for reentrancy-guard lock flips.
 pub fn extend_reentrancy_ttl(env: &Env) {
@@ -190,6 +210,120 @@ pub const MAX_COMMITS_HARD_CAP: u32 = 1_000;
 /// Hard cap for admin-configured commit expiry (~30 days).
 pub const COMMIT_EXPIRY_HARD_CAP: u32 = 518_400;
 
+// ─────────────────────────────────────────────
+// Constant-product quote math (router + pair)
+// ─────────────────────────────────────────────
+//
+// Single quote implementation shared by the router's path pricing and the
+// pair's own swap math so the two can never drift. Callers resolve the
+// effective fee (dynamic fee, per-pair override, ...) exactly once and pass
+// it in as `fee_bps`; these helpers never look fees up themselves.
+
+/// Basis-point denominator (100% = 10_000 bps).
+pub const BPS_DENOMINATOR: i128 = 10_000;
+
+/// Error cases for [`quote_output_amount`] / [`quote_input_amount`].
+/// Each contract maps these onto its own `contracterror` enum.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuoteError {
+    /// The requested input/output amount is `<= 0`.
+    ZeroAmount,
+    /// A reserve is `<= 0`, or the requested output drains the pool.
+    InsufficientLiquidity,
+    /// An intermediate product overflowed `i128`.
+    Overflow,
+    /// The quote truncated to zero (dust policy, issue #393).
+    Dust,
+    /// `fee_bps` is outside `0..10_000`.
+    InvalidFee,
+}
+
+/// Exact-input quote: output received for `amount_in` against
+/// `(reserve_in, reserve_out)` at an already-resolved `fee_bps`.
+///
+/// ```text
+/// amount_out = (amount_in * (10_000 - fee_bps) * reserve_out)
+///            / (reserve_in * 10_000 + amount_in * (10_000 - fee_bps))
+/// ```
+pub fn quote_output_amount(
+    amount_in: i128,
+    reserve_in: i128,
+    reserve_out: i128,
+    fee_bps: u32,
+) -> Result<i128, QuoteError> {
+    if amount_in <= 0 {
+        return Err(QuoteError::ZeroAmount);
+    }
+    if reserve_in <= 0 || reserve_out <= 0 {
+        return Err(QuoteError::InsufficientLiquidity);
+    }
+    let fee_factor = fee_factor(fee_bps)?;
+
+    let amount_in_with_fee = amount_in.checked_mul(fee_factor).ok_or(QuoteError::Overflow)?;
+    let numerator = amount_in_with_fee.checked_mul(reserve_out).ok_or(QuoteError::Overflow)?;
+    let denominator = reserve_in
+        .checked_mul(BPS_DENOMINATOR)
+        .ok_or(QuoteError::Overflow)?
+        .checked_add(amount_in_with_fee)
+        .ok_or(QuoteError::Overflow)?;
+
+    let out = numerator / denominator;
+    // Dust policy (issue 393): truncated zero outputs are typed errors.
+    if out <= 0 {
+        return Err(QuoteError::Dust);
+    }
+    Ok(out)
+}
+
+/// Exact-output quote: input required to receive `amount_out` from
+/// `(reserve_in, reserve_out)` at an already-resolved `fee_bps`.
+/// Rounds up by one stroop so the pool is never short-changed.
+///
+/// ```text
+/// amount_in = (reserve_in * amount_out * 10_000)
+///           / ((reserve_out - amount_out) * (10_000 - fee_bps)) + 1
+/// ```
+pub fn quote_input_amount(
+    amount_out: i128,
+    reserve_in: i128,
+    reserve_out: i128,
+    fee_bps: u32,
+) -> Result<i128, QuoteError> {
+    if amount_out <= 0 {
+        return Err(QuoteError::ZeroAmount);
+    }
+    if reserve_in <= 0 || reserve_out <= 0 || amount_out >= reserve_out {
+        return Err(QuoteError::InsufficientLiquidity);
+    }
+    let fee_factor = fee_factor(fee_bps)?;
+
+    // Exact ceiling in 256 bits: the input must cover the output, rounded up by
+    // at most one unit only when the division leaves a remainder, and large
+    // reserves must not overflow the intermediate product.
+    let numerator = U256::from(reserve_in as u128)
+        .checked_mul(U256::from(amount_out as u128))
+        .and_then(|n| n.checked_mul(U256::from(BPS_DENOMINATOR as u128)))
+        .ok_or(QuoteError::Overflow)?;
+    let denominator = U256::from((reserve_out - amount_out) as u128)
+        .checked_mul(U256::from(fee_factor as u128))
+        .ok_or(QuoteError::Overflow)?;
+    let quotient = numerator / denominator;
+    let rounded = quotient + U256::from((numerator % denominator != U256::ZERO) as u8);
+    if rounded > U256::from(i128::MAX as u128) {
+        return Err(QuoteError::Overflow);
+    }
+    Ok(rounded.as_u128() as i128)
+}
+
+/// `10_000 - fee_bps`, rejecting fees of 100% or more (which would zero the
+/// denominator of an exact-output quote).
+fn fee_factor(fee_bps: u32) -> Result<i128, QuoteError> {
+    if fee_bps as i128 >= BPS_DENOMINATOR {
+        return Err(QuoteError::InvalidFee);
+    }
+    Ok(BPS_DENOMINATOR - fee_bps as i128)
+}
+
 /// Scoped-authorization test helpers (issue #314). Only compiled when the
 /// `test-support` feature is enabled, which happens solely as a
 /// dev-dependency of the contract crates.
@@ -231,5 +365,34 @@ mod tests {
 
         assert_ne!(name_ab, name_ac);
         assert_ne!(symbol_ab, symbol_ac);
+    }
+}
+
+#[cfg(test)]
+mod quote_input_amount_tests {
+    use super::{quote_input_amount, QuoteError};
+
+    #[test]
+    fn exact_division_is_not_rounded_up() {
+        // 1000 * 100 * 10_000 / ((1000 - 100) * 10_000) = 111.11.. -> 112, while a
+        // zero-fee quote that divides exactly must not add a unit.
+        assert_eq!(quote_input_amount(100, 1_000, 1_000, 0), Ok(112));
+        assert_eq!(quote_input_amount(500, 1_000, 1_000, 0), Ok(1_000));
+    }
+
+    #[test]
+    fn large_reserves_do_not_overflow() {
+        // reserve_in * amount_out * 10_000 exceeds i128 here; the 256-bit path
+        // must still return the exact quote instead of Overflow.
+        let reserve = 10i128.pow(30);
+        assert_eq!(quote_input_amount(reserve / 2, reserve, reserve, 0), Ok(reserve));
+    }
+
+    #[test]
+    fn quote_that_exceeds_i128_reports_overflow() {
+        assert_eq!(
+            quote_input_amount(i128::MAX - 1, i128::MAX, i128::MAX, 0),
+            Err(QuoteError::Overflow)
+        );
     }
 }

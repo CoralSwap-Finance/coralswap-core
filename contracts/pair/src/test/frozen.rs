@@ -1,11 +1,13 @@
-//! The factory-admin freeze: a pool that must stop moving, and start moving
-//! again, on one address's word.
+//! The factory freeze: a pool that stops trading on one address's word and
+//! starts again only on the signer quorum's.
 //!
 //! `Factory::freeze_pair` reaches the pool through `Pair::set_frozen`, so these
 //! tests pin the pair-side half of that contract:
 //!
-//! 1. every value-moving entry point refuses while frozen, with the typed
-//!    [`PairError::ContractFrozen`] rather than an opaque failure,
+//! 1. every price-moving or value-creating entry point (swap, mint, single-sided
+//!    mint and burn, flash loan) refuses while frozen, with the typed
+//!    [`PairError::ContractFrozen`] rather than an opaque failure, while a
+//!    proportional `burn` stays open so LPs can always exit,
 //! 2. the refusal happens before any funds move,
 //! 3. unfreezing restores full functionality — the acceptance round trip
 //!    (swap reverts → unfreeze → swap succeeds), and
@@ -127,18 +129,21 @@ fn frozen_pool_rejects_mint() {
 }
 
 #[test]
-fn frozen_pool_rejects_burn() {
+fn frozen_pool_still_lets_lps_exit_with_a_proportional_burn() {
     let h = setup();
-    // `Pair::burn` redeems the LP the pair custodies, so the holder transfers
-    // their position in first — otherwise the freeze would only be beating an
-    // earlier failure.
+    // `Pair::burn` redeems LP the holder first credits to the pair.
     let user_lp = h.lp.balance(&h.user);
-    h.lp.transfer(&h.user, &h.pair_id, &user_lp);
+    h.pair.deposit_lp(&h.user, &user_lp);
 
     h.pair.set_frozen(&true);
 
-    let err = h.pair.try_burn(&h.user).expect_err("burn must revert while frozen");
-    assert_eq!(err, Ok(PairError::ContractFrozen));
+    let (out_a, out_b) = h
+        .pair
+        .try_burn(&h.user)
+        .expect("burn invocation must succeed")
+        .expect("a frozen pool must still let LPs withdraw their share");
+    assert!(out_a > 0 && out_b > 0, "a proportional exit returns both tokens");
+    assert!(h.pair.is_frozen(), "an exit does not lift the freeze");
 }
 
 #[test]

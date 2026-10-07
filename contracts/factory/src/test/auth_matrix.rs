@@ -11,16 +11,15 @@
 //! | `set_fee_to`               | `(setter, fee_to, fee_bps)`                                   | the `fee_to_setter` |
 //! | `set_fee_to_setter`        | `(setter, new_setter)`                                        | the `fee_to_setter` |
 //! | `set_pair_fee`             | `(setter, pair, fee_bps)`                                     | the `fee_to_setter` |
-//! | `freeze_pair` / `unfreeze_pair` | `(pair)`                                                 | the `fee_to_setter` |
+//! | `set_pair_lp_token_paused` | `(setter, pair, paused)`                                      | the `fee_to_setter` |
+//! | `set_pair_stale_threshold`  | `(setter, pair, threshold)`                                   | the `fee_to_setter` |
+//! | `freeze_pair`              | `(signers, pair)`                                             | the `fee_to_setter` alone, or the signer quorum |
+//! | `unfreeze_pair`            | `(signers, pair)`                                             | the signer quorum only |
 //! | `deposit_protocol_fee`     | `(pair, token, amount)`                                       | the `pair`          |
 //!
 //! Each setter entry point takes the claimed setter as an explicit argument and
 //! then checks it against storage, so the authorization is bound to a specific
-//! address *and* a specific argument list. `freeze_pair` / `unfreeze_pair`
-//! are the exception: they take no setter argument and read it from storage,
-//! so only the rejection half belongs here — the positive half needs a real
-//! deployed pair (the relay invokes `Pair::set_frozen`) and lives in
-//! `test/mod.rs`. `deposit_protocol_fee` is covered
+//! address *and* a specific argument list. `deposit_protocol_fee` is covered
 //! negatively only: its authorizer is a deployed contract, and
 //! `Env::mock_auths` would overwrite that contract with its mock checker (see
 //! the pair matrix for the full explanation).
@@ -64,7 +63,7 @@ impl Ctx {
         let recipient = Address::generate(&env);
 
         let factory = FactoryClient::new(&env, &factory_id);
-        factory.initialize(&signers, &empty_wasm, &empty_wasm, &setter);
+        factory.initialize(&signers, &empty_wasm, &empty_wasm, &empty_wasm, &setter);
 
         Self { env, factory, factory_id, setter, stranger, pair, token, recipient }
     }
@@ -109,6 +108,25 @@ fn set_fee_to_is_authorized_by_the_setter() {
     );
     assert_eq!(c.factory.fee_to(), Some(c.recipient.clone()));
     assert_eq!(c.factory.fee_bps(), 30u32);
+}
+
+#[test]
+fn set_fee_config_is_atomic_and_rejects_invalid_combinations() {
+    let c = Ctx::new();
+
+    auth::allow(
+        &c.env,
+        &c.setter,
+        &c.factory_id,
+        "set_fee_config",
+        auth_args!(&c.env, c.setter.clone(), c.recipient.clone(), 20u32),
+    );
+    c.factory.set_fee_config(&c.setter, &Some(c.recipient.clone()), &20);
+    assert_eq!(c.factory.fee_to(), Some(c.recipient.clone()));
+    assert_eq!(c.factory.fee_bps(), 20);
+
+    assert!(c.factory.try_set_fee_config(&c.setter, &Some(c.recipient.clone()), &0).is_err());
+    assert_eq!(c.factory.fee_bps(), 20);
 }
 
 #[test]
@@ -219,39 +237,41 @@ fn set_fee_to_setter_rejects_a_stranger() {
     assert_eq!(c.factory.fee_to_setter(), Some(c.setter));
 }
 
-/// `freeze_pair` reads its admin from storage rather than taking it as an
-/// argument, so the only way for a stranger's signature to be refused is the
-/// `fee_to_setter.require_auth()` guard itself.
 #[test]
-fn freeze_pair_rejects_a_signer_that_is_not_the_setter() {
+fn set_pair_lp_token_paused_rejects_a_stranger() {
     let c = Ctx::new();
 
     auth::allow(
         &c.env,
         &c.stranger,
         &c.factory_id,
-        "freeze_pair",
-        auth_args!(&c.env, c.pair.clone()),
+        "set_pair_lp_token_paused",
+        auth_args!(&c.env, c.stranger.clone(), c.pair.clone(), true),
     );
-    assert!(c.factory.try_freeze_pair(&c.pair).is_err(), "a stranger must not freeze a pair");
-    assert!(!c.factory.is_pair_frozen(&c.pair), "state must be unchanged");
+    assert!(
+        c.factory.try_set_pair_lp_token_paused(&c.stranger, &c.pair, &true).is_err(),
+        "a stranger must not pause or unpause a pair lp token"
+    );
 }
 
 #[test]
-fn unfreeze_pair_rejects_a_signer_that_is_not_the_setter() {
+fn set_pair_stale_threshold_rejects_a_stranger() {
     let c = Ctx::new();
 
     auth::allow(
         &c.env,
         &c.stranger,
         &c.factory_id,
-        "unfreeze_pair",
-        auth_args!(&c.env, c.pair.clone()),
+        "set_pair_stale_threshold",
+        auth_args!(&c.env, c.stranger.clone(), c.pair.clone(), 500u32),
     );
-    assert!(c.factory.try_unfreeze_pair(&c.pair).is_err(), "a stranger must not unfreeze a pair");
+    assert!(
+        c.factory.try_set_pair_stale_threshold(&c.stranger, &c.pair, &500).is_err(),
+        "a stranger must not retune the oracle stale threshold"
+    );
 }
 
-/// A correct authorizer bound to the wrong *function* must not satisfy the
+/// A correct authorizer bound to the wrong *arguments* must not satisfy the
 /// call: authorizations are bound to a specific invocation, not to an address
 /// alone.
 #[test]
@@ -299,15 +319,14 @@ fn every_gated_entry_point_fails_with_no_authorization_at_all() {
 
     assert!(c.factory.try_set_fee_to(&c.setter, &Some(c.stranger.clone()), &30).is_err());
     assert!(c.factory.try_set_pair_fee(&c.setter, &c.pair, &30).is_err());
+    assert!(c.factory.try_set_pair_lp_token_paused(&c.setter, &c.pair, &true).is_err());
+    assert!(c.factory.try_set_pair_stale_threshold(&c.setter, &c.pair, &500u32).is_err());
     assert!(c.factory.try_set_fee_to_setter(&c.setter, &c.stranger).is_err());
     assert!(c.factory.try_deposit_protocol_fee(&c.pair, &c.token, &1_000i128).is_err());
-    assert!(c.factory.try_freeze_pair(&c.pair).is_err());
-    assert!(c.factory.try_unfreeze_pair(&c.pair).is_err());
 
     assert_eq!(c.factory.fee_to(), Some(c.recipient));
     assert_eq!(c.factory.get_pair_fee_override(&c.pair), None);
     assert_eq!(c.factory.fee_to_setter(), Some(c.setter));
-    assert!(!c.factory.is_pair_frozen(&c.pair), "no authorization must mean no freeze");
 }
 
 #[test]
@@ -362,4 +381,57 @@ fn a_governance_call_needs_a_real_multisig_authorization() {
         "a non-member signer must not be able to pause the factory"
     );
     assert!(!c.factory.is_paused());
+}
+
+// ---------------------------------------------------------------------------
+// freeze_pair / unfreeze_pair: fast single-key freeze, quorum-only unfreeze
+// ---------------------------------------------------------------------------
+
+#[test]
+fn freeze_pair_rejects_a_stranger_signing_alone() {
+    let c = Ctx::new();
+    let signers = Vec::from_array(&c.env, [c.stranger.clone()]);
+
+    auth::allow(
+        &c.env,
+        &c.stranger,
+        &c.factory_id,
+        "freeze_pair",
+        auth_args!(&c.env, signers.clone(), c.pair.clone()),
+    );
+    assert!(
+        c.factory.try_freeze_pair(&signers, &c.pair).is_err(),
+        "only the fee_to_setter (or the quorum) may freeze a pair"
+    );
+    assert!(!c.factory.is_pair_frozen(&c.pair), "state must be unchanged");
+}
+
+#[test]
+fn freeze_pair_by_the_setter_requires_the_setters_signature() {
+    let c = Ctx::new();
+    let signers = Vec::from_array(&c.env, [c.setter.clone()]);
+
+    auth::allow_nothing(&c.env);
+    assert!(
+        c.factory.try_freeze_pair(&signers, &c.pair).is_err(),
+        "naming the fee_to_setter without its signature must not freeze"
+    );
+}
+
+#[test]
+fn unfreeze_pair_rejects_the_setter_signing_alone() {
+    let c = Ctx::new();
+    let signers = Vec::from_array(&c.env, [c.setter.clone()]);
+
+    auth::allow(
+        &c.env,
+        &c.setter,
+        &c.factory_id,
+        "unfreeze_pair",
+        auth_args!(&c.env, signers.clone(), c.pair.clone()),
+    );
+    assert!(
+        c.factory.try_unfreeze_pair(&signers, &c.pair).is_err(),
+        "the single freeze key must not be able to reopen a pool"
+    );
 }
