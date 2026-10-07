@@ -17,6 +17,7 @@
 //! | `burn_single_side`     | `to`       | any other address                  |
 //! | `set_stale_threshold`  | `factory`  | anyone else, incl. `to`           |
 //! | `set_lp_token_paused`  | `factory`  | anyone else, incl. `to`           |
+//! | `set_frozen`           | `factory`  | anyone else, incl. `to`           |
 //!
 //! and pins the permissionless surface (`swap`, `sync`, `flash_loan`) with
 //! [`auth::assert_unauthorized`] so adding a `require_auth` later becomes a
@@ -288,6 +289,17 @@ fn factory_only_may_pause_the_lp_token() {
     assert!(c.pair.is_lp_token_paused());
 }
 
+#[test]
+fn factory_only_may_freeze_the_pair() {
+    let c = Ctx::new();
+
+    auth::allow(&c.env, &c.factory, &c.pair_id, "set_frozen", auth_args!(&c.env, true));
+    c.pair.set_frozen(&true);
+
+    auth::assert_authorized(&c.env, &c.factory, &c.pair_id, "set_frozen", auth_args!(&c.env, true));
+    assert!(c.pair.is_frozen());
+}
+
 // ─────────────────────────────────────────────
 // Negative: the matrix. Wrong authorizer ⇒ auth error
 // ─────────────────────────────────────────────
@@ -373,6 +385,18 @@ fn set_lp_token_paused_rejects_a_signer_that_is_not_the_factory() {
 }
 
 #[test]
+fn set_frozen_rejects_a_signer_that_is_not_the_factory() {
+    let c = Ctx::new();
+    auth::allow(&c.env, &c.user, &c.pair_id, "set_frozen", auth_args!(&c.env, true));
+
+    assert!(
+        c.pair.try_set_frozen(&true).is_err(),
+        "an LP holder must not be able to freeze the pool"
+    );
+    assert!(!c.pair.is_frozen(), "the pool must remain tradable");
+}
+
+#[test]
 fn a_correct_but_unbound_signature_is_still_rejected() {
     let c = Ctx::new();
     // Right function, right argument — but the authorization is bound to the
@@ -395,6 +419,7 @@ fn every_gated_entry_point_fails_with_no_authorization_at_all() {
     assert!(c.pair.try_burn_single_side(&c.user, &1_000i128, &c.token_b_id, &1i128).is_err());
     assert!(c.pair.try_set_stale_threshold(&77).is_err());
     assert!(c.pair.try_set_lp_token_paused(&true).is_err());
+    assert!(c.pair.try_set_frozen(&true).is_err());
 }
 
 // ─────────────────────────────────────────────
@@ -452,6 +477,8 @@ fn a_view_call_needs_no_authorization() {
     let (_a, _b, _t) = c.pair.get_reserves();
     auth::assert_unauthorized(&c.env);
     assert!(!c.pair.is_lp_token_paused());
+    auth::assert_unauthorized(&c.env);
+    assert!(!c.pair.is_frozen());
     auth::assert_unauthorized(&c.env);
     let _fee = c.pair.get_current_fee_bps();
     auth::assert_unauthorized(&c.env);

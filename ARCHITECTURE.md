@@ -66,7 +66,7 @@ The Factory is the registry and governance hub of the protocol.
   - **A pair override of `0` means "no override"**, not "zero fee". `set_pair_fee(pair, 0, None)` removes the entry so the pair falls back to the dynamic/protocol fee; it must never be used to make a pool free, which would silently make every swap a zero-fee trade against the LPs' consent.
 - **Pair configuration relays**: In addition to per-pair fee overrides, the `fee_to_setter` governance role can configure pair-level parameters through factory entry points (`Factory::set_pair_lp_token_paused` and `Factory::set_pair_stale_threshold`). The pair verifies caller authorization against its stored `pair.factory` contract address.
 - **Upgrades**: A timelocked upgrade mechanism (72-hour delay, ~51,840 ledgers) allows the Factory WASM to be replaced via `propose_upgrade` → `execute_upgrade`. Upgrades can be cancelled before execution.
-- **Pause, Resume & Freezing**: The protocol can be paused or resumed by multisig. Individual pairs can be frozen or unfrozen. Dedicated events (`paused`, `unpaused`, `resumed`, `frozen`, `unfrozen`) and a public heartbeat sync (`sync()`) ensure indexers maintain up-to-date state. See [docs/INDEXER.md](docs/INDEXER.md).
+- **Pause, Resume & Freezing**: The protocol can be paused or resumed by multisig. Individual pairs can be frozen by the `fee_to_setter` address alone — the incident-response path, deliberately requiring a single address rather than a multisig round trip or pair-level credentials — via `freeze_pair` / `unfreeze_pair`. Dedicated events (`paused`, `unpaused`, `resumed`, `pair_frozen_event`, `pair_unfrozen_event`) and a public heartbeat sync (`sync()`) ensure indexers maintain up-to-date state. See [docs/INDEXER.md](docs/INDEXER.md).
 
 ### Pair
 
@@ -92,8 +92,11 @@ Pausing is a two-level mechanism, and the levels are deliberately not equivalent
 | --- | --- | --- | --- |
 | LP token operations | `LpToken::is_paused` | Blocks all `transfer` / `transfer_from` / `approve` / `permit` | factory `fee_to_setter` via `Factory::set_pair_lp_token_paused` -> `Pair::set_lp_token_paused` |
 | Liquidity provision | Pair-side pause flag | Blocks `mint` and `mint_with_one_token` and `burn`, but **not** transfers | factory signers via `Factory::freeze_pair` |
+| Trading & value movement | Pair-side `DataKey::Frozen` | Blocks `swap`, `mint`, `mint_with_one_token`, `burn_single_side` and `flash_loan`; a proportional `burn` stays open so LPs can always exit | freeze: factory `fee_to_setter` alone or the factory signers via `Factory::freeze_pair`; unfreeze: factory signers only via `Factory::unfreeze_pair` |
 
 The liquidity-level flag is separate from the token-level one on purpose: freezing a pool's *liquidity* is a governance action, whereas halting *all* LP token movement is an incident-response action. A halted pool can still be unwound by holders who already hold LP tokens.
+
+The freeze level is the third tier and the only one reachable by a single address. It is written twice — once in the factory's registry (`is_pair_frozen`, used by `freeze_pair` itself as an `is_pair` gate) and once in the pair, where enforcement actually happens (`Pair::set_frozen`, which only the factory contract may call). The flag returns `PairError::ContractFrozen` (125) before any funds move, so a refused swap leaves reserves untouched; `FactoryError::PairFreezeFailed` (17) covers a failed cross-contract call into the pair.
 
 Mints and burns that the pause rejects return typed errors — `LpTokenPaused` (122), `LpTokenUnavailable` (123), `LpTokenRejected` (124) — rather than a bare host abort, so indexers and callers can distinguish an intentional pause from a genuine authorization failure.
 

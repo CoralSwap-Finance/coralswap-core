@@ -32,6 +32,7 @@ times (cadence math is documented in the shared crate).
 | `PairList`, `TotalPairs` | instance | `create_pair` | `create_pair` |
 | `PendingUpgrade` | instance | `propose_upgrade`, `cancel_upgrade` | `propose_upgrade` |
 | `PairFeeOverride(pair)` | instance | `set_pair_fee` | `set_pair_fee` |
+| `PairFrozen(pair)` | instance | `freeze_pair`, `unfreeze_pair` | both (`storage::extend_instance_ttl`); entries are **removed** when unfrozen, so an unfreeze leaves no key behind |
 | `protocol_fee_balance` accumulator | instance | `deposit_protocol_fee` | `deposit_protocol_fee` |
 
 Lifetime guarantee: instance entries are extended to ≥ 30 days on every
@@ -47,6 +48,7 @@ and simply return `None` / defaults if storage is gone.
 | `ProtocolFeeA` / `ProtocolFeeB` accumulators | instance | `swap` (when protocol fee is active) | `swap` |
 | fee-state / dynamic-fee accumulators | instance | `sync`, `swap` | `sync` |
 | reentrancy lock flag | instance | `flash_loan` guard flip | `extend_reentrancy_ttl` at every flip (acquire and release). The flag shares the instance entry with `PairState`, so it cannot expire on its own; the 5_000-ledger floor must stay >= `REENTRANCY_MAX_HOLD_LEDGERS` (720), enforced by compile-time asserts in `contracts/shared` and by `pair::test::reentrancy` (issue #362). The lock must never lapse while held — fail-locked, not fail-open |
+| `Frozen` flag | instance | `set_frozen` (factory contract only) | `set_frozen` (`extend_instance_ttl`); the incident-response halt, cleared by an unfreeze |
 | oracle observations | instance | oracle update paths | same write |
 
 ### Router (all instance storage)

@@ -40,12 +40,17 @@ To prevent indexers from holding stale views or polling individual storage keys 
 
 ### 2.3 Per-Pair Freeze State
 
-Multisig administrators can freeze or unfreeze trading on specific pairs without pausing the entire protocol:
+The `fee_to_setter` address can freeze or unfreeze a single pair without pausing the entire protocol — the incident-response path for a compromised pool. `freeze_pair` requires the target to be a registered pair and authorizes with the invoking address alone (no multisig). While frozen, the pair rejects `swap`, `mint`, `mint_with_one_token`, `burn`, `burn_single_side`, and `flash_loan` with `PairError::ContractFrozen` (125); views and `sync()` stay open.
 
-| Event | Topic 0 | Topic 1 | Data Tuple | Description |
+| Event | Topic 0 | Topic 1 | Data Map | Description |
 |---|---|---|---|---|
-| `frozen` | `Symbol("frozen")` | `pair: Address` | `()` | Specific pair frozen; swaps/mints disabled. |
-| `unfrozen` | `Symbol("unfrozen")` | `pair: Address` | `()` | Specific pair unfrozen; normal operations resumed. |
+| `pair_frozen_event` | `Symbol("pair_frozen_event")` | `pair: Address` | `{ by: Address, ledger: u32 }` | Specific pair frozen; all value-moving paths refuse. |
+| `pair_unfrozen_event` | `Symbol("pair_unfrozen_event")` | `pair: Address` | `{ by: Address, ledger: u32 }` | Specific pair unfrozen; normal operations resumed. |
+
+- **`by`** (`Address`): the authorizing `fee_to_setter` that invoked `freeze_pair` / `unfreeze_pair`.
+- **`ledger`** (`u32`): the ledger sequence on which the event fired.
+
+> **Indexer Note**: `by` and `ledger` are a **map**, not a tuple — the `#[contractevent]` macro serializes all non-topic fields as a name-sorted `ScMap`. Subscribe to the full `pair_frozen_event` symbol (17 chars, so emitted via `Symbol::new`, not `symbol_short!`), keyed on topic 1 for per-pair status views.
 
 ### 2.4 Pair Creation
 

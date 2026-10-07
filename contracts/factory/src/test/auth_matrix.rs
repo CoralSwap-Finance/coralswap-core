@@ -13,6 +13,8 @@
 //! | `set_pair_fee`             | `(setter, pair, fee_bps)`                                     | the `fee_to_setter` |
 //! | `set_pair_lp_token_paused` | `(setter, pair, paused)`                                      | the `fee_to_setter` |
 //! | `set_pair_stale_threshold`  | `(setter, pair, threshold)`                                   | the `fee_to_setter` |
+//! | `freeze_pair`              | `(signers, pair)`                                             | the `fee_to_setter` alone, or the signer quorum |
+//! | `unfreeze_pair`            | `(signers, pair)`                                             | the signer quorum only |
 //! | `deposit_protocol_fee`     | `(pair, token, amount)`                                       | the `pair`          |
 //!
 //! Each setter entry point takes the claimed setter as an explicit argument and
@@ -379,4 +381,57 @@ fn a_governance_call_needs_a_real_multisig_authorization() {
         "a non-member signer must not be able to pause the factory"
     );
     assert!(!c.factory.is_paused());
+}
+
+// ---------------------------------------------------------------------------
+// freeze_pair / unfreeze_pair: fast single-key freeze, quorum-only unfreeze
+// ---------------------------------------------------------------------------
+
+#[test]
+fn freeze_pair_rejects_a_stranger_signing_alone() {
+    let c = Ctx::new();
+    let signers = Vec::from_array(&c.env, [c.stranger.clone()]);
+
+    auth::allow(
+        &c.env,
+        &c.stranger,
+        &c.factory_id,
+        "freeze_pair",
+        auth_args!(&c.env, signers.clone(), c.pair.clone()),
+    );
+    assert!(
+        c.factory.try_freeze_pair(&signers, &c.pair).is_err(),
+        "only the fee_to_setter (or the quorum) may freeze a pair"
+    );
+    assert!(!c.factory.is_pair_frozen(&c.pair), "state must be unchanged");
+}
+
+#[test]
+fn freeze_pair_by_the_setter_requires_the_setters_signature() {
+    let c = Ctx::new();
+    let signers = Vec::from_array(&c.env, [c.setter.clone()]);
+
+    auth::allow_nothing(&c.env);
+    assert!(
+        c.factory.try_freeze_pair(&signers, &c.pair).is_err(),
+        "naming the fee_to_setter without its signature must not freeze"
+    );
+}
+
+#[test]
+fn unfreeze_pair_rejects_the_setter_signing_alone() {
+    let c = Ctx::new();
+    let signers = Vec::from_array(&c.env, [c.setter.clone()]);
+
+    auth::allow(
+        &c.env,
+        &c.setter,
+        &c.factory_id,
+        "unfreeze_pair",
+        auth_args!(&c.env, signers.clone(), c.pair.clone()),
+    );
+    assert!(
+        c.factory.try_unfreeze_pair(&signers, &c.pair).is_err(),
+        "the single freeze key must not be able to reopen a pool"
+    );
 }

@@ -51,9 +51,10 @@ fn fresh(n: u32) -> (Env, FactoryClient<'static>, Vec<Address>) {
 
 /// Calls `gov` with `presented` and reports the outcome.
 ///
-/// `NoPendingUpgrade` from `cancel_upgrade` is mapped to `Ok`: it is raised
-/// *after* the quorum check passed, so it proves the quorum was accepted
-/// without needing a proposal to exist.
+/// `NoPendingUpgrade` from `cancel_upgrade` and `PairNotFound` from
+/// `freeze_pair` / `unfreeze_pair` are mapped to `Ok`: both are raised *after*
+/// the quorum check passed, so they prove the quorum was accepted without
+/// needing a proposal or a deployed pair to exist.
 fn call(
     env: &Env,
     c: &FactoryClient,
@@ -73,6 +74,7 @@ fn call(
     match r {
         Ok(()) => Ok(()),
         Err(Ok(FactoryError::NoPendingUpgrade)) => Ok(()),
+        Err(Ok(FactoryError::PairNotFound)) => Ok(()),
         Err(Ok(e)) => Err(e),
         Err(Err(e)) => panic!("{gov:?}: host-level failure {e:?}"),
     }

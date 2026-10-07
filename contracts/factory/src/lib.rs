@@ -41,6 +41,9 @@ pub trait PairInterface {
     fn set_lp_token_paused(env: Env, paused: bool);
     fn set_stale_threshold(env: Env, new_threshold: u32);
     fn is_lp_token_paused(env: Env) -> bool;
+    /// Pair-side half of the factory freeze relay. Only the pair's own factory
+    /// may call it (`pair.factory.require_auth()` inside the pair).
+    fn set_frozen(env: Env, frozen: bool) -> Result<(), FactoryError>;
 }
 
 #[contractclient(name = "LpTokenClient")]
@@ -351,18 +354,59 @@ impl Factory {
         Ok(())
     }
 
-    /// Freezes an individual pair, preventing operations on that specific pair.
+    /// Freezes an individual pair: it rejects `swap`, `mint`,
+    /// `mint_with_one_token`, `burn_single_side` and `flash_loan` with
+    /// `PairError::ContractFrozen` until unfrozen. A proportional `burn` stays
+    /// open, so LPs can always withdraw their share.
+    ///
+    /// # Authorization (asymmetric on purpose)
+    /// Freezing only stops activity and cannot move funds, and in an incident
+    /// it has to land before an exploit drains the pool. So it accepts either
+    /// the `fee_to_setter` alone (`signers == [fee_to_setter]`, a single fast
+    /// signature) or the factory multisig quorum. Restoring a pool is the
+    /// risky direction, so [`Factory::unfreeze_pair`] requires the multisig.
+    ///
+    /// # Effect
+    /// The pair's own flag is set through `Pair::set_frozen` (the pair only
+    /// accepts its factory as caller), the factory registry flag is written,
+    /// and `PairFrozenEvent { pair, by, ledger }` is emitted, all in one
+    /// transaction: a pair that cannot be frozen reverts the whole call with
+    /// [`FactoryError::PairFreezeFailed`], leaving no half-frozen state.
+    ///
+    /// # Errors
+    /// | Error               | Condition                                       |
+    /// |---------------------|-------------------------------------------------|
+    /// | `NotInitialized`    | Factory storage absent                          |
+    /// | multisig errors     | `signers` is neither `[fee_to_setter]` nor a valid quorum |
+    /// | `PairNotFound`      | `pair` was not created by this factory          |
+    /// | `PairFreezeFailed`  | the pair rejected or could not be frozen        |
     pub fn freeze_pair(env: Env, signers: Vec<Address>, pair: Address) -> Result<(), FactoryError> {
         let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
-        governance::verify_multisig(&env, &storage.signers, &signers)?;
-
-        storage::set_pair_frozen(&env, &pair, true);
-        storage::extend_instance_ttl(&env);
-        events::FactoryEvents::pair_frozen(&env, &pair);
+        let by = if signers.len() == 1 && signers.get(0) == Some(storage.fee_to_setter.clone()) {
+            storage.fee_to_setter.require_auth();
+            storage.fee_to_setter.clone()
+        } else {
+            governance::verify_multisig(&env, &storage.signers, &signers)?;
+            signers.get(0).ok_or(FactoryError::Unauthorized)?
+        };
+        Self::set_pair_frozen_state(&env, &pair, true)?;
+        events::FactoryEvents::pair_frozen(&env, &pair, &by, env.ledger().sequence());
         Ok(())
     }
 
-    /// Unfreezes an individual pair, restoring operations on that pair.
+    /// Unfreezes an individual pair, restoring every guarded entry point.
+    ///
+    /// Requires the factory multisig quorum: reopening a pool before the cause
+    /// of the freeze is understood is the dangerous direction, so the single
+    /// `fee_to_setter` key that may freeze cannot unfreeze.
+    ///
+    /// # Errors
+    /// | Error               | Condition                                  |
+    /// |---------------------|--------------------------------------------|
+    /// | `NotInitialized`    | Factory storage absent                     |
+    /// | multisig errors     | `signers` is not a valid quorum            |
+    /// | `PairNotFound`      | `pair` was not created by this factory     |
+    /// | `PairFreezeFailed`  | the pair rejected or could not be thawed   |
     pub fn unfreeze_pair(
         env: Env,
         signers: Vec<Address>,
@@ -370,10 +414,24 @@ impl Factory {
     ) -> Result<(), FactoryError> {
         let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
         governance::verify_multisig(&env, &storage.signers, &signers)?;
+        let by = signers.get(0).ok_or(FactoryError::Unauthorized)?;
+        Self::set_pair_frozen_state(&env, &pair, false)?;
+        events::FactoryEvents::pair_unfrozen(&env, &pair, &by, env.ledger().sequence());
+        Ok(())
+    }
 
-        storage::set_pair_frozen(&env, &pair, false);
-        storage::extend_instance_ttl(&env);
-        events::FactoryEvents::pair_unfrozen(&env, &pair);
+    /// Applies a freeze state to a pair created by this factory: the pair's own
+    /// flag (via `Pair::set_frozen`) and the factory registry, in one call.
+    fn set_pair_frozen_state(env: &Env, pair: &Address, frozen: bool) -> Result<(), FactoryError> {
+        if !storage::is_pair(env, pair) {
+            return Err(FactoryError::PairNotFound);
+        }
+        PairClient::new(env, pair)
+            .try_set_frozen(&frozen)
+            .map_err(|_| FactoryError::PairFreezeFailed)?
+            .map_err(|_| FactoryError::PairFreezeFailed)?;
+        storage::set_pair_frozen(env, pair, frozen);
+        storage::extend_instance_ttl(env);
         Ok(())
     }
 

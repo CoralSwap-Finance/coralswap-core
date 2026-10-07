@@ -120,6 +120,31 @@ pub enum DataKey {
     PendingLp(Address),
     /// Sum of every outstanding `PendingLp` entry (instance; issue #363).
     PendingLpTotal,
+    /// Factory freeze flag, written by `Pair::set_frozen`. While set, `swap`,
+    /// `mint`, `mint_with_one_token`, `burn_single_side` and `flash_loan` refuse
+    /// with `PairError::ContractFrozen`; a proportional `burn` stays open so
+    /// LPs can always exit.
+    Frozen,
+}
+
+// ---------------------------------------------------------------------------
+// Factory freeze flag
+// ---------------------------------------------------------------------------
+
+/// Returns `true` while the factory admin has this pair frozen.
+///
+/// Absent means `false`; the only writer is [`crate::Pair::set_frozen`], which
+/// the factory drives from `Factory::freeze_pair`. The flag lives on the pair
+/// rather than being read across a contract boundary on every `swap`, for the
+/// same reason the LP-pause cache does: a nested sub-invocation on the hottest
+/// path is a measurable share of the Soroban budget.
+pub fn get_frozen(env: &Env) -> bool {
+    env.storage().instance().get(&DataKey::Frozen).unwrap_or(false)
+}
+
+/// Records the freeze state the factory just applied to this pair.
+pub fn set_frozen(env: &Env, frozen: bool) {
+    env.storage().instance().set(&DataKey::Frozen, &frozen);
 }
 
 // ---------------------------------------------------------------------------

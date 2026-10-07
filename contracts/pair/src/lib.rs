@@ -27,9 +27,9 @@ use soroban_sdk::{
     Address, Bytes, Env, Symbol,
 };
 use storage::{
-    get_fee_state, get_lp_token_paused, get_pair_state, get_pending_lp, get_pending_lp_total,
-    set_fee_state, set_lp_token_paused, set_pair_state, set_pending_lp, set_pending_lp_total,
-    set_reentrancy_guard, FeeState, ReentrancyGuard,
+    get_fee_state, get_frozen, get_lp_token_paused, get_pair_state, get_pending_lp,
+    get_pending_lp_total, set_fee_state, set_frozen, set_lp_token_paused, set_pair_state,
+    set_pending_lp, set_pending_lp_total, set_reentrancy_guard, FeeState, ReentrancyGuard,
 };
 
 /// Error surface of the LP-token client declared above.
@@ -94,6 +94,27 @@ fn lp_token_is_paused(env: &Env, lp_token: &Address) -> bool {
 fn ensure_lp_token_not_paused(env: &Env) -> Result<(), PairError> {
     if get_lp_token_paused(env) {
         return Err(PairError::LpTokenPaused);
+    }
+    Ok(())
+}
+
+/// Guard for the price-moving and value-creating entry points (`swap`, `mint`,
+/// `mint_with_one_token`, `burn_single_side`, `flash_loan`) while the pool is
+/// frozen. A proportional `burn` is deliberately not guarded: it moves no price
+/// and lets LPs withdraw their share during an incident, so a freeze can never
+/// lock funds in the pool.
+///
+/// Returns [`PairError::ContractFrozen`] so an incident-response freeze is
+/// distinguishable at the call site from an LP-token pause, an authorization
+/// failure, or an arithmetic error.
+///
+/// The flag is the pair's own copy: `Factory::freeze_pair` sets it through
+/// [`Pair::set_frozen`], and both writes land in the same transaction, so the
+/// copy can never disagree with the factory's registry. Reading it locally
+/// keeps a nested sub-invocation off the `swap` / `mint` hot path.
+fn ensure_not_frozen(env: &Env) -> Result<(), PairError> {
+    if get_frozen(env) {
+        return Err(PairError::ContractFrozen);
     }
     Ok(())
 }
@@ -215,6 +236,9 @@ impl Pair {
         to.require_auth();
 
         let _guard = reentrancy::ReentrancyGuard::acquire(&env)?;
+
+        // A frozen pool accepts no deposits at all (incident response).
+        ensure_not_frozen(&env)?;
 
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
         let contract = env.current_contract_address();
@@ -342,6 +366,9 @@ impl Pair {
         to.require_auth();
 
         let _guard = reentrancy::ReentrancyGuard::acquire(&env)?;
+
+        // A frozen pool refuses the deposit and the internal swap leg alike.
+        ensure_not_frozen(&env)?;
 
         // ── 1. Load state ────────────────────────────────────────────────────
         let state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
@@ -579,6 +606,9 @@ impl Pair {
 
         let _guard = reentrancy::ReentrancyGuard::acquire(&env)?;
 
+        // Deliberately open while the pool is frozen: a proportional exit moves
+        // no price, and LPs must always be able to withdraw (see `set_frozen`).
+
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
         let contract = env.current_contract_address();
 
@@ -680,6 +710,9 @@ impl Pair {
         to.require_auth();
 
         let _guard = reentrancy::ReentrancyGuard::acquire(&env)?;
+
+        // A frozen pool releases no reserves (incident response).
+        ensure_not_frozen(&env)?;
 
         let mut state = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
         let fee_state = get_fee_state(&env).ok_or(PairError::NotInitialized)?;
@@ -836,6 +869,9 @@ impl Pair {
         to: Address,
     ) -> Result<(), PairError> {
         let _guard = reentrancy::ReentrancyGuard::acquire(&env)?;
+        // A frozen pool trades nothing (incident response). Checked here rather
+        // than in `swap_inner` so each operation pays for exactly one read.
+        ensure_not_frozen(&env)?;
         Self::swap_inner(&env, amount_a_out, amount_b_out, &to)
     }
 
@@ -855,6 +891,10 @@ impl Pair {
         amount_b: i128,
         data: Bytes,
     ) -> Result<(), PairError> {
+        // A frozen pool lends nothing, including zero-amount no-op calls: the
+        // freeze is an incident halt, and a caller that reaches this entry
+        // point while frozen must be told so.
+        ensure_not_frozen(&env)?;
         flash_loan::execute_flash_loan(&env, &receiver, amount_a, amount_b, &data)?;
         Self::extend_instance_ttl(&env);
         Ok(())
@@ -1341,5 +1381,52 @@ impl Pair {
             None => return false,
         };
         lp_token_is_paused(&env, &pair.lp_token)
+    }
+
+    // ─────────────────────────────────────────
+    // Admin: Factory freeze (incident response)
+    // ─────────────────────────────────────────
+
+    /// Freezes or unfreezes this pool (issue: pair-level emergency freeze).
+    ///
+    /// # Why this entry point exists
+    ///
+    /// Both existing halts need credentials the incident responder may not
+    /// hold: the protocol pause is multisig-gated, and the LP-token pause
+    /// needs the pair (not the factory) to drive the token. `Factory::freeze_pair`
+    /// gives the factory's `fee_to_setter` a single-address, single-transaction
+    /// way to stop a compromised pool without pair-level credentials — this is
+    /// the pair-side half of that relay.
+    ///
+    /// # Authorization
+    /// The factory address (same channel as `set_stale_threshold` and
+    /// `set_lp_token_paused`). The factory is the direct invoker when it calls
+    /// through `Factory::freeze_pair`, so invoker-contract authorization
+    /// satisfies the guard without an off-chain signature.
+    ///
+    /// # Effect
+    /// While frozen, `swap`, `mint`, `mint_with_one_token`, `burn_single_side`
+    /// and `flash_loan` fail with [`PairError::ContractFrozen`]. A proportional
+    /// `burn` stays open so LPs can always withdraw, and views, `sync` and
+    /// LP-token transfers are unaffected.
+    ///
+    /// # Errors
+    /// | Error              | Condition                       |
+    /// |--------------------|---------------------------------|
+    /// | `NotInitialized`   | Pair storage absent             |
+    pub fn set_frozen(env: Env, frozen: bool) -> Result<(), PairError> {
+        let pair = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
+
+        pair.factory.require_auth();
+
+        set_frozen(&env, frozen);
+        Self::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Returns `true` while this pair is frozen by the factory admin.
+    pub fn is_frozen(env: Env) -> bool {
+        get_frozen(&env)
     }
 }
