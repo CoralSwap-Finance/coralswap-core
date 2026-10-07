@@ -48,6 +48,7 @@ mod integration_tests {
             amount_b_min: i128,
             to: Address,
             deadline: u64,
+            deadline_ledger: Option<u32>,
         ) -> (i128, i128, i128);
         fn remove_liquidity(
             env: Env,
@@ -58,7 +59,26 @@ mod integration_tests {
             amount_b_min: i128,
             to: Address,
             deadline: u64,
+            deadline_ledger: Option<u32>,
         ) -> (i128, i128);
+        fn swap_exact_tokens_for_tokens(
+            env: Env,
+            amount_in: i128,
+            amount_out_min: i128,
+            path: Vec<Address>,
+            to: Address,
+            deadline: u64,
+            deadline_ledger: Option<u32>,
+        ) -> Vec<i128>;
+        fn swap_tokens_for_exact_tokens(
+            env: Env,
+            amount_out: i128,
+            amount_in_max: i128,
+            path: Vec<Address>,
+            to: Address,
+            deadline: u64,
+            deadline_ledger: Option<u32>,
+        ) -> Vec<i128>;
     }
 
     fn load_wasm(file_name: &str) -> StdVec<u8> {
@@ -148,6 +168,7 @@ mod integration_tests {
         let deadline = env.ledger().timestamp() + 100;
         let (amount_a, amount_b, liquidity) = router_client.add_liquidity(
             &token_a, &token_b, &deposit_a, &deposit_b, &deposit_a, &deposit_b, &user, &deadline,
+            &None,
         );
 
         assert_eq!(amount_a, deposit_a);
@@ -184,7 +205,7 @@ mod integration_tests {
         assert!(new_k >= previous_k, "k invariant must be preserved after fee-adjusted swap");
 
         let (returned_a, returned_b) = router_client
-            .remove_liquidity(&token_a, &token_b, &liquidity, &0, &0, &user, &deadline);
+            .remove_liquidity(&token_a, &token_b, &liquidity, &0, &0, &user, &deadline, &None);
 
         assert!(returned_a > 0, "remove_liquidity must return token_a");
         assert!(returned_b > 0, "remove_liquidity must return token_b");

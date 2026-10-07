@@ -29,4 +29,6 @@ pub trait FactoryInterface {
     fn get_fee_to(env: Env) -> Option<Address>;
 
     fn get_fee_bps(env: Env) -> u32;
+    fn is_pair(env: Env, pair: Address) -> bool;
+    fn is_lp_token(env: Env, token: Address) -> bool;
 }
