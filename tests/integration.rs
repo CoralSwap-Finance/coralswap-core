@@ -118,6 +118,11 @@ mod integration_tests {
         // BLANKET MOCK (issue #314): end-to-end wiring test; the guards are
         // covered by the per-contract `auth_matrix` modules.
         env.mock_all_auths_allowing_non_root_auth();
+        // Same test-only budget lift as `deploy_with_router_and_pairs`: the full
+        // factory + pair + LP-token + router WASM flow outgrows the default test
+        // CPU budget; on-chain limits still apply to the deployed contracts.
+        env.budget().reset_unlimited();
+        env.cost_estimate().disable_resource_limits();
 
         let admin = Address::generate(&env);
         let user = Address::generate(&env);
