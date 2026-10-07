@@ -746,27 +746,27 @@ impl Pair {
         let reserve_unwanted_post_burn =
             reserve_unwanted.checked_sub(share_unwanted).ok_or(PairError::Overflow)?;
 
-        let fee_bps = dynamic_fee::compute_fee_bps(&fee_state) as i128;
-        let fee_factor = 10_000i128 - fee_bps;
+        let fee_bps = dynamic_fee::compute_fee_bps(&fee_state);
 
-        let amount_in_with_fee =
-            share_unwanted.checked_mul(fee_factor).ok_or(PairError::Overflow)?;
-
-        let swap_numerator = amount_in_with_fee
-            .checked_mul(reserve_preferred_post_burn)
-            .ok_or(PairError::Overflow)?;
-
-        let swap_denominator = reserve_unwanted_post_burn
-            .checked_mul(10_000)
-            .ok_or(PairError::Overflow)?
-            .checked_add(amount_in_with_fee)
-            .ok_or(PairError::Overflow)?;
-
-        if swap_denominator == 0 {
-            return Err(PairError::InsufficientLiquidity);
-        }
-
-        let swap_out = swap_numerator / swap_denominator;
+        // Same quote math as swaps and the router (shared implementation).
+        // A dust-sized swap leg is tolerated here and simply yields 0 out.
+        // With the preferred side already drained by the burn there is nothing to
+        // swap into, so the leg yields 0 (the shared quote rejects a 0 reserve).
+        let swap_out = if reserve_preferred_post_burn == 0 {
+            0
+        } else {
+            match math::get_amount_out(
+                share_unwanted,
+                reserve_unwanted_post_burn,
+                reserve_preferred_post_burn,
+                fee_bps,
+            ) {
+                Ok(out) => out,
+                Err(PairError::DustAmount) => 0,
+                Err(err) => return Err(err),
+            }
+        };
+        let fee_bps = fee_bps as i128;
 
         let total_out = share_preferred.checked_add(swap_out).ok_or(PairError::Overflow)?;
 
@@ -786,11 +786,12 @@ impl Pair {
             .checked_mul(100_000_000)
             .ok_or(PairError::Overflow)?;
 
-        let balance_preferred_adj =
-            reserve_preferred_final.checked_mul(10_000).ok_or(PairError::Overflow)?;
+        let balance_preferred_adj = reserve_preferred_final
+            .checked_mul(math::BPS_DENOMINATOR)
+            .ok_or(PairError::Overflow)?;
 
         let balance_unwanted_adj = reserve_unwanted_final
-            .checked_mul(10_000)
+            .checked_mul(math::BPS_DENOMINATOR)
             .ok_or(PairError::Overflow)?
             .checked_sub(share_unwanted.checked_mul(fee_bps).ok_or(PairError::Overflow)?)
             .ok_or(PairError::Overflow)?;
@@ -1055,13 +1056,13 @@ impl Pair {
         let fee = fee_bps as i128;
 
         let balance_a_adj = balance_a
-            .checked_mul(10_000)
+            .checked_mul(math::BPS_DENOMINATOR)
             .ok_or(PairError::Overflow)?
             .checked_sub(amount_a_in * fee)
             .ok_or(PairError::Overflow)?;
 
         let balance_b_adj = balance_b
-            .checked_mul(10_000)
+            .checked_mul(math::BPS_DENOMINATOR)
             .ok_or(PairError::Overflow)?
             .checked_sub(amount_b_in * fee)
             .ok_or(PairError::Overflow)?;
@@ -1206,6 +1207,8 @@ impl Pair {
         PairEvents::swap(
             env,
             to,
+            &pair.token_a,
+            &pair.token_b,
             amount_a_in,
             amount_b_in,
             amount_a_out,

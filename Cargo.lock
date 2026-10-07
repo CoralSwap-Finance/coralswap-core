@@ -405,6 +405,7 @@ dependencies = [
 name = "coralswap-shared"
 version = "0.1.0"
 dependencies = [
+ "ethnum",
  "soroban-sdk",
 ]
 
