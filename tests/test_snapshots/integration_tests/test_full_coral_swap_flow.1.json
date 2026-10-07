@@ -169,7 +169,8 @@
                 },
                 {
                   "u64": "100"
-                }
+                },
+                "void"
               ]
             }
           },
@@ -315,7 +316,8 @@
                 },
                 {
                   "u64": "100"
-                }
+                },
+                "void"
               ]
             }
           },
@@ -323,14 +325,11 @@
             {
               "function": {
                 "contract_fn": {
-                  "contract_address": "CADN7UAEX5N7DAKB2ZAQ2Y3ZRSAQPYRQZG6AGPD4YPRMZJ4UU7TFFWEA",
-                  "function_name": "transfer",
+                  "contract_address": "CCOHI4QJBBETS5P6F42M3VZM7NDR4CEUE6B5OPZDT7FXHVIJJSVCJPLX",
+                  "function_name": "deposit_lp",
                   "args": [
                     {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                    },
-                    {
-                      "address": "CCOHI4QJBBETS5P6F42M3VZM7NDR4CEUE6B5OPZDT7FXHVIJJSVCJPLX"
                     },
                     {
                       "i128": "1413213"
@@ -338,7 +337,28 @@
                   ]
                 }
               },
-              "sub_invocations": []
+              "sub_invocations": [
+                {
+                  "function": {
+                    "contract_fn": {
+                      "contract_address": "CADN7UAEX5N7DAKB2ZAQ2Y3ZRSAQPYRQZG6AGPD4YPRMZJ4UU7TFFWEA",
+                      "function_name": "transfer",
+                      "args": [
+                        {
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                        },
+                        {
+                          "address": "CCOHI4QJBBETS5P6F42M3VZM7NDR4CEUE6B5OPZDT7FXHVIJJSVCJPLX"
+                        },
+                        {
+                          "i128": "1413213"
+                        }
+                      ]
+                    }
+                  },
+                  "sub_invocations": []
+                }
+              ]
             },
             {
               "function": {
@@ -1149,6 +1169,18 @@
                           }
                         ]
                       }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "PendingLpTotal"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "i128": "0"
+                      }
                     }
                   ]
                 }
@@ -1526,6 +1558,21 @@
                       "key": {
                         "vec": [
                           {
+                            "symbol": "IsLpToken"
+                          },
+                          {
+                            "address": "CADN7UAEX5N7DAKB2ZAQ2Y3ZRSAQPYRQZG6AGPD4YPRMZJ4UU7TFFWEA"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "bool": true
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
                             "symbol": "IsPair"
                           },
                           {
@@ -1623,8 +1670,8 @@
                     "n_instructions": 26098,
                     "n_functions": 337,
                     "n_globals": 4,
-                    "n_table_entries": 10,
-                    "n_types": 56,
+                    "n_table_entries": 1,
+                    "n_types": 39,
                     "n_data_segments": 1,
                     "n_elem_segments": 1,
                     "n_imports": 27,
@@ -1639,7 +1686,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 120960
+        "live_until": 4095
       },
       {
         "entry": {
@@ -1682,16 +1729,16 @@
                   "ext": "v0",
                   "cost_inputs": {
                     "ext": "v0",
-                    "n_instructions": 7028,
-                    "n_functions": 211,
+                    "n_instructions": 27143,
+                    "n_functions": 354,
                     "n_globals": 4,
-                    "n_table_entries": 1,
-                    "n_types": 39,
+                    "n_table_entries": 10,
+                    "n_types": 60,
                     "n_data_segments": 1,
-                    "n_elem_segments": 0,
-                    "n_imports": 28,
-                    "n_exports": 25,
-                    "n_data_segment_bytes": 501
+                    "n_elem_segments": 1,
+                    "n_imports": 29,
+                    "n_exports": 24,
+                    "n_data_segment_bytes": 4009
                   }
                 }
               },
@@ -1701,7 +1748,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 120960
       },
       {
         "entry": {

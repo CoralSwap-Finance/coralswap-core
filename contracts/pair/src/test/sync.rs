@@ -147,7 +147,7 @@ fn test_sync_no_price_update_no_time() {
         let env_test = env.clone();
         env_test.as_contract(&contract_id, || {
             let oracle = crate::storage::get_oracle_state(&env_test);
-            (oracle.price_a_cumulative, oracle.price_b_cumulative, oracle.observations.len())
+            (oracle.price_a_cumulative, oracle.price_b_cumulative, oracle.len())
         })
     };
 
@@ -158,7 +158,7 @@ fn test_sync_no_price_update_no_time() {
         let _ = Pair::sync(env.clone());
         let oracle = crate::storage::get_oracle_state(&env);
         assert_eq!(
-            (oracle.price_a_cumulative, oracle.price_b_cumulative, oracle.observations.len()),
+            (oracle.price_a_cumulative, oracle.price_b_cumulative, oracle.len()),
             initial,
             "sync must not disturb the oracle accumulators when no time has elapsed"
         );
@@ -193,7 +193,7 @@ fn test_pair_state_carries_no_cumulative_price_fields() {
 
         let oracle = crate::storage::get_oracle_state(&env);
         assert_eq!(oracle.price_a_cumulative, 10);
-        assert_eq!(oracle.observations.len(), 1);
+        assert_eq!(oracle.len(), 1);
 
         // Pair state is untouched by the oracle update.
         assert_eq!(state.reserve_a, 0);

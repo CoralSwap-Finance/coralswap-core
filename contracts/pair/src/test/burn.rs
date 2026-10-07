@@ -378,3 +378,185 @@ fn test_burn_cannot_extract_seed_reserves() {
     // Seed remains intact
     assert_eq!(lp_client.balance(&pair_client.address), MINIMUM_LIQUIDITY);
 }
+
+// ── Issue #363: per-caller LP attribution ───────────────────────────────────
+//
+// `burn` must redeem only LP attributable to the caller. LP staged through
+// `deposit_lp` is credited to the depositor; the MINIMUM_LIQUIDITY seed and any
+// other user's staged LP must survive someone else's `burn`.
+
+use crate::errors::PairError;
+
+const ATTR_RESERVE: i128 = 1_000_000_000;
+
+/// Pool with three LP holders: `user` (rest), `alice` and `bob` (100M each).
+#[allow(clippy::type_complexity)]
+fn setup_holders() -> (
+    Env,
+    PairClient<'static>,
+    BurnMockTokenClient<'static>,
+    LpTokenClient<'static>,
+    Address,
+    Address,
+    Address,
+) {
+    let (env, pair, token_a, _token_b, lp, user, _a, _b) = setup_pair(ATTR_RESERVE, ATTR_RESERVE);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    lp.transfer(&user, &alice, &100_000_000);
+    lp.transfer(&user, &bob, &100_000_000);
+    (env, pair, token_a, lp, alice, bob, user)
+}
+
+#[test]
+fn test_deposit_lp_attributes_to_depositor() {
+    let (_env, pair, _ta, lp, alice, bob, _user) = setup_holders();
+
+    pair.deposit_lp(&alice, &40_000_000);
+
+    assert_eq!(pair.pending_lp(&alice), 40_000_000);
+    assert_eq!(pair.pending_lp(&bob), 0);
+    assert_eq!(lp.balance(&alice), 60_000_000, "LP moved out of the depositor");
+    assert_eq!(lp.balance(&pair.address), MINIMUM_LIQUIDITY + 40_000_000);
+
+    // Deposits accumulate.
+    pair.deposit_lp(&alice, &10_000_000);
+    assert_eq!(pair.pending_lp(&alice), 50_000_000);
+}
+
+#[test]
+fn test_burn_redeems_only_callers_staged_lp() {
+    let (_env, pair, token_a, lp, alice, bob, _user) = setup_holders();
+
+    pair.deposit_lp(&alice, &100_000_000);
+    pair.deposit_lp(&bob, &100_000_000);
+
+    // Bob burns first. Before #363 this consumed Alice's LP as well.
+    let supply = lp.total_supply();
+    let (out_a, _) = pair.burn(&bob);
+    assert_eq!(out_a, 100_000_000 * ATTR_RESERVE / (supply - MINIMUM_LIQUIDITY));
+    assert_eq!(token_a.balance(&bob), out_a);
+    assert_eq!(token_a.balance(&alice), 0);
+
+    assert_eq!(pair.pending_lp(&bob), 0, "bob's stage is consumed");
+    assert_eq!(pair.pending_lp(&alice), 100_000_000, "alice's stage is untouched");
+    assert_eq!(
+        lp.balance(&pair.address),
+        MINIMUM_LIQUIDITY + 100_000_000,
+        "only bob's LP left the pair"
+    );
+
+    // Alice can still redeem her full stake afterwards.
+    let (alice_out_a, _) = pair.burn(&alice);
+    assert!(alice_out_a > 0);
+    assert_eq!(token_a.balance(&alice), alice_out_a);
+    assert_eq!(pair.pending_lp(&alice), 0);
+}
+
+#[test]
+fn test_interleaved_deposits_and_burns_are_attributed_correctly() {
+    let (_env, pair, token_a, lp, alice, bob, _user) = setup_holders();
+
+    // alice stages, bob stages, alice burns, bob stages more, bob burns.
+    pair.deposit_lp(&alice, &60_000_000);
+    pair.deposit_lp(&bob, &30_000_000);
+    pair.burn(&alice);
+    assert_eq!(pair.pending_lp(&bob), 30_000_000);
+    pair.deposit_lp(&bob, &20_000_000);
+    assert_eq!(pair.pending_lp(&bob), 50_000_000);
+
+    let bob_before = lp.balance(&pair.address);
+    pair.burn(&bob);
+    assert_eq!(bob_before - lp.balance(&pair.address), 50_000_000);
+    assert!(token_a.balance(&alice) > 0 && token_a.balance(&bob) > 0);
+    assert_eq!(lp.balance(&pair.address), MINIMUM_LIQUIDITY, "only the seed remains");
+}
+
+#[test]
+fn test_seed_is_never_burned() {
+    let (_env, pair, _ta, lp, alice, bob, user) = setup_holders();
+
+    pair.deposit_lp(&alice, &100_000_000);
+    pair.deposit_lp(&bob, &100_000_000);
+    pair.deposit_lp(&user, &lp.balance(&user));
+    pair.burn(&alice);
+    pair.burn(&bob);
+    pair.burn(&user);
+
+    assert_eq!(lp.balance(&pair.address), MINIMUM_LIQUIDITY);
+    assert_eq!(lp.total_supply(), MINIMUM_LIQUIDITY);
+
+    // Nothing left to claim: the seed is not attributable to anyone.
+    assert_eq!(pair.try_burn(&alice), Err(Ok(PairError::InsufficientLiquidityBurned)));
+}
+
+#[test]
+fn test_burn_without_staged_or_unattributed_lp_fails() {
+    let (_env, pair, _ta, lp, alice, bob, _user) = setup_holders();
+
+    pair.deposit_lp(&alice, &50_000_000);
+
+    // Bob staged nothing and nothing unattributed exists: he cannot reach
+    // into Alice's stage or the seed.
+    assert_eq!(pair.try_burn(&bob), Err(Ok(PairError::InsufficientLiquidityBurned)));
+    assert_eq!(pair.pending_lp(&alice), 50_000_000);
+    assert_eq!(lp.balance(&pair.address), MINIMUM_LIQUIDITY + 50_000_000);
+}
+
+#[test]
+fn test_raw_transfer_cannot_consume_staged_lp() {
+    let (_env, pair, token_a, lp, alice, bob, _user) = setup_holders();
+
+    // Alice stages properly; Bob does a legacy raw transfer to the pair.
+    pair.deposit_lp(&alice, &100_000_000);
+    lp.transfer(&bob, &pair.address, &100_000_000);
+
+    // A third party with nothing staged claims only the unattributed remainder
+    // (Bob's raw transfer), never Alice's stage.
+    let carol = Address::generate(&_env);
+    let supply = lp.total_supply();
+    let (carol_out_a, _) = pair.burn(&carol);
+    assert_eq!(carol_out_a, 100_000_000 * ATTR_RESERVE / (supply - MINIMUM_LIQUIDITY));
+    assert_eq!(token_a.balance(&carol), carol_out_a);
+
+    assert_eq!(pair.pending_lp(&alice), 100_000_000);
+    assert_eq!(lp.balance(&pair.address), MINIMUM_LIQUIDITY + 100_000_000);
+
+    // Alice's own burn still works afterwards.
+    assert!(pair.burn(&alice).0 > 0);
+}
+
+#[test]
+fn test_burn_with_stage_ignores_unattributed_transfers() {
+    let (_env, pair, _ta, lp, alice, bob, _user) = setup_holders();
+
+    pair.deposit_lp(&alice, &50_000_000);
+    lp.transfer(&bob, &pair.address, &100_000_000); // unattributed
+
+    pair.burn(&alice);
+
+    // Alice took exactly her stage; the unattributed LP is still there.
+    assert_eq!(lp.balance(&pair.address), MINIMUM_LIQUIDITY + 100_000_000);
+}
+
+#[test]
+fn test_legacy_raw_transfer_flow_still_burns() {
+    let (_env, pair, token_a, lp, alice, _bob, _user) = setup_holders();
+
+    lp.transfer(&alice, &pair.address, &100_000_000);
+    let (out_a, _) = pair.burn(&alice);
+
+    assert!(out_a > 0);
+    assert_eq!(token_a.balance(&alice), out_a);
+    assert_eq!(lp.balance(&pair.address), MINIMUM_LIQUIDITY);
+}
+
+#[test]
+fn test_deposit_lp_rejects_invalid_input() {
+    let (_env, pair, _ta, _lp, alice, _bob, _user) = setup_holders();
+
+    assert_eq!(pair.try_deposit_lp(&alice, &0), Err(Ok(PairError::InvalidInput)));
+    assert_eq!(pair.try_deposit_lp(&alice, &-1), Err(Ok(PairError::InvalidInput)));
+    // The pair itself can never be a depositor: that would re-attribute the seed.
+    assert_eq!(pair.try_deposit_lp(&pair.address, &1), Err(Ok(PairError::InvalidInput)));
+}

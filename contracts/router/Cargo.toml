@@ -11,6 +11,9 @@ doctest = false
 [dependencies]
 soroban-sdk = { workspace = true }
 coralswap-shared = { path = "../shared" }
+ethnum = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+coralswap-pair = { path = "../pair" }
+coralswap-lp-token = { path = "../lp_token" }
