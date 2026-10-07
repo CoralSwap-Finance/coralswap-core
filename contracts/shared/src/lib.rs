@@ -210,9 +210,6 @@ pub const MAX_COMMITS_HARD_CAP: u32 = 1_000;
 /// Hard cap for admin-configured commit expiry (~30 days).
 pub const COMMIT_EXPIRY_HARD_CAP: u32 = 518_400;
 
-/// Scoped-authorization test helpers (issue #314). Only compiled when the
-/// `test-support` feature is enabled, which happens solely as a
-/// dev-dependency of the contract crates.
 // ─────────────────────────────────────────────
 // Constant-product quote math (router + pair)
 // ─────────────────────────────────────────────
@@ -327,6 +324,9 @@ fn fee_factor(fee_bps: u32) -> Result<i128, QuoteError> {
     Ok(BPS_DENOMINATOR - fee_bps as i128)
 }
 
+/// Scoped-authorization test helpers (issue #314). Only compiled when the
+/// `test-support` feature is enabled, which happens solely as a
+/// dev-dependency of the contract crates.
 #[cfg(feature = "test-support")]
 pub mod test_support;
 

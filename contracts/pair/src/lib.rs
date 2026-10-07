@@ -750,15 +750,21 @@ impl Pair {
 
         // Same quote math as swaps and the router (shared implementation).
         // A dust-sized swap leg is tolerated here and simply yields 0 out.
-        let swap_out = match math::get_amount_out(
-            share_unwanted,
-            reserve_unwanted_post_burn,
-            reserve_preferred_post_burn,
-            fee_bps,
-        ) {
-            Ok(out) => out,
-            Err(PairError::DustAmount) => 0,
-            Err(err) => return Err(err),
+        // With the preferred side already drained by the burn there is nothing to
+        // swap into, so the leg yields 0 (the shared quote rejects a 0 reserve).
+        let swap_out = if reserve_preferred_post_burn == 0 {
+            0
+        } else {
+            match math::get_amount_out(
+                share_unwanted,
+                reserve_unwanted_post_burn,
+                reserve_preferred_post_burn,
+                fee_bps,
+            ) {
+                Ok(out) => out,
+                Err(PairError::DustAmount) => 0,
+                Err(err) => return Err(err),
+            }
         };
         let fee_bps = fee_bps as i128;
 
