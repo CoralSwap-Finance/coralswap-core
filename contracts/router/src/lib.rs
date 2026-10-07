@@ -13,7 +13,8 @@ mod test;
 use errors::RouterError;
 use helpers::{
     compute_optimal_amounts, get_amount_in, get_amount_out, get_pair_address,
-    get_pair_reserves_and_fee, get_path_amounts_out, sort_tokens, FactoryClient, PairClient,
+    get_pair_reserves_and_fee, get_path_amounts_out, get_path_minimums, sort_tokens, FactoryClient,
+    PairClient,
 };
 use soroban_sdk::{
     contract, contractimpl, token::TokenClient, xdr::ToXdr, Address, Bytes, BytesN, Env, Vec,
@@ -255,6 +256,10 @@ impl Router {
     /// The path must have 2 to 4 entries: [token_in, ..., token_out].
     /// Intermediate tokens are sent to and forwarded by this router contract.
     ///
+    /// Slippage protection is applied end-to-end: each hop must meet its
+    /// derived minimum output to prevent intermediate value loss while the
+    /// final output still meets the global minimum.
+    ///
     /// Forward dust (issue #352): after the last hop, any residual balance of
     /// the input token held by the router — e.g. a few stroops stranded by a
     /// previously reverted path, or left by future forwarding changes — is
@@ -283,6 +288,19 @@ impl Router {
 
         if final_out < amount_out_min {
             return Err(RouterError::InsufficientOutputAmount);
+        }
+
+        // End-to-end slippage protection: check each hop meets its derived minimum.
+        // This prevents intermediate value loss where a middle hop experiences extreme
+        // slippage but the final hop could still meet the global minimum.
+        // See: https://github.com/CoralSwap-Finance/coralswap-core/issues/[issue-number]
+        let min_amounts = get_path_minimums(&env, &factory, &path, amount_out_min)?;
+        for i in 0..hops {
+            let actual_amount = amounts.get(i).unwrap();
+            let min_amount = min_amounts.get(i).unwrap();
+            if actual_amount < min_amount {
+                return Err(RouterError::InsufficientOutputAmount);
+            }
         }
 
         to.require_auth();
