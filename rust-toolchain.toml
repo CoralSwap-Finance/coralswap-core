@@ -1,4 +1,7 @@
 [toolchain]
 channel = "1.94.1"
 targets = ["wasm32v1-none"]
-components = ["rustc", "cargo", "rustfmt", "clippy", "rust-src"]
+# llvm-tools-preview provides llvm-cov/llvm-profdata for `cargo llvm-cov`
+# (scripts/check-coverage.sh), which enforces the coverage floors in
+# coverage.toml.
+components = ["rustc", "cargo", "rustfmt", "clippy", "rust-src", "llvm-tools-preview"]

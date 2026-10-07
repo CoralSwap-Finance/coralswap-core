@@ -22,6 +22,7 @@ Closes #
 - [ ] Code follows project coding standards
 - [ ] `cargo fmt --all -- --check` passes
 - [ ] `cargo clippy --all-targets -- -D warnings` passes
+- [ ] Coverage floor passes (`./scripts/check-coverage.sh`); new exemptions in `coverage.toml` carry a reason and an `# expires:` date
 - [ ] WASM builds successfully (`cargo build --release --target wasm32v1-none`)
 - [ ] Public functions have doc comments
 - [ ] Commit messages follow conventional format

@@ -89,7 +89,7 @@ nominal amount passed to `transfer` (see
 
 1. Fork the repo and create a branch: `feat/issue-NUMBER-short-description`
 2. Make your changes following the standards above
-3. Ensure CI passes: `cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings && cargo test`
+3. Ensure CI passes: `cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings && cargo test && ./scripts/check-coverage.sh`
 4. Open a PR against `main` using the PR template
 5. Reference the issue number in your PR description
 6. Wait for review -- first response within 24 hours
@@ -101,9 +101,50 @@ nominal amount passed to `transfer` (see
 - Use `soroban_sdk::testutils` for test environments
 - All new functions must have corresponding tests
 
+## Coverage
+
+Every workspace member has an enforced line-coverage floor. The `Coverage`
+workflow runs `./scripts/check-coverage.sh` — a `cargo llvm-cov` run over the
+whole test suite followed by the gate in `scripts/coverage_gate.py` — and fails
+any PR whose member lands below the floor recorded in
+[`coverage.toml`](coverage.toml).
+
+- Run it locally with `make coverage` (needs
+  `cargo install cargo-llvm-cov --locked`; the `llvm-tools-preview` component
+  ships with the pinned toolchain).
+- Floors sit 1--2 pp below the baseline measured when the policy was written,
+  so ordinary refactors pass while a PR that adds uncovered production code --
+  or drops tests from the high-risk paths (flash loan, single-sided mint,
+  reentrancy guard, auth) -- fails with a per-member report in the job summary
+  and as PR annotations. The LCOV and HTML reports are uploaded as the
+  `coverage-report` artifact.
+- A new workspace member must be added to `[floors]`, or to
+  `[no_floor.<member>]` with a `reason`; the gate rejects members that appear
+  in neither table, so nothing escapes the floor silently.
+- Uncovered-but-justified regions are allowlisted in `coverage.toml`, one entry
+  per region, with a mandatory expiry comment:
+
+  ```toml
+  [[exemptions]]
+  path = "contracts/pair/src/storage.rs"
+  lines = "3, 16, 44"
+  reason = "`#[contracttype]` declaration, no executable body"
+  # expires: 2027-03-31
+  ```
+
+  The gate rejects the entry once `today` reaches `expires`, warns 14 days
+  before it, and errors out when the listed lines no longer exist -- so an
+  exemption has to be fixed (tests, dead-code removal) or consciously renewed
+  instead of rotting.
+
 ## Continuous Integration
 
 - The `CI` workflow runs formatting, clippy, build, and tests on every push and PR.
+- The `Coverage` workflow (`.github/workflows/coverage.yml`) measures line
+  coverage with `cargo llvm-cov` and enforces the per-member floors in
+  [`coverage.toml`](coverage.toml): a PR below its floor fails with a report in
+  the job summary and as annotations, and the LCOV/HTML report is uploaded as
+  the `coverage-report` artifact. See [Coverage](#coverage).
 - The `SDK Matrix` workflow (`.github/workflows/matrix.yml`) builds and tests the
   contracts against multiple `soroban-sdk` versions to catch breaking changes early:
   - The pinned stable version (matching `Cargo.toml`) is **required** to pass.
