@@ -20,4 +20,6 @@ pub enum FactoryError {
     FeeTooHigh = 14,
     InvalidFeeRecipient = 15,
     FeeDisabled = 16,
+    /// The same signer was presented more than once to a multisig call (issue #364).
+    DuplicateSigner = 17,
 }
