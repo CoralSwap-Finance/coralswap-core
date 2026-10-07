@@ -112,6 +112,12 @@ impl MockPair {
     pub fn get_current_fee_bps(_env: Env) -> u32 {
         30
     }
+
+    // The router quotes with the override-aware fee since #441; no factory
+    // override is set in these tests.
+    pub fn get_effective_fee_bps(_env: Env) -> (u32, bool) {
+        (30, false)
+    }
 }
 
 // ---------------------------------------------------------------------------
