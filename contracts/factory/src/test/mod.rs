@@ -1441,6 +1441,7 @@ mod factory_tests {
         auth::allow(&env, &stranger, &pair_addr, "set_stale_threshold", auth_args!(&env, 500u32));
         let threshold_res = pair_client.try_set_stale_threshold(&500u32);
         assert!(threshold_res.is_err());
+    }
 
     // ── Deterministic pair-address derivation (Issue #383) ───────────────────
 
