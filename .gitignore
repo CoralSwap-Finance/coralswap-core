@@ -5,14 +5,11 @@ base-benchmark.json
 pr-benchmark.json
 !test/*.wasm
 .idea/
-.vscode/
 *.swp
 *.swo
 *~
 .DS_Store
 Thumbs.db
-.env
-.env.local
 target_local/
 issue.md
 pr.md
@@ -20,3 +17,5 @@ test_snapshots/
 # Python byte cache (scripts/coverage_gate.py)
 __pycache__/
 *.py[cod]
+config.bat
+node_modules
