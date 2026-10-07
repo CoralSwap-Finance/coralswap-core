@@ -455,7 +455,10 @@ impl Router {
         Ok(result)
     }
 
-    /// Adds liquidity to a token pair (not yet implemented).
+    /// Adds liquidity to a token pair.
+    ///
+    /// Deposits an optimal pair of amounts preserving the pool ratio, then
+    /// mints LP tokens to `to`. Returns `(amount_a, amount_b, liquidity)`.
     ///
     /// # Arguments
     /// * `token_a` - First token address
@@ -610,12 +613,14 @@ impl Router {
         Ok(())
     }
 
-    /// Returns the live commit for sender, if any.
+    /// Returns the stored commit for sender, if any. Expiry is not evaluated
+    /// here; `reveal_swap` and `prune_expired_commit` check it.
     pub fn get_commit(env: Env, sender: Address) -> Option<CommitEntry> {
         get_commit(&env, &sender)
     }
 
-    /// Returns the number of live commit slots currently held.
+    /// Returns the number of occupied commit slots. Slots of expired commits
+    /// are still counted until they are revealed against or pruned.
     pub fn get_commit_count(env: Env) -> u32 {
         get_commit_count(&env)
     }
@@ -713,7 +718,10 @@ impl Router {
         Self::swap_exact_tokens_multi_hop(env, path, amount_in, min_out, sender, u64::MAX, None)
     }
 
-    /// Removes liquidity from a token pair (not yet implemented).
+    /// Removes liquidity from a token pair.
+    ///
+    /// Transfers `liquidity` LP tokens to the pair, burns them, and sends the
+    /// underlying tokens to `to`. Returns `(amount_a, amount_b)`.
     ///
     /// # Arguments
     /// * `token_a` - First token address
