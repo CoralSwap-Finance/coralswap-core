@@ -115,9 +115,15 @@ pub enum DataKey {
     /// `Pair::set_lp_token_paused` so the mint/burn/swap hot path can produce a
     /// typed `PairError::LpTokenPaused` without a nested call per call.
     LpTokenPaused,
-    /// Factory-admin freeze flag, written by `Pair::set_frozen`. While set,
-    /// every value-moving entry point (swap, mint, burn, flash loan) refuses
-    /// with `PairError::ContractFrozen`.
+    /// LP tokens `Address` has deposited into the pair via `deposit_lp` and
+    /// not yet burned (persistent; issue #363).
+    PendingLp(Address),
+    /// Sum of every outstanding `PendingLp` entry (instance; issue #363).
+    PendingLpTotal,
+    /// Factory freeze flag, written by `Pair::set_frozen`. While set, `swap`,
+    /// `mint`, `mint_with_one_token`, `burn_single_side` and `flash_loan` refuse
+    /// with `PairError::ContractFrozen`; a proportional `burn` stays open so
+    /// LPs can always exit.
     Frozen,
 }
 

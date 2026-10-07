@@ -47,7 +47,7 @@ and simply return `None` / defaults if storage is gone.
 | `Pair` state (reserves, tokens, factory, lp_token, k_last) | instance | `initialize`, `mint`, `burn`, `burn_single_side`, `swap`, `sync`, `flash_loan` | every mutating entrypoint (`extend_instance_ttl`) |
 | `ProtocolFeeA` / `ProtocolFeeB` accumulators | instance | `swap` (when protocol fee is active) | `swap` |
 | fee-state / dynamic-fee accumulators | instance | `sync`, `swap` | `sync` |
-| reentrancy lock flag | instance | `flash_loan` guard flip | `extend_reentrancy_ttl` at flip time (5_000-ledger window is intentional — the lock must die quickly) |
+| reentrancy lock flag | instance | `flash_loan` guard flip | `extend_reentrancy_ttl` at every flip (acquire and release). The flag shares the instance entry with `PairState`, so it cannot expire on its own; the 5_000-ledger floor must stay >= `REENTRANCY_MAX_HOLD_LEDGERS` (720), enforced by compile-time asserts in `contracts/shared` and by `pair::test::reentrancy` (issue #362). The lock must never lapse while held — fail-locked, not fail-open |
 | `Frozen` flag | instance | `set_frozen` (factory contract only) | `set_frozen` (`extend_instance_ttl`); the incident-response halt, cleared by an unfreeze |
 | oracle observations | instance | oracle update paths | same write |
 
@@ -63,7 +63,7 @@ and simply return `None` / defaults if storage is gone.
 | Entry | Type | Written by | Refresh point |
 |---|---|---|---|
 | balances (`Balance(owner)`) | **persistent** | `mint`, `burn`, `transfer` | every write (`LP_PERSISTENT_THRESHOLD`/`EXTEND_TO`) — balances MUST survive idle wallets |
-| allowances (`Allowance(from, spender)`) | **persistent** | `approve`, `spend_allowance` (via `transfer_from`, `burn_from`) | `approve` and **every allowance spend** — the remaining entry is re-extended to the declared expiration ledger, so a partial spend cannot leave storage expiring before the allowance's deadline |
+| allowances (`Allowance(from, spender)`) | **persistent** | `approve` | `approve` (extended to the requested expiration ledger) |
 | permit nonces | **persistent** | `permit` | `permit` |
 | admin / metadata / pause config | instance | `initialize`, admin setters | write paths |
 

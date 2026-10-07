@@ -77,7 +77,7 @@ Emitted whenever a new liquidity pair is deployed:
 
 | Event | Topic 0 | Topic 1 | Data Tuple | Description |
 |---|---|---|---|---|
-| `swap` | `Symbol("swap")` | `sender: Address` | `(amount_a_in: i128, amount_b_in: i128, amount_a_out: i128, amount_b_out: i128, fee_bps: u32, to: Address)` | Token swap executed. |
+| `swap` | `Symbol("swap")` | `sender: Address` (+ Topic 2 `token_a: Address`, Topic 3 `token_b: Address`, see 3.1) | `(amount_a_in: i128, amount_b_in: i128, amount_a_out: i128, amount_b_out: i128, fee_bps: u32, to: Address)` | Token swap executed. |
 | `mint` | `Symbol("mint")` | `sender: Address` | `(amount_a: i128, amount_b: i128)` | Liquidity deposited; LP tokens minted. |
 | `burn` | `Symbol("burn")` | `sender: Address` | `(amount_a: i128, amount_b: i128, to: Address)` | Liquidity removed; LP tokens burned. |
 | `sync` | `Symbol("sync")` | — | `(reserve_a: i128, reserve_b: i128)` | Pair reserves updated or synced. |
@@ -85,6 +85,21 @@ Emitted whenever a new liquidity pair is deployed:
 | `burn_ss` | `Symbol("burn_ss")` | `to: Address` | `(lp_amount: i128, preferred_token: Address, total_out: i128)` | Single-sided liquidity burn. |
 | `mint_1t` | `Symbol("mint_1t")` | `sender: Address` | `(token_in: Address, amount_in: i128, swap_amount: i128, lp_minted: i128)` | Single-sided liquidity mint. |
 | `protocol_fee` | `Symbol("protocol_fee")` | `fee_to: Address` | `(amount_a: i128, amount_b: i128)` | Accumulated protocol fees distributed. |
+
+### 3.1 Swap Topic Shape
+
+The `swap` event carries four topics:
+
+| Index | Value | Notes |
+|---|---|---|
+| 0 | `Symbol("swap")` | Event name. |
+| 1 | `sender: Address` | Unchanged from the original shape. |
+| 2 | `token_a: Address` | Pair's canonical first token (lower address). |
+| 3 | `token_b: Address` | Pair's canonical second token (higher address). |
+
+- `amount_a_*` in the data tuple always refers to `token_a` (topic 2) and `amount_b_*` to `token_b` (topic 3), so a swap can be decoded without reading the pair's `token_a()`/`token_b()` views.
+- Topics 0 and 1 keep their original positions; the token topics are appended, so filters that match on `(Symbol("swap"), sender)` prefixes keep working. Indexers that asserted an exact topic count of 2 must accept 4.
+- To index all swaps touching a token, filter on topic 2 **or** topic 3 equal to that token address.
 
 ---
 

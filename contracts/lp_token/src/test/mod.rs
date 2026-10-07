@@ -376,7 +376,6 @@ fn test_metadata_empty_values_fallback_to_defaults() {
     assert_eq!(client.symbol(), String::from_str(&env, coralswap_shared::LP_SYMBOL));
 }
 
-
 // Issue #349: Test mint amount bounds
 #[test]
 fn test_mint_bounded_per_call() {
@@ -432,7 +431,7 @@ fn test_mint_bounded_total_supply() {
     // Mint up to near MAX_TOTAL_SUPPLY (10^27)
     // We'll mint 10^18 multiple times to approach the limit
     let large_mint = 1_000_000_000_000_000_000i128; // 10^18
-    
+
     // Mint 999 times (999 * 10^18 = 9.99 * 10^20, well below 10^27)
     for _ in 0..10 {
         client.mint(&user, &large_mint);
@@ -443,7 +442,7 @@ fn test_mint_bounded_total_supply() {
     // If we try to add 10^27, it would exceed MAX_TOTAL_SUPPLY (10^27)
     // But we can't mint that much in one call due to MAX_MINT_PER_CALL
     // So we'll mint incrementally until we're close, then verify the limit works
-    
+
     // Actually, let's just verify the supply limit exists by checking a simpler case
     // The current total is 10^19. Let's verify we can't add more than (10^27 - 10^19)
     let current_supply = client.total_supply();
