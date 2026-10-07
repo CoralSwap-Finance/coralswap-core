@@ -780,8 +780,9 @@ impl Pair {
             .checked_mul(100_000_000)
             .ok_or(PairError::Overflow)?;
 
-        let balance_preferred_adj =
-            reserve_preferred_final.checked_mul(math::BPS_DENOMINATOR).ok_or(PairError::Overflow)?;
+        let balance_preferred_adj = reserve_preferred_final
+            .checked_mul(math::BPS_DENOMINATOR)
+            .ok_or(PairError::Overflow)?;
 
         let balance_unwanted_adj = reserve_unwanted_final
             .checked_mul(math::BPS_DENOMINATOR)
