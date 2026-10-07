@@ -15,6 +15,7 @@ mod integration_tests {
             env: Env,
             signers: Vec<Address>,
             pair_wasm_hash: BytesN<32>,
+            concentrated_pair_wasm_hash: BytesN<32>,
             lp_token_wasm_hash: BytesN<32>,
             fee_to_setter: Address,
         );
@@ -144,7 +145,13 @@ mod integration_tests {
             &env,
             [Address::generate(&env), Address::generate(&env), Address::generate(&env)],
         );
-        factory_client.initialize(&signers, &pair_wasm_hash, &lp_token_wasm_hash, &fee_to_setter);
+        factory_client.initialize(
+            &signers,
+            &pair_wasm_hash,
+            &pair_wasm_hash,
+            &lp_token_wasm_hash,
+            &fee_to_setter,
+        );
 
         let pair_address = factory_client.create_pair(&token_a, &token_b);
         assert_eq!(factory_client.get_pair(&token_a, &token_b), Some(pair_address.clone()));
@@ -257,7 +264,13 @@ mod integration_tests {
             &env,
             [Address::generate(&env), Address::generate(&env), Address::generate(&env)],
         );
-        factory_client.initialize(&signers, &pair_wasm_hash, &lp_token_wasm_hash, &fee_to_setter);
+        factory_client.initialize(
+            &signers,
+            &pair_wasm_hash,
+            &pair_wasm_hash,
+            &lp_token_wasm_hash,
+            &fee_to_setter,
+        );
 
         let router_client = RouterClient::new(&env, &router);
         router_client.initialize(&factory, &Vec::new(&env));

@@ -45,7 +45,7 @@ fn fresh(n: u32) -> (Env, FactoryClient<'static>, Vec<Address>) {
     }
     let pair_wasm = env.deployer().upload_contract_wasm(Bytes::new(&env));
     let lp_wasm = env.deployer().upload_contract_wasm(Bytes::new(&env));
-    client.initialize(&signers, &pair_wasm, &lp_wasm, &Address::generate(&env));
+    client.initialize(&signers, &pair_wasm, &pair_wasm, &lp_wasm, &Address::generate(&env));
     (env, client, signers)
 }
 
@@ -324,7 +324,7 @@ fn test_quorum_by_count_without_signatures_fails() {
     let signers = Vec::from_array(&env, [Address::generate(&env)]);
     let pair_wasm = env.deployer().upload_contract_wasm(Bytes::new(&env));
     let lp_wasm = env.deployer().upload_contract_wasm(Bytes::new(&env));
-    c.initialize(&signers, &pair_wasm, &lp_wasm, &Address::generate(&env));
+    c.initialize(&signers, &pair_wasm, &pair_wasm, &lp_wasm, &Address::generate(&env));
 
     assert!(c.try_pause(&signers).is_err(), "unsigned quorum must not pause");
     assert!(!c.is_paused());
