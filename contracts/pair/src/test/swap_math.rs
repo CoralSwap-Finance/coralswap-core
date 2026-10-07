@@ -200,6 +200,29 @@ mod swap_math_tests {
         );
     }
 
+    #[test]
+    fn test_unsolicited_donation_limits_k_relaxation_to_donation() {
+        let reserve_in = 1_000_000i128;
+        let reserve_out = 1_000_000i128;
+        let amount_in = 10_000i128;
+        let donation = 1_000i128;
+        let fee_bps = 30;
+
+        let output_without_donation =
+            get_amount_out(amount_in, reserve_in, reserve_out, fee_bps).unwrap();
+        let output_with_donation =
+            get_amount_out(amount_in + donation, reserve_in, reserve_out, fee_bps).unwrap();
+        let extra_output_allowed = output_with_donation - output_without_donation;
+
+        assert!(extra_output_allowed > 0, "donation should increase the input attributed to swap");
+        assert!(
+            extra_output_allowed <= donation,
+            "K relaxation ({}) must not exceed donated input ({})",
+            extra_output_allowed,
+            donation,
+        );
+    }
+
     // ---- 6. Zero Inputs: swap must fail on zero amount_in ----
     #[test]
     fn test_zero_amount_in_fails() {

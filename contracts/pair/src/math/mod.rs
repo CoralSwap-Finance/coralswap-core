@@ -2,14 +2,16 @@
 //! All values use 1e14 scaling to maintain precision without floating point.
 use ethnum::U256;
 
+use coralswap_shared::QuoteError;
+
 use crate::errors::PairError;
 
 /// Fixed-point scale factor.
 #[allow(dead_code)]
 pub const SCALE: i128 = 100_000_000_000_000; // 1e14
-/// Basis point denominator.
-#[allow(dead_code)]
-pub const BPS_DENOMINATOR: i128 = 10_000;
+/// Basis point denominator (shared with the router so both use one constant).
+#[allow(unused_imports)]
+pub use coralswap_shared::BPS_DENOMINATOR;
 /// Minimum liquidity locked on first mint to prevent division by zero.
 pub const MINIMUM_LIQUIDITY: i128 = 1_000;
 
@@ -70,36 +72,28 @@ pub fn sqrt(value: i128) -> i128 {
 /// `amount_in` against reserves `(reserve_in, reserve_out)` with a
 /// basis-point fee `fee_bps`.
 ///
-/// This is the single source of truth for the swap output used by the
-/// single-sided deposit path and by the fuzz suite.
+/// Delegates to [`coralswap_shared::quote_output_amount`], the single quote
+/// implementation also used by the router, so pair and router cannot drift.
 ///
 /// # Errors
-/// - `PairError::Overflow` on any intermediate arithmetic overflow.
-/// - `PairError::InsufficientLiquidity` if the denominator is zero.
+/// - `PairError::Overflow` on any intermediate arithmetic overflow or an
+///   invalid (>= 100%) fee.
+/// - `PairError::InsufficientLiquidity` if a reserve is not positive.
+/// - `PairError::DustAmount` if the output truncates to zero.
 pub fn get_amount_out(
     amount_in: i128,
     reserve_in: i128,
     reserve_out: i128,
     fee_bps: u32,
 ) -> Result<i128, PairError> {
-    let fee_factor = BPS_DENOMINATOR.checked_sub(fee_bps as i128).ok_or(PairError::Overflow)?;
-    let amount_in_with_fee = amount_in.checked_mul(fee_factor).ok_or(PairError::Overflow)?;
-    let numerator = amount_in_with_fee.checked_mul(reserve_out).ok_or(PairError::Overflow)?;
-    let denominator = reserve_in
-        .checked_mul(BPS_DENOMINATOR)
-        .ok_or(PairError::Overflow)?
-        .checked_add(amount_in_with_fee)
-        .ok_or(PairError::Overflow)?;
-    if denominator == 0 {
-        return Err(PairError::InsufficientLiquidity);
-    }
-    let out = numerator / denominator;
-    // Dust policy (issue 393): truncated zero outputs are rejected with a
-    // typed error instead of silently returning 0.
-    if out <= 0 {
-        return Err(PairError::DustAmount);
-    }
-    Ok(out)
+    coralswap_shared::quote_output_amount(amount_in, reserve_in, reserve_out, fee_bps).map_err(
+        |err| match err {
+            // A zero input truncates to a zero output: same dust policy as before.
+            QuoteError::ZeroAmount | QuoteError::Dust => PairError::DustAmount,
+            QuoteError::InsufficientLiquidity => PairError::InsufficientLiquidity,
+            QuoteError::Overflow | QuoteError::InvalidFee => PairError::Overflow,
+        },
+    )
 }
 
 /// LP tokens minted for the very first deposit into an empty pool:

@@ -66,6 +66,7 @@ impl Factory {
         env: Env,
         signers: Vec<Address>,
         pair_wasm_hash: BytesN<32>,
+        concentrated_pair_wasm_hash: BytesN<32>,
         lp_token_wasm_hash: BytesN<32>,
         fee_to_setter: Address,
     ) -> Result<(), FactoryError> {
@@ -83,6 +84,7 @@ impl Factory {
         let factory_storage = FactoryStorage {
             signers,
             pair_wasm_hash,
+            concentrated_pair_wasm_hash,
             lp_token_wasm_hash,
             pair_count: 0,
             protocol_version: coralswap_shared::PROTOCOL_VERSION,
@@ -641,6 +643,74 @@ impl Factory {
         storage::get_pair_fee_override(&env, &pair)
     }
 
+    /// Relays an LP token pause or unpause instruction to the specified pair contract.
+    ///
+    /// The caller must authenticate as the current `fee_to_setter`. The call is forwarded
+    /// to the pair contract via `PairClient`.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban host environment.
+    /// * `setter` - The address claiming the governance setter role.
+    /// * `pair` - The address of the pair contract to configure.
+    /// * `paused` - The new paused state for the LP token.
+    ///
+    /// # Errors
+    /// Returns `FactoryError::NotInitialized` if the factory has not been initialized.
+    /// Returns `FactoryError::Unauthorized` if `setter` is not the current `fee_to_setter`.
+    pub fn set_pair_lp_token_paused(
+        env: Env,
+        setter: Address,
+        pair: Address,
+        paused: bool,
+    ) -> Result<(), FactoryError> {
+        let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+
+        setter.require_auth();
+
+        if setter != storage.fee_to_setter {
+            return Err(FactoryError::Unauthorized);
+        }
+
+        PairClient::new(&env, &pair).set_lp_token_paused(&paused);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Relays a stale threshold update instruction to the specified pair contract.
+    ///
+    /// The caller must authenticate as the current `fee_to_setter`. The call is forwarded
+    /// to the pair contract via `PairClient`.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban host environment.
+    /// * `setter` - The address claiming the governance setter role.
+    /// * `pair` - The address of the pair contract to configure.
+    /// * `threshold` - The new EMA staleness decay threshold in ledgers.
+    ///
+    /// # Errors
+    /// Returns `FactoryError::NotInitialized` if the factory has not been initialized.
+    /// Returns `FactoryError::Unauthorized` if `setter` is not the current `fee_to_setter`.
+    pub fn set_pair_stale_threshold(
+        env: Env,
+        setter: Address,
+        pair: Address,
+        threshold: u32,
+    ) -> Result<(), FactoryError> {
+        let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+
+        setter.require_auth();
+
+        if setter != storage.fee_to_setter {
+            return Err(FactoryError::Unauthorized);
+        }
+
+        PairClient::new(&env, &pair).set_stale_threshold(&threshold);
+        storage::extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
     /// Records protocol fees collected by a pair.
     ///
     /// The pair computes the protocol's share of the swap fee, transfers it to
@@ -715,6 +785,13 @@ impl Factory {
     pub fn get_pair_wasm_hash(env: Env) -> Result<BytesN<32>, FactoryError> {
         storage::get_factory_storage(&env)
             .map(|s| s.pair_wasm_hash)
+            .ok_or(FactoryError::NotInitialized)
+    }
+
+    /// Returns the WASM hash new concentrated-pair contracts are deployed from.
+    pub fn get_concentrated_pair_wasm_hash(env: Env) -> Result<BytesN<32>, FactoryError> {
+        storage::get_factory_storage(&env)
+            .map(|s| s.concentrated_pair_wasm_hash)
             .ok_or(FactoryError::NotInitialized)
     }
 

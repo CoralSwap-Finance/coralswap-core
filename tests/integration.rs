@@ -15,6 +15,7 @@ mod integration_tests {
             env: Env,
             signers: Vec<Address>,
             pair_wasm_hash: BytesN<32>,
+            concentrated_pair_wasm_hash: BytesN<32>,
             lp_token_wasm_hash: BytesN<32>,
             fee_to_setter: Address,
         );
@@ -115,12 +116,124 @@ mod integration_tests {
         numerator / denominator
     }
 
+    /// Acceptance for the incident-response freeze, through the real deployed
+    /// WASM of both contracts: the `fee_to_setter` freezes a live pool alone
+    /// (no multisig round trip), the pool rejects swaps while frozen, and the
+    /// signer quorum, not the single freeze key, restores it.
+    #[test]
+    fn test_factory_admin_freezes_pair_and_unfreeze_restores_swaps() {
+        let env = Env::default();
+        // BLANKET MOCK (issue #314): freeze/unfreeze wiring end-to-end; the
+        // authorization guards are covered by the per-contract `auth_matrix`s.
+        env.mock_all_auths_allowing_non_root_auth();
+        // Same test-only budget lift as the other full-WASM flows.
+        env.budget().reset_unlimited();
+        env.cost_estimate().disable_resource_limits();
+
+        let asset_admin = Address::generate(&env);
+        let user = Address::generate(&env);
+        let fee_to_setter = Address::generate(&env);
+
+        let token_a = env.register_stellar_asset_contract_v2(asset_admin.clone()).address();
+        let token_b = env.register_stellar_asset_contract_v2(asset_admin).address();
+        let (token_a, token_b) =
+            if token_a < token_b { (token_a, token_b) } else { (token_b, token_a) };
+
+        let factory = env.register_contract_wasm(
+            None,
+            Bytes::from_slice(&env, &load_wasm("coralswap_factory.wasm")),
+        );
+        let pair_wasm_hash = env
+            .deployer()
+            .upload_contract_wasm(Bytes::from_slice(&env, &load_wasm("coralswap_pair.wasm")));
+        let lp_token_wasm_hash = env
+            .deployer()
+            .upload_contract_wasm(Bytes::from_slice(&env, &load_wasm("coralswap_lp_token.wasm")));
+
+        let factory_client = FactoryClient::new(&env, &factory);
+        let signers = Vec::from_array(
+            &env,
+            [Address::generate(&env), Address::generate(&env), Address::generate(&env)],
+        );
+        factory_client.initialize(
+            &signers,
+            &pair_wasm_hash,
+            &pair_wasm_hash,
+            &lp_token_wasm_hash,
+            &fee_to_setter,
+        );
+        let pair_address = factory_client.create_pair(&token_a, &token_b);
+        let pair_client = PairClient::new(&env, &pair_address);
+
+        let token_a_admin = StellarAssetClient::new(&env, &token_a);
+        let token_b_admin = StellarAssetClient::new(&env, &token_b);
+        let token_a_client = TokenClient::new(&env, &token_a);
+        let token_b_client = TokenClient::new(&env, &token_b);
+
+        // Seed a 1:1 pool.
+        let deposit = 1_000_000_i128;
+        token_a_admin.mint(&user, &deposit);
+        token_b_admin.mint(&user, &deposit);
+        token_a_client.transfer(&user, &pair_address, &deposit);
+        token_b_client.transfer(&user, &pair_address, &deposit);
+        pair_client.mint(&user);
+
+        // Baseline: the live pool trades.
+        let swap_in = 100_000_i128;
+        let (reserve_a, reserve_b, _) = pair_client.get_reserves();
+        let amount_b_out =
+            compute_amount_out(swap_in, reserve_a, reserve_b, pair_client.get_current_fee_bps());
+        token_a_admin.mint(&user, &swap_in);
+        token_a_client.transfer(&user, &pair_address, &swap_in);
+        pair_client.swap(&0, &amount_b_out, &user);
+
+        // Freeze: the fee_to_setter alone, one transaction.
+        let guardian = Vec::from_array(&env, [fee_to_setter.clone()]);
+        factory_client.freeze_pair(&guardian, &pair_address);
+        assert!(factory_client.is_pair_frozen(&pair_address), "the registry must record it");
+        assert!(pair_client.is_frozen(), "the pool itself must be halted");
+
+        // The next trade is deposited, then refused: the guard fires before any
+        // funds move.
+        token_a_admin.mint(&user, &swap_in);
+        token_a_client.transfer(&user, &pair_address, &swap_in);
+        let (reserve_a, reserve_b, _) = pair_client.get_reserves();
+        let frozen_amount_b_out =
+            compute_amount_out(swap_in, reserve_a, reserve_b, pair_client.get_current_fee_bps());
+        assert!(
+            pair_client.try_swap(&0, &frozen_amount_b_out, &user).is_err(),
+            "a frozen pair must reject swaps"
+        );
+
+        // The single freeze key cannot reopen the pool.
+        assert!(
+            factory_client.try_unfreeze_pair(&guardian, &pair_address).is_err(),
+            "unfreezing must require the signer quorum"
+        );
+        assert!(pair_client.is_frozen());
+
+        // The quorum unfreezes: the identical swap, with the identical input
+        // already sitting in the pool, now goes through.
+        factory_client.unfreeze_pair(&signers, &pair_address);
+        assert!(!factory_client.is_pair_frozen(&pair_address));
+        assert!(!pair_client.is_frozen());
+        pair_client
+            .try_swap(&0, &frozen_amount_b_out, &user)
+            .expect("swap invocation must succeed")
+            .expect("swap must succeed again after the unfreeze");
+    }
+
     #[test]
     fn test_full_coral_swap_flow() {
         let env = Env::default();
         // BLANKET MOCK (issue #314): end-to-end wiring test; the guards are
         // covered by the per-contract `auth_matrix` modules.
         env.mock_all_auths_allowing_non_root_auth();
+        // Same test-only budget lift as `deploy_with_router_and_pairs`: the full
+        // factory + pair + LP-token + router WASM flow outgrows the default test
+        // CPU budget; on-chain limits still apply to the deployed contracts.
+        env.budget().reset_unlimited();
+        env.cost_estimate().disable_resource_limits();
 
         let admin = Address::generate(&env);
         let user = Address::generate(&env);
@@ -148,7 +261,13 @@ mod integration_tests {
             &env,
             [Address::generate(&env), Address::generate(&env), Address::generate(&env)],
         );
-        factory_client.initialize(&signers, &pair_wasm_hash, &lp_token_wasm_hash, &fee_to_setter);
+        factory_client.initialize(
+            &signers,
+            &pair_wasm_hash,
+            &pair_wasm_hash,
+            &lp_token_wasm_hash,
+            &fee_to_setter,
+        );
 
         let pair_address = factory_client.create_pair(&token_a, &token_b);
         assert_eq!(factory_client.get_pair(&token_a, &token_b), Some(pair_address.clone()));

@@ -11,6 +11,7 @@ use coralswap_shared::{
 pub struct FactoryStorage {
     pub signers: Vec<Address>,
     pub pair_wasm_hash: BytesN<32>,
+    pub concentrated_pair_wasm_hash: BytesN<32>,
     pub lp_token_wasm_hash: BytesN<32>,
     pub pair_count: u32,
     pub protocol_version: u32,
