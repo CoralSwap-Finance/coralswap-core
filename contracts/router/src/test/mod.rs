@@ -142,6 +142,16 @@ fn generate_tokens(env: &Env, n: u32) -> Vec<Address> {
     tokens
 }
 
+/// Registers `n` Stellar asset contracts, for tests whose swap actually
+/// transfers the input token from the user.
+fn generate_asset_tokens(env: &Env, n: u32) -> Vec<Address> {
+    let mut tokens: Vec<Address> = Vec::new(env);
+    for _ in 0..n {
+        tokens.push_back(env.register_stellar_asset_contract_v2(Address::generate(env)).address());
+    }
+    tokens
+}
+
 fn setup_pair(
     env: &Env,
     factory_id: &Address,
@@ -961,4 +971,86 @@ fn test_hop_check_validates_is_pair() {
     // Now mark is_pair as true
     MockFactoryClient::new(&env, &factory_id).set_is_pair(&fake_pair, &true);
     assert!(MockFactoryClient::new(&env, &factory_id).is_pair(&fake_pair));
+}
+
+#[test]
+fn test_mid_path_price_crash_reverts() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (router_id, factory_id) = deploy_router(&env);
+    let router = RouterClient::new(&env, &router_id);
+
+    let tokens = generate_asset_tokens(&env, 3);
+    let token_in = tokens.get(0).unwrap();
+    let hub = tokens.get(1).unwrap();
+    let token_out = tokens.get(2).unwrap();
+
+    // Set up 2-hop path: token_in -> hub -> token_out
+    // First hop: normal liquidity (token_in/hub)
+    setup_pair(&env, &factory_id, &token_in, &hub, 1_000_000, 1_000_000);
+    // Second hop: normal liquidity (hub/token_out)
+    setup_pair(&env, &factory_id, &hub, &token_out, 1_000_000, 1_000_000);
+
+    let mut path = Vec::new(&env);
+    path.push_back(token_in.clone());
+    path.push_back(hub.clone());
+    path.push_back(token_out.clone());
+
+    let user = Address::generate(&env);
+    let amount_in = 10_000;
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_in).mint(&user, &(amount_in * 2));
+    // MockPair::swap moves no tokens, so fund the router with the hub token a
+    // real first-hop pair would send it to forward.
+    soroban_sdk::token::StellarAssetClient::new(&env, &hub).mint(&router_id, &(amount_in * 2));
+    let min_out = 9_000; // Global minimum output
+
+    // First, verify normal swap succeeds
+    let out =
+        router.swap_exact_tokens_multi_hop(&path, &amount_in, &min_out, &user, &u64::MAX, &None);
+    assert!(out >= min_out, "normal swap should meet minimum");
+
+    // Now simulate mid-path price crash by draining the hub token reserves
+    // This causes extreme slippage on the first hop (token_in -> hub)
+    // The first hop will now produce very little hub tokens
+    let pair_1 = MockFactoryClient::new(&env, &factory_id).get_pair(&token_in, &hub).unwrap();
+    MockPairClient::new(&env, &pair_1).set_reserves(&1_000_000, &100); // Hub reserves drained to 100
+
+    // With the old implementation (final-hop only), this might succeed if the final hop
+    // compensates by having very favorable rates. But economically, the user would get
+    // a terrible deal on the intermediate transfer.
+    // With end-to-end protection, this should revert due to first hop failing its minimum.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        router.swap_exact_tokens_multi_hop(&path, &amount_in, &min_out, &user, &u64::MAX, &None);
+    }));
+    assert!(result.is_err(), "mid-path price crash must revert (InsufficientOutputAmount)");
+}
+
+#[test]
+fn test_multi_hop_with_zero_min_out_succeeds() {
+    // amount_out_min = 0 means the caller opted out of slippage protection;
+    // the per-hop minimums must not turn that into a ZeroAmount revert.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (router_id, factory_id) = deploy_router(&env);
+    let router = RouterClient::new(&env, &router_id);
+
+    let tokens = generate_asset_tokens(&env, 3);
+    let token_in = tokens.get(0).unwrap();
+    let hub = tokens.get(1).unwrap();
+    let token_out = tokens.get(2).unwrap();
+    setup_pair(&env, &factory_id, &token_in, &hub, 1_000_000, 1_000_000);
+    setup_pair(&env, &factory_id, &hub, &token_out, 1_000_000, 1_000_000);
+
+    let mut path = Vec::new(&env);
+    path.push_back(token_in.clone());
+    path.push_back(hub.clone());
+    path.push_back(token_out);
+
+    let user = Address::generate(&env);
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_in).mint(&user, &10_000);
+    // MockPair::swap moves no tokens, so fund the router with the hub token a
+    // real first-hop pair would send it to forward.
+    soroban_sdk::token::StellarAssetClient::new(&env, &hub).mint(&router_id, &(10_000));
+    let out = router.swap_exact_tokens_multi_hop(&path, &10_000, &0, &user, &u64::MAX, &None);
+    assert!(out > 0, "a zero minimum must still execute the swap");
 }
