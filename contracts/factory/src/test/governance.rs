@@ -45,15 +45,16 @@ fn fresh(n: u32) -> (Env, FactoryClient<'static>, Vec<Address>) {
     }
     let pair_wasm = env.deployer().upload_contract_wasm(Bytes::new(&env));
     let lp_wasm = env.deployer().upload_contract_wasm(Bytes::new(&env));
-    client.initialize(&signers, &pair_wasm, &lp_wasm, &Address::generate(&env));
+    client.initialize(&signers, &pair_wasm, &pair_wasm, &lp_wasm, &Address::generate(&env));
     (env, client, signers)
 }
 
 /// Calls `gov` with `presented` and reports the outcome.
 ///
-/// `NoPendingUpgrade` from `cancel_upgrade` is mapped to `Ok`: it is raised
-/// *after* the quorum check passed, so it proves the quorum was accepted
-/// without needing a proposal to exist.
+/// `NoPendingUpgrade` from `cancel_upgrade` and `PairNotFound` from
+/// `freeze_pair` / `unfreeze_pair` are mapped to `Ok`: both are raised *after*
+/// the quorum check passed, so they prove the quorum was accepted without
+/// needing a proposal or a deployed pair to exist.
 fn call(
     env: &Env,
     c: &FactoryClient,
@@ -73,6 +74,7 @@ fn call(
     match r {
         Ok(()) => Ok(()),
         Err(Ok(FactoryError::NoPendingUpgrade)) => Ok(()),
+        Err(Ok(FactoryError::PairNotFound)) => Ok(()),
         Err(Ok(e)) => Err(e),
         Err(Err(e)) => panic!("{gov:?}: host-level failure {e:?}"),
     }
@@ -324,7 +326,7 @@ fn test_quorum_by_count_without_signatures_fails() {
     let signers = Vec::from_array(&env, [Address::generate(&env)]);
     let pair_wasm = env.deployer().upload_contract_wasm(Bytes::new(&env));
     let lp_wasm = env.deployer().upload_contract_wasm(Bytes::new(&env));
-    c.initialize(&signers, &pair_wasm, &lp_wasm, &Address::generate(&env));
+    c.initialize(&signers, &pair_wasm, &pair_wasm, &lp_wasm, &Address::generate(&env));
 
     assert!(c.try_pause(&signers).is_err(), "unsigned quorum must not pause");
     assert!(!c.is_paused());

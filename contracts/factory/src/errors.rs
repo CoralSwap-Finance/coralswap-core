@@ -20,8 +20,13 @@ pub enum FactoryError {
     FeeTooHigh = 14,
     InvalidFeeRecipient = 15,
     FeeDisabled = 16,
+    /// The same signer was presented more than once to a multisig call (issue #364).
+    DuplicateSigner = 17,
     /// The pair could not be frozen/unfrozen: the cross-contract `set_frozen`
     /// call on the pair failed (pair not initialized, or an older pair WASM
     /// that does not implement the relay yet).
-    PairFreezeFailed = 17,
+    PairFreezeFailed = 18,
+    /// `freeze_pair` / `unfreeze_pair` targeted an address this factory did
+    /// not create.
+    PairNotFound = 19,
 }

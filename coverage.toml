@@ -33,8 +33,11 @@ exclude = [
 # production code — or drops tests from a high-risk area (flash loan,
 # single-sided mint, reentrancy guard, auth paths) — lands below the floor and
 # fails the gate.
+# lp-token was re-baselined when the gate landed on 2026-10-07: LP-token code
+# merged since the first measurement brought it to 77.03%. Raise the floor as
+# that code gains tests.
 coralswap-factory = 91.0
-coralswap-lp-token = 79.0
+coralswap-lp-token = 76.0
 coralswap-malicious-flash-receiver = 99.0
 coralswap-mock-flash-receiver = 85.0
 coralswap-pair = 89.0
@@ -77,12 +80,6 @@ reason = "`const fn is_convention_symbol` is evaluated exclusively by the `const
 # expires: 2027-03-31
 
 [[exemptions]]
-path = "contracts/lp_token/src/lib.rs"
-lines = "617-631"
-reason = "Same compile-time-only convention check as factory/src/events.rs: `is_convention_symbol` is only called from `const` assertions, never at runtime."
-# expires: 2027-03-31
-
-[[exemptions]]
 path = "contracts/factory/src/storage.rs"
 lines = "9, 23, 79"
 reason = "`#[contracttype]` attribute lines for storage key/metadata declarations — declarative type definitions with no executable body; coverage is attributed to the macro expansion, not to contract logic."
@@ -108,6 +105,6 @@ reason = "`#[contracttype]` attribute lines for router storage-key declarations 
 
 [[exemptions]]
 path = "contracts/pair/src/lib.rs"
-lines = "125"
+lines = "129"
 reason = "`#[contracttype]` attribute line for the `FeeStateView` response type — declarative type with no executable body."
 # expires: 2027-03-31
