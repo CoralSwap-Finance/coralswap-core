@@ -1,4 +1,5 @@
 mod auth_matrix;
+mod governance;
 
 use soroban_sdk::Env;
 
@@ -202,6 +203,7 @@ mod factory_tests {
         client.initialize(
             &Vec::from_array(&env, [signer]),
             &pair_wasm_hash,
+            &pair_wasm_hash,
             &lp_token_wasm_hash,
             &fee_to_setter,
         );
@@ -248,39 +250,41 @@ mod factory_tests {
 
     #[test]
     fn test_propose_upgrade_stores_proposal() {
-        let (env, client, _, _, _, _, _) = setup_env();
+        let (env, client, _, _, _, _, signers) = setup_env();
         let new_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
-        let signers = Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
-        client.propose_upgrade(&signers, &new_hash);
+        // Strict-majority quorum (issue #362): present 2 of the 3 registered
+        // signers; unregistered addresses are rejected with Unauthorized.
+        let quorum = Vec::from_array(&env, [signers.get(0).unwrap(), signers.get(1).unwrap()]);
+        client.propose_upgrade(&quorum, &new_hash);
     }
 
     #[test]
     fn test_propose_upgrade_duplicate_rejected() {
-        let (env, client, _, _, _, _, _) = setup_env();
+        let (env, client, _, _, _, _, signers) = setup_env();
         let new_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
-        let signers = Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
-        client.propose_upgrade(&signers, &new_hash);
-        let result = client.try_propose_upgrade(&signers, &new_hash);
+        let quorum = Vec::from_array(&env, [signers.get(0).unwrap(), signers.get(1).unwrap()]);
+        client.propose_upgrade(&quorum, &new_hash);
+        let result = client.try_propose_upgrade(&quorum, &new_hash);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_execute_upgrade_too_early_fails() {
-        let (env, client, _, _, _, _, _) = setup_env();
+        let (env, client, _, _, _, _, signers) = setup_env();
         let new_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
-        let signers = Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
-        client.propose_upgrade(&signers, &new_hash);
+        let quorum = Vec::from_array(&env, [signers.get(0).unwrap(), signers.get(1).unwrap()]);
+        client.propose_upgrade(&quorum, &new_hash);
         let result = client.try_execute_upgrade();
         assert!(result.is_err());
     }
 
     #[test]
     fn test_cancel_upgrade_clears_proposal() {
-        let (env, client, _, _, _, _, _) = setup_env();
+        let (env, client, _, _, _, _, signers) = setup_env();
         let new_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
-        let signers = Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
-        client.propose_upgrade(&signers, &new_hash);
-        client.cancel_upgrade(&signers);
+        let quorum = Vec::from_array(&env, [signers.get(0).unwrap(), signers.get(1).unwrap()]);
+        client.propose_upgrade(&quorum, &new_hash);
+        client.cancel_upgrade(&quorum);
         let result = client.try_execute_upgrade();
         assert!(result.is_err());
     }

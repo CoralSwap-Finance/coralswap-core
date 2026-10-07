@@ -12,7 +12,8 @@ use crate::{
 };
 
 /// Minimum flash-loan fee in basis points (0.05%).
-/// The effective fee is max(current_dynamic_fee_bps, FLASH_FEE_FLOOR_BPS).
+/// The effective fee is max(current_dynamic_fee_bps, FLASH_FEE_FLOOR_BPS) when
+/// the pool charges fees; a 0-bps pool charges no flash fee at all.
 const FLASH_FEE_FLOOR_BPS: u32 = 5;
 
 /// Maximum allowed byte length for the `data` payload passed to the receiver.
@@ -20,12 +21,17 @@ const MAX_PAYLOAD_SIZE: u32 = 256;
 
 /// Computes the flash-loan fee for `amount` stroops.
 ///
-/// The effective fee rate is the higher of the pool's current dynamic fee and
-/// the hardcoded floor (`FLASH_FEE_FLOOR_BPS = 5`, i.e. 0.05%).  This ensures
-/// flash loans are always revenue-positive for LPs even during low-fee periods.
+/// # Semantics
 ///
-/// A minimum of **1 stroop** is enforced so that zero-fee loans are impossible
-/// regardless of rounding.
+/// * **Fees configured (`current_fee_bps > 0`)** — the effective rate is the
+///   higher of the pool's fee and the hardcoded floor
+///   (`FLASH_FEE_FLOOR_BPS = 5`, i.e. 0.05%), so flash loans stay
+///   revenue-positive for LPs during low-fee periods. A minimum of **1
+///   stroop** is charged so rounding can never turn a fee-bearing loan into a
+///   free one.
+/// * **Fees disabled (`current_fee_bps == 0`)** — the pool is explicitly
+///   configured as zero-fee (e.g. a promotion), so neither the bps floor nor
+///   the 1-stroop minimum applies and the quoted fee is exactly `0`.
 ///
 /// # Arguments
 /// * `amount`          – Loan principal in stroops (must be > 0).
@@ -43,12 +49,17 @@ pub fn compute_flash_fee(
         return Err(crate::errors::PairError::FlashLoanFeeTooHigh);
     }
 
+    // A 0-bps pool is a deliberate zero-fee configuration: no floors apply.
+    if current_fee_bps == 0 {
+        return Ok(0);
+    }
+
     let effective_bps = current_fee_bps.max(FLASH_FEE_FLOOR_BPS) as i128;
     let fee = amount
         .checked_mul(effective_bps)
         .map(|v| v / 10_000_i128)
         .ok_or(crate::errors::PairError::FeeOverflow)?;
-    // At least 1 stroop to prevent zero-cost loans.
+    // Fee-bearing pools charge at least 1 stroop so rounding cannot zero it.
     Ok(fee.max(1))
 }
 
@@ -212,12 +223,18 @@ pub fn execute_flash_loan(
     }
 
     // -----------------------------------------------------------------------
-    // 8. Reserve update
+    // 8. Reserve update (Issue #351: sync to actual balances)
     // -----------------------------------------------------------------------
 
     // Reserves track the *actual* token balances, so an overpaid surplus is
     // credited to the pool rather than refunded to the receiver: it raises
     // `k` below and accrues to LPs.
+    //
+    // This sync handles direct transfers made during the callback: if someone
+    // donates tokens to the pair while the flash loan is in progress, those
+    // tokens are captured in the balances above and become part of the pool's
+    // reserves. This prevents "reserve dilution" — the reserves always match
+    // the actual holdings, so subsequent operations work with correct state.
     state.reserve_a = new_balance_a;
     state.reserve_b = new_balance_b;
 

@@ -60,7 +60,7 @@ flowchart TD
 The Factory is the registry and governance hub of the protocol.
 
 - **Pair creation**: Deploys a new Pair contract and its associated LP Token contract using deterministic salts derived from the token addresses. Stores the pair mapping in both directions (`(A,B)` and `(B,A)`).
-- **Governance**: Manages a multisig signer set (1–10 signers, threshold = `ceil(n/2)`). Multisig is required for pause/unpause and upgrade operations.
+- **Governance**: Manages a multisig signer set (1–10 signers, quorum = strict majority `n/2 + 1`). Multisig is required for pause/unpause and upgrade operations.
 - **Protocol fees**: The `fee_to_setter` address can set a protocol-wide fee recipient (`fee_to`) and fee rate (`fee_bps`, max 30 bps). Per-pair fee overrides (max 100 bps) are also supported.
   - **Disabling fees is explicit.** A *disabled* protocol fee is `fee_to = None`, which may be combined with any `fee_bps`; the pair then charges nothing. `fee_to = Some(addr)` with `fee_bps = 0` is rejected with `FactoryError::FeeDisabled`, because a live recipient collecting zero is indistinguishable from the disabled state in downstream accounting. Clear a fee by clearing `fee_to`, not by setting the rate to zero.
   - **A pair override of `0` means "no override"**, not "zero fee". `set_pair_fee(pair, 0, None)` removes the entry so the pair falls back to the dynamic/protocol fee; it must never be used to make a pool free, which would silently make every swap a zero-fee trade against the LPs' consent.
@@ -135,7 +135,8 @@ The user-facing contract that simplifies interaction with the protocol.
 
 - **Swap routing**: Finds the best path across 1-hop (direct), 2-hop, and 3-hop routes using configurable hub tokens. Supports both `swap_exact_tokens_for_tokens` and `swap_tokens_for_exact_tokens`.
 - **Liquidity**: `add_liquidity` computes optimal deposit amounts to preserve pool ratios; `remove_liquidity` burns LP tokens and enforces minimum output amounts.
-- **Deadline enforcement**: All user-facing operations accept a deadline timestamp and revert if expired.
+- **Deadline enforcement**: All user-facing router operations accept a deadline timestamp and an optional ledger-sequence deadline (`deadline_ledger: Option<u32>`, `None` = no ledger bound), and revert with `Expired` if either has passed. Both are checked before the first hop.
+- **LP attribution**: `Pair::deposit_lp(from, amount)` stages LP tokens against the depositor and `Pair::burn(to)` redeems only that caller's staged amount (falling back to unattributed raw transfers), so concurrent withdrawals cannot consume each other's LP and the `MINIMUM_LIQUIDITY` seed is never burnable.
 
 ## Soroban Reentrancy Model
 
@@ -350,6 +351,38 @@ Helpers for all of this live behind the dev-only `test-support` feature of the
 `assert_authorized` / `assert_unauthorized` assertions. The feature is never
 enabled by a normal or `wasm32v1-none` build, so no test code reaches production
 WASM.
+
+---
+
+## Balance-Delta Accounting Rule
+
+Any amount that backs reserves, shares, stakes, rewards, or repayments must be
+**measured, not assumed**. Contracts read the token balance they actually hold
+before and after a transfer and use the delta — never the nominal `amount`
+argument passed to `transfer`.
+
+The pair already works this way: `mint`, `swap`, `sync`, and the flash-loan
+repayment check all derive inputs from `balance - reserve`, and reserves are
+set from post-transfer balances. That is what keeps the pool solvent with
+fee-on-transfer, rebasing, or otherwise non-standard tokens, where the amount
+that arrives can be smaller than the amount sent.
+
+The rule, for every current and future contract (including the incentive and
+governance work in the #232-#237 area):
+
+- **Inbound funds:** credit `balance_after - balance_before` (or
+  `balance - tracked_reserve`), never the requested amount.
+- **Stored totals:** reserve-backed totals (reserves, staked balances, reward
+  pools) are reconciled against real balances, not incremented by nominal
+  amounts.
+- **Outbound funds:** when a payout must be exact, verify the balance change
+  or document why the nominal amount is safe for that token set.
+- **Tests:** any contract that accepts deposits must include a
+  fee-on-transfer (or short-delivery) token test showing the credited amount
+  equals what was actually received.
+
+Nominal-amount accounting is the root of the fee-on-transfer bug class fixed
+in the pair; copying it into a new contract re-introduces that bug.
 
 ---
 
