@@ -201,12 +201,23 @@ fn sqrt_u256(value: U256) -> U256 {
 /// y = (x * f * reserve_out) / (reserve_in * 10_000 + x * f)
 /// ```
 ///
-/// Solving the resulting quadratic for `x` yields:
+/// Since `y / (reserve_out - y) = x * f / (reserve_in * 10_000)`, the condition
+/// reduces to the quadratic (in basis points)
 ///
 /// ```text
-/// discriminant = reserve_in * (reserve_in * f^2 + 4 * f * amount * 10_000)
-/// x = ( sqrt(discriminant) - reserve_in * f ) / (2 * f)
+/// f * x^2 + reserve_in * (10_000 + f) * x - 10_000 * reserve_in * amount = 0
 /// ```
+///
+/// which, with `g = f / 10_000`, is the standard Uniswap-V2 zap
+/// `g*x^2 + r*(1 + g)*x - r*a = 0`. Its positive root is:
+///
+/// ```text
+/// discriminant = reserve_in * (reserve_in * (10_000 + f)^2 + 4 * f * amount * 10_000)
+/// x = ( sqrt(discriminant) - reserve_in * (10_000 + f) ) / (2 * f)
+/// ```
+///
+/// (Using `f` where `10_000 + f` belongs solves `x*g / r = a / (r + x)` instead,
+/// which over-swaps and donates the unbalanced excess to existing LPs.)
 ///
 /// All intermediate products can exceed `i128::MAX`, so we work in `U256`.
 ///
@@ -237,9 +248,12 @@ pub fn compute_swap_in_for_single_side(
     let r = U256::from(reserve_in.unsigned_abs());
     let s = U256::from(amount.unsigned_abs());
 
-    // discriminant = r * (r * f^2 + 4 * f * s * 10_000)
-    let f_sq = f.checked_mul(f).ok_or(PairError::Overflow)?;
-    let r_f_sq = r.checked_mul(f_sq).ok_or(PairError::Overflow)?;
+    // (1 + g) in basis points
+    let b_plus_f = bps.checked_add(f).ok_or(PairError::Overflow)?;
+
+    // discriminant = r * (r * (10_000 + f)^2 + 4 * f * s * 10_000)
+    let b_plus_f_sq = b_plus_f.checked_mul(b_plus_f).ok_or(PairError::Overflow)?;
+    let r_b_plus_f_sq = r.checked_mul(b_plus_f_sq).ok_or(PairError::Overflow)?;
     let four_f_s = U256::new(4)
         .checked_mul(f)
         .ok_or(PairError::Overflow)?
@@ -247,18 +261,18 @@ pub fn compute_swap_in_for_single_side(
         .ok_or(PairError::Overflow)?
         .checked_mul(bps)
         .ok_or(PairError::Overflow)?;
-    let inner = r_f_sq.checked_add(four_f_s).ok_or(PairError::Overflow)?;
+    let inner = r_b_plus_f_sq.checked_add(four_f_s).ok_or(PairError::Overflow)?;
     let discriminant = r.checked_mul(inner).ok_or(PairError::Overflow)?;
 
-    // numerator = sqrt(discriminant) - r * f
+    // numerator = sqrt(discriminant) - r * (10_000 + f)
     let sqrt_disc = sqrt_u256(discriminant);
-    let r_f = r.checked_mul(f).ok_or(PairError::Overflow)?;
+    let r_b_plus_f = r.checked_mul(b_plus_f).ok_or(PairError::Overflow)?;
 
-    if sqrt_disc < r_f {
+    if sqrt_disc < r_b_plus_f {
         // Should not happen for valid positive inputs, but be defensive.
         return Err(PairError::InvalidInput);
     }
-    let numerator = sqrt_disc - r_f;
+    let numerator = sqrt_disc - r_b_plus_f;
 
     // denominator = 2 * f
     let denominator = U256::new(2).checked_mul(f).ok_or(PairError::Overflow)?;
