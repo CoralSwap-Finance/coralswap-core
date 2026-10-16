@@ -2,6 +2,7 @@
 
 use crate::helpers::{get_amount_in, get_amount_out, sort_tokens};
 use crate::RouterError;
+use coralswap_pair::math::get_amount_out as pair_get_amount_out;
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 #[test]
@@ -143,6 +144,30 @@ fn test_get_amount_in_high_fee() {
     // With higher fee, input required should be more
     // Formula gives us approximately 1010
     assert!(amount_in >= 1000);
+}
+
+#[test]
+fn exact_out_rounds_up_at_each_reserve_magnitude() {
+    let env = Env::default();
+    let reserve_out = 1_000_000i128;
+    let amount_out = 500_000i128;
+
+    for exponent in 0..=18 {
+        let reserve_in = 10i128.pow(exponent);
+        let amount_in = get_amount_in(&env, amount_out, reserve_in, reserve_out, 30).unwrap();
+        let amount_out_actual =
+            pair_get_amount_out(amount_in, reserve_in, reserve_out, 30).unwrap();
+        let router_amount_out =
+            get_amount_out(&env, amount_in, reserve_in, reserve_out, 30).unwrap();
+
+        assert!(amount_out_actual >= amount_out, "underfunded at 1e{exponent}");
+        assert_eq!(router_amount_out, amount_out_actual, "router/pair mismatch at 1e{exponent}");
+        if amount_in > 1 {
+            let amount_out_previous =
+                pair_get_amount_out(amount_in - 1, reserve_in, reserve_out, 30).unwrap();
+            assert!(amount_out_previous < amount_out, "not minimal at 1e{exponent}");
+        }
+    }
 }
 
 // --- Multi-hop path computation ---

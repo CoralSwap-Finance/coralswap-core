@@ -1,4 +1,4 @@
-.PHONY: build build-optimized test lint fmt clean deploy-testnet
+.PHONY: build build-optimized test coverage lint fmt clean deploy-testnet
 
 # Build all contracts (debug profile)
 build:
@@ -13,6 +13,11 @@ build-optimized:
 # Run the full workspace test suite
 test:
 	cargo test
+
+# Run the test suite under cargo-llvm-cov and enforce the per-member
+# coverage floors recorded in coverage.toml (requires cargo-llvm-cov).
+coverage:
+	./scripts/check-coverage.sh
 
 # Run Clippy with zero-warning policy
 lint:

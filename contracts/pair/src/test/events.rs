@@ -28,10 +28,14 @@ fn swap_event_emits_correct_topics_and_data() {
     let env = Env::default();
     let contract_id = env.register(EventStub, ());
     let sender = Address::generate(&env);
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
     let to = Address::generate(&env);
 
     env.as_contract(&contract_id, || {
-        PairEvents::swap(&env, &sender, 100_i128, 0_i128, 0_i128, 99_i128, 30_u32, &to);
+        PairEvents::swap(
+            &env, &sender, &token_a, &token_b, 100_i128, 0_i128, 0_i128, 99_i128, 30_u32, &to,
+        );
     });
 
     let all = env.events().all();

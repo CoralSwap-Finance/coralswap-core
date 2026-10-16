@@ -24,7 +24,7 @@ CoralSwap implements a **timelocked multisig upgrade** process on the Factory co
 propose_upgrade() ──→ 72-hour timelock ──→ execute_upgrade()
        │                                          │
   multisig gate                              anyone can call
-  (ceil(n/2) signers)                     (after timelock expires)
+  (> n/2 signers)                       (after timelock expires)
        │
  cancel_upgrade() ←── multisig gate
 ```
@@ -35,7 +35,7 @@ propose_upgrade() ──→ 72-hour timelock ──→ execute_upgrade()
 |---|---|
 | Delay | 72 hours |
 | Delay in ledgers | ~51,840 (assuming 5-second ledger close) |
-| Multisig threshold | `ceil(n / 2)` where `n` = number of registered signers |
+| Multisig threshold | strict majority: `n / 2 + 1` (i.e. `> n / 2`) where `n` = number of registered signers, counting distinct registered signers only |
 | Max signers | 10 |
 
 ## Step-by-Step Upgrade Process
@@ -70,7 +70,7 @@ Record this hash. It will be referenced in the proposal and can be verified inde
 
 ### 3. Propose the Upgrade
 
-The proposal requires authorization from `ceil(n/2)` of the registered multisig signers.
+The proposal requires authorization from a strict majority (`n/2 + 1`) of the registered multisig signers.
 
 ```bash
 stellar contract invoke \

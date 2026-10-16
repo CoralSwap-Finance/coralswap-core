@@ -1,13 +1,17 @@
 use soroban_sdk::{contracttype, Address, BytesN, Env, Vec};
 
-const INSTANCE_LIFETIME_THRESHOLD: u32 = 17280; // ~1 day in 5s ledgers
-const INSTANCE_BUMP_AMOUNT: u32 = 518400; // ~30 days in 5s ledgers
+// Shared factory TTL policy (issue #390). See coralswap-shared for cadence math.
+use coralswap_shared::{
+    FACTORY_INSTANCE_BUMP_AMOUNT as INSTANCE_BUMP_AMOUNT,
+    FACTORY_INSTANCE_THRESHOLD as INSTANCE_LIFETIME_THRESHOLD,
+};
 
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct FactoryStorage {
     pub signers: Vec<Address>,
     pub pair_wasm_hash: BytesN<32>,
+    pub concentrated_pair_wasm_hash: BytesN<32>,
     pub lp_token_wasm_hash: BytesN<32>,
     pub pair_count: u32,
     pub protocol_version: u32,
@@ -31,6 +35,24 @@ pub enum DataKey {
     /// A single `u32` read is significantly cheaper than deserialising the
     /// full `FactoryStorage` blob just to obtain the count.
     TotalPairs,
+    /// Per-pair frozen flag.
+    PairFrozen(Address),
+    /// Fast boolean lookup for pair membership (issue #391).
+    IsPair(Address),
+    /// Fast boolean lookup for LP-token membership.
+    IsLpToken(Address),
+}
+
+pub fn is_pair_frozen(env: &Env, pair: &Address) -> bool {
+    env.storage().instance().get(&DataKey::PairFrozen(pair.clone())).unwrap_or(false)
+}
+
+pub fn set_pair_frozen(env: &Env, pair: &Address, frozen: bool) {
+    if frozen {
+        env.storage().instance().set(&DataKey::PairFrozen(pair.clone()), &true);
+    } else {
+        env.storage().instance().remove(&DataKey::PairFrozen(pair.clone()));
+    }
 }
 
 pub fn get_pair_list(env: &Env) -> Vec<Address> {
@@ -112,6 +134,55 @@ pub fn get_pair_fee_override(env: &Env, pair: &Address) -> Option<u32> {
 /// for validating that `fee_bps <= 100` (enforced by `Factory::set_pair_fee`).
 pub fn set_pair_fee_override(env: &Env, pair: &Address, fee_bps: u32) {
     env.storage().instance().set(&DataKey::PairFeeOverride(pair.clone()), &fee_bps);
+}
+
+/// Returns true if the address is a pair created by this factory.
+pub fn is_pair(env: &Env, pair: &Address) -> bool {
+    if env.storage().instance().has(&DataKey::IsPair(pair.clone())) {
+        return env.storage().instance().get(&DataKey::IsPair(pair.clone())).unwrap_or(false);
+    }
+    // Fallback: check pair_list for backwards compatibility or tests
+    let pair_list = get_pair_list(env);
+    for i in 0..pair_list.len() {
+        if pair_list.get(i).unwrap() == *pair {
+            return true;
+        }
+    }
+    false
+}
+
+/// Sets the pair membership flag for an address.
+pub fn set_is_pair(env: &Env, pair: &Address, is_pair: bool) {
+    let key = DataKey::IsPair(pair.clone());
+    if is_pair {
+        env.storage().instance().set(&key, &true);
+    } else {
+        env.storage().instance().remove(&key);
+    }
+}
+
+pub fn is_lp_token(env: &Env, token: &Address) -> bool {
+    env.storage().instance().get(&DataKey::IsLpToken(token.clone())).unwrap_or(false)
+}
+
+pub fn set_is_lp_token(env: &Env, token: &Address, is_lp_token: bool) {
+    let key = DataKey::IsLpToken(token.clone());
+    if is_lp_token {
+        env.storage().instance().set(&key, &true);
+    } else {
+        env.storage().instance().remove(&key);
+    }
+}
+
+/// Removes any per-pair fee override for `pair`, restoring the pair's dynamic
+/// fee. A no-op if no override is currently stored.
+///
+/// `0` is never persisted as an override: a stored `0` is indistinguishable
+/// from "set the swap fee to zero" at the read site, which would let a single
+/// governance call silently zero a pair's fees (issue #311). `None` is the
+/// single encoding for "no override".
+pub fn remove_pair_fee_override(env: &Env, pair: &Address) {
+    env.storage().instance().remove(&DataKey::PairFeeOverride(pair.clone()));
 }
 
 /// Extend instance storage TTL to keep contract alive.

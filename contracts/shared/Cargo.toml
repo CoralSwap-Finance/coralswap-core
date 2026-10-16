@@ -1,0 +1,23 @@
+[package]
+name = "coralswap-shared"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[features]
+# `test-support` pulls in `soroban-sdk/testutils` so the scoped-authorization
+# helpers in `src/test_support.rs` can be shared by the contract crates'
+# unit tests. It is only ever enabled as a dev-dependency, so release WASM
+# builds never see it.
+test-support = ["soroban-sdk/testutils"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+ethnum = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

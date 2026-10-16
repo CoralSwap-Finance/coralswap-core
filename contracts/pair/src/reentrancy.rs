@@ -15,13 +15,13 @@ fn acquire_lock(env: &Env) -> Result<(), PairError> {
         return Err(PairError::Locked);
     }
     set_reentrancy_guard(env, &StorageGuard { locked: true });
-    env.storage().instance().extend_ttl(5_000, 120_960);
+    coralswap_shared::extend_reentrancy_ttl(env);
     Ok(())
 }
 
 fn release_lock(env: &Env) {
     set_reentrancy_guard(env, &StorageGuard { locked: false });
-    env.storage().instance().extend_ttl(5_000, 120_960);
+    coralswap_shared::extend_reentrancy_ttl(env);
 }
 
 // ---------------------------------------------------------------------------

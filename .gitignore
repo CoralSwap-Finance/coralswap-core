@@ -17,3 +17,6 @@ target_local/
 issue.md
 pr.md
 test_snapshots/
+# Python byte cache (scripts/coverage_gate.py)
+__pycache__/
+*.py[cod]

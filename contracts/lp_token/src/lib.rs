@@ -2,6 +2,19 @@
 //!
 //! This contract provides a standard-compliant LP token that can be
 //! minted/burned by the authorized CoralSwap Pair contract.
+//!
+//! SAC / SEP-41 parity (issue 392):
+//! - Metadata (decimals/name/symbol) is stored under a single Metadata key
+//!   holding TokenMetadata{decimals,name,symbol}. Reads match SAC expectations:
+//!   decimals/name/symbol return the pair-derived values written at init
+//!   (defaults 7 / Coral LP / CLP, see coralswap-shared). Getters are
+//!   fail-closed (NotInitialized) instead of trapping, which is stricter than SAC.
+//! - admin() view plus set_admin() alias are provided for SAC parity alongside
+//!   the legacy admin_transfer() entrypoint.
+//! - burn_from() is provided for SAC-style allowance-based burns; pair flows
+//!   continue to use burn() after holding LP.
+//! - Decimals default to 7 to match SAC Stellar-asset precision. Custom
+//!   decimals are validated to 0..=18 and name/symbol to 1..32 chars.
 
 #![no_std]
 
@@ -12,9 +25,10 @@ use errors::LpTokenError;
 use soroban_sdk::{contract, contractimpl, xdr::ToXdr, Address, Bytes, BytesN, Env, String};
 use storage::{AllowanceEntry, LpTokenKey, TokenMetadata};
 
-// TTL policy constants for persistent storage entries
-const TTL_THRESHOLD: u32 = 518_400; // ~30 days at 5s/ledger
-const TTL_EXTEND_TO: u32 = 1_036_800; // ~60 days at 5s/ledger
+// Shared LP persistent TTL policy (issue #390). See coralswap-shared for cadence math.
+use coralswap_shared::{
+    LP_PERSISTENT_EXTEND_TO as TTL_EXTEND_TO, LP_PERSISTENT_THRESHOLD as TTL_THRESHOLD,
+};
 
 #[contract]
 pub struct LpToken;
@@ -38,11 +52,31 @@ impl LpToken {
             return Err(LpTokenError::AlreadyInitialized);
         }
 
+        // SAC-parity metadata validation (issue 392, 396): decimals 0..=18,
+        // name/symbol 1..32 chars.
+        if decimals > 18 {
+            return Err(LpTokenError::InvalidMetadata);
+        }
+
+        // Backward compatibility: use provided init params if non-empty;
+        // fallback to shared defaults if empty.
+        let effective_name =
+            if name.is_empty() { String::from_str(&env, coralswap_shared::LP_NAME) } else { name };
+        let effective_symbol = if symbol.is_empty() {
+            String::from_str(&env, coralswap_shared::LP_SYMBOL)
+        } else {
+            symbol
+        };
+
+        if effective_name.len() > 32 || effective_symbol.len() > 32 {
+            return Err(LpTokenError::InvalidMetadata);
+        }
+
         // Store admin
         env.storage().instance().set(&LpTokenKey::Admin, &admin);
 
         // Store metadata
-        let metadata = TokenMetadata { decimals, name, symbol };
+        let metadata = TokenMetadata { decimals, name: effective_name, symbol: effective_symbol };
         env.storage().instance().set(&LpTokenKey::Metadata, &metadata);
 
         // Initialize total supply to 0
@@ -52,6 +86,11 @@ impl LpToken {
         env.storage().instance().set(&LpTokenKey::Paused, &false);
 
         Ok(())
+    }
+
+    /// Returns the current admin (SAC parity view, issue 392).
+    pub fn admin(env: Env) -> Result<Address, LpTokenError> {
+        env.storage().instance().get(&LpTokenKey::Admin).ok_or(LpTokenError::NotInitialized)
     }
 
     /// Transfer admin role to a new address
@@ -72,8 +111,43 @@ impl LpToken {
         Ok(())
     }
 
+    /// SAC-style admin setter alias (issue 392). Identical semantics to
+    /// admin_transfer; provided so SAC tooling calling set_admin works.
+    pub fn set_admin(env: Env, new_admin: Address) -> Result<(), LpTokenError> {
+        Self::admin_transfer(env, new_admin)
+    }
+
     /// Pause the contract - blocks all token operations
     /// Only callable by admin
+    ///
+    /// # What "pause" means here (issue #313)
+    ///
+    /// `pause` is a supply-and-transfer freeze scoped to *this* token. While
+    /// paused, every function that moves LP balances or changes supply returns
+    /// `LpTokenError::ContractPaused`:
+    ///
+    /// | Function            | Blocked while paused |
+    /// |---------------------|----------------------|
+    /// | `transfer`          | yes                  |
+    /// | `transfer_from`     | yes                  |
+    /// | `mint`              | yes                  |
+    /// | `burn`              | yes                  |
+    /// | `burn_from`         | yes                  |
+    /// | `approve` / `increase_allowance` | no (balances do not move) |
+    /// | views (`balance`, `allowance`, `total_supply`, `is_paused`) | no |
+    ///
+    /// Because the pair mints and burns LP supply through this contract, a
+    /// paused LP token also halts the pair's liquidity operations: `Pair::mint`,
+    /// `Pair::mint_with_one_token`, `Pair::burn` and `Pair::burn_single_side` all
+    /// refuse. The pair additionally checks this flag up front and reports
+    /// `PairError::LpTokenPaused`, so callers get a typed error from the pair
+    /// rather than an opaque failure from a nested call.
+    ///
+    /// A pause does **not** halt swaps, flash loans, or pair-level freezes; those
+    /// are governed by the factory's `pause` / `freeze_pair` and by each pair's
+    /// own reentrancy guard.
+    ///
+    /// `pause` is idempotent and reversible via `unpause`.
     pub fn pause(env: Env) -> Result<(), LpTokenError> {
         // Get admin and require authorization
         let admin: Address =
@@ -241,12 +315,12 @@ impl LpToken {
     pub fn balance(env: Env, id: Address) -> i128 {
         let key = LpTokenKey::Balance(id);
         let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
-        
+
         // Proactively extend TTL if balance exists
         if balance > 0 {
             env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         }
-        
+
         balance
     }
 
@@ -272,8 +346,17 @@ impl LpToken {
         Ok(())
     }
 
-    /// Transfer tokens from `from` to `to` using spender's allowance
-    /// Requires authorization from `spender`
+    /// Transfer tokens from `from` to `to` using spender's allowance.
+    /// Requires authorization from `spender`.
+    ///
+    /// # Self-Spend Semantics (issue #386)
+    /// When `spender == from` (self-spend), the owner is transferring their own funds
+    /// directly. Since `spender.require_auth()` validates the owner's own authorization,
+    /// allowance checking and decrementing are bypassed as a gas optimization (behaving
+    /// identically to [`transfer`](Self::transfer)). No allowance is required or consumed.
+    ///
+    /// When `spender != from`, `spender` must hold a valid, non-expired allowance of at
+    /// least `amount` granted by `from`. The allowance is decremented by `amount`.
     pub fn transfer_from(
         env: Env,
         spender: Address,
@@ -289,8 +372,10 @@ impl LpToken {
         // Require authorization from the spender
         spender.require_auth();
 
-        // Check and deduct allowance
-        Self::spend_allowance(&env, &from, &spender, amount)?;
+        // Check and deduct allowance only when spender != from (issue #386)
+        if spender != from {
+            Self::spend_allowance(&env, &from, &spender, amount)?;
+        }
 
         // Perform the transfer
         Self::transfer_internal(&env, &from, &to, amount)?;
@@ -300,6 +385,8 @@ impl LpToken {
 
     /// Mint new tokens to an address
     /// Only callable by admin (pair contract)
+    ///
+    /// Issue #349: Bounded to prevent unlimited emission attacks
     pub fn mint(env: Env, to: Address, amount: i128) -> Result<(), LpTokenError> {
         // Check if paused
         if Self::is_paused(env.clone()) {
@@ -312,6 +399,13 @@ impl LpToken {
 
         admin.require_auth();
 
+        // Issue #349: Bound mint amount per call to prevent atomic supply inflation attacks.
+        // Maximum LP tokens that can be minted in a single call (10^18).
+        const MAX_MINT_PER_CALL: i128 = 1_000_000_000_000_000_000;
+        if amount > MAX_MINT_PER_CALL {
+            return Err(LpTokenError::MintAmountTooLarge);
+        }
+
         // Increase balance
         let balance_key = LpTokenKey::Balance(to.clone());
         let current_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
@@ -322,6 +416,14 @@ impl LpToken {
         let total_supply: i128 =
             env.storage().instance().get(&LpTokenKey::TotalSupply).unwrap_or(0);
         let new_total_supply = total_supply.checked_add(amount).ok_or(LpTokenError::Overflow)?;
+
+        // Issue #349: Bound total supply to prevent long-term supply inflation.
+        // Maximum total supply (10^27). SAC tokens use i128 but realistic supply shouldn't exceed this.
+        const MAX_TOTAL_SUPPLY: i128 = 1_000_000_000_000_000_000_000_000_000;
+        if new_total_supply > MAX_TOTAL_SUPPLY {
+            return Err(LpTokenError::TotalSupplyExceeded);
+        }
+
         env.storage().instance().set(&LpTokenKey::TotalSupply, &new_total_supply);
 
         // Emit mint event
@@ -362,6 +464,35 @@ impl LpToken {
         // Emit burn event
         env.events().publish((soroban_sdk::symbol_short!("burn"), from), amount);
 
+        Ok(())
+    }
+
+    /// Burn via allowance (SAC parity, issue 392).
+    /// spender must authorize and hold sufficient allowance from holder.
+    pub fn burn_from(
+        env: Env,
+        spender: Address,
+        from: Address,
+        amount: i128,
+    ) -> Result<(), LpTokenError> {
+        if Self::is_paused(env.clone()) {
+            return Err(LpTokenError::ContractPaused);
+        }
+        spender.require_auth();
+        Self::spend_allowance(&env, &from, &spender, amount)?;
+        let balance_key = LpTokenKey::Balance(from.clone());
+        let current_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
+        if current_balance < amount {
+            return Err(LpTokenError::InsufficientBalance);
+        }
+        let new_balance = current_balance - amount;
+        Self::write_balance(env.storage(), &balance_key, new_balance);
+        let total_supply: i128 =
+            env.storage().instance().get(&LpTokenKey::TotalSupply).unwrap_or(0);
+        let new_total_supply =
+            total_supply.checked_sub(amount).ok_or(LpTokenError::InsufficientBalance)?;
+        env.storage().instance().set(&LpTokenKey::TotalSupply, &new_total_supply);
+        env.events().publish((soroban_sdk::symbol_short!("burn"), from), amount);
         Ok(())
     }
 
@@ -473,6 +604,15 @@ impl LpToken {
                 expiration_ledger: allowance_entry.expiration_ledger,
             };
             env.storage().persistent().set(&key, &new_allowance_entry);
+
+            // Mirror `approve`: refresh the entry's TTL so the remaining
+            // allowance lives to its declared deadline. Without this the entry
+            // keeps whatever TTL the approve-time write left behind (capped by
+            // the network max entry TTL) and can expire mid-life, silently
+            // resetting a live partial allowance to zero.
+            let ledgers_to_live =
+                allowance_entry.expiration_ledger.saturating_sub(env.ledger().sequence());
+            env.storage().persistent().extend_ttl(&key, ledgers_to_live, ledgers_to_live);
         }
 
         Ok(())
@@ -490,3 +630,36 @@ impl LpToken {
 
 #[cfg(test)]
 mod test;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Compile-time naming-convention checks (issue #382).
+//
+// Every emitted topic symbol must be lowercase snake_case and ≤ 9 chars for
+// `symbol_short!` topics. The list below mirrors every literal emitted by
+// this contract; update it when a symbol is added or renamed so the build
+// fails if the convention is broken. See docs/NAMING_CONVENTIONS.md.
+// ─────────────────────────────────────────────────────────────────────────
+
+const fn is_convention_symbol(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if !(b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+const _: () = assert!(is_convention_symbol("adm_xfer"));
+const _: () = assert!(is_convention_symbol("paused"));
+const _: () = assert!(is_convention_symbol("unpaused"));
+const _: () = assert!(is_convention_symbol("approve"));
+const _: () = assert!(is_convention_symbol("mint"));
+const _: () = assert!(is_convention_symbol("burn"));
+const _: () = assert!(is_convention_symbol("transfer"));

@@ -51,6 +51,8 @@ struct EnvHarness {
 
 fn setup_harness() -> EnvHarness {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): fee-override reads, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     let admin = Address::generate(&env);
@@ -148,6 +150,8 @@ fn swap_with_override_does_not_panic_even_when_factory_missing() {
     // The pair should fall back to dynamic fee when the factory contract does
     // not exist or returns an error. This tests graceful degradation.
     let env = Env::default();
+    // BLANKET MOCK (issue #314): fee-override reads, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths_allowing_non_root_auth();
 
     let admin = Address::generate(&env);
@@ -182,4 +186,52 @@ fn swap_with_override_does_not_panic_even_when_factory_missing() {
 
     let fee = pair_client.get_current_fee_bps();
     assert_eq!(fee, 30, "must fall back to dynamic fee when factory unavailable");
+}
+
+// Issue #350: Test that get_effective_fee_bps returns override-aware fee
+#[test]
+fn get_effective_fee_bps_returns_override_when_set() {
+    let h = setup_harness();
+
+    // Set override fee to 50 bps
+    MockFactoryClient::new(&h.env, &h.factory).set(&h.pair, &50u32);
+
+    let pair_client = PairClient::new(&h.env, &h.pair);
+    let result = pair_client.try_get_effective_fee_bps();
+    assert!(result.is_ok());
+    let (fee_bps, is_override) = result.unwrap().unwrap();
+
+    assert_eq!(fee_bps, 50);
+    assert!(is_override);
+}
+
+#[test]
+fn get_effective_fee_bps_returns_dynamic_when_no_override() {
+    let h = setup_harness();
+
+    let pair_client = PairClient::new(&h.env, &h.pair);
+    let result = pair_client.try_get_effective_fee_bps();
+    assert!(result.is_ok());
+    let (fee_bps, is_override) = result.unwrap().unwrap();
+
+    // Should return dynamic fee (baseline 30 bps in this case)
+    assert_eq!(fee_bps, 30);
+    assert!(!is_override);
+}
+
+#[test]
+fn get_effective_fee_bps_fallback_when_override_is_zero() {
+    let h = setup_harness();
+
+    // Set override to 0 (treated as "no override")
+    MockFactoryClient::new(&h.env, &h.factory).set(&h.pair, &0u32);
+
+    let pair_client = PairClient::new(&h.env, &h.pair);
+    let result = pair_client.try_get_effective_fee_bps();
+    assert!(result.is_ok());
+    let (fee_bps, is_override) = result.unwrap().unwrap();
+
+    // Should return dynamic fee, not zero
+    assert_eq!(fee_bps, 30);
+    assert!(!is_override);
 }

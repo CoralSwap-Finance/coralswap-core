@@ -7,6 +7,8 @@ use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env};
 
 fn setup_test_env() -> (Env, PairClient<'static>) {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): read-only view assertions, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
 
     let pair_id = env.register(Pair, ());
@@ -28,6 +30,8 @@ fn test_get_reserves_uninitialized_panics() {
 #[test]
 fn test_get_reserves_initialized() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): read-only view assertions, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
 
     let contract_id = env.register(Pair, ());
@@ -60,6 +64,8 @@ fn test_get_current_fee_bps_uninitialized() {
 #[test]
 fn test_get_current_fee_bps_initialized_no_volatility() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): read-only view assertions, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
 
     let contract_id = env.register(Pair, ());
@@ -85,6 +91,8 @@ fn test_get_current_fee_bps_initialized_no_volatility() {
 #[test]
 fn test_get_reserves_after_state_change() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): read-only view assertions, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
 
     env.ledger().set_timestamp(12345);
@@ -102,8 +110,6 @@ fn test_get_reserves_after_state_change() {
         reserve_a: 1000,
         reserve_b: 2000,
         block_timestamp_last: 12345,
-        price_a_cumulative: 0,
-        price_b_cumulative: 0,
         k_last: 2000000,
     };
 
@@ -123,6 +129,8 @@ fn test_get_reserves_after_state_change() {
 #[test]
 fn test_get_current_fee_bps_with_state() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): read-only view assertions, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
 
     let contract_id = env.register(Pair, ());
@@ -154,6 +162,8 @@ fn test_get_current_fee_bps_with_state() {
 #[test]
 fn test_get_fee_state_reports_model_version_and_bps() {
     let env = Env::default();
+    // BLANKET MOCK (issue #314): read-only view assertions, not authorization.
+    // Guards are covered by the per-contract `auth_matrix` module.
     env.mock_all_auths();
 
     let contract_id = env.register(Pair, ());
@@ -172,4 +182,24 @@ fn test_get_fee_state_reports_model_version_and_bps() {
     assert_eq!(view.baseline_fee_bps, 30);
     assert_eq!(view.min_fee_bps, 10);
     assert_eq!(view.max_fee_bps, 100);
+}
+
+#[test]
+fn test_version_returns_protocol_constant() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(Pair, ());
+    let pair_client = PairClient::new(&env, &contract_id);
+
+    pair_client.initialize(
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &Address::generate(&env),
+    );
+
+    // The pair's version is the shared implementation constant, not stored
+    // state (issue #383) — clients can verify it without any other view.
+    assert_eq!(pair_client.version(), coralswap_shared::PROTOCOL_VERSION);
 }

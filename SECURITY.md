@@ -253,12 +253,22 @@ invokes the receiver's callback, then validates that actual token balances
 increased by the required fee. The operation reverts if repayment is
 insufficient.
 
+**Overpayment**: repaying more than `principal + fee` is accepted. The pair
+sets its reserves to the post-callback balances, so the surplus is credited to
+the pool (raising `k` and accruing to LPs) rather than refunded to the receiver.
+Repaying even one stroop less than the required fee reverts the whole loan with
+`FlashLoanNotRepaid`, and the host discards the frame, restoring the pool's
+balance and reserves.
+
 **Location**: `contracts/pair/src/flash_loan.rs` - `execute_flash_loan`
 
 **Tests**: `contracts/pair/src/test/flash_loan.rs`
 
-- `test_flash_loan_repayment_enforced`
-- `test_flash_loan_insufficient_repayment_reverts`
+- `flash_loan_honest_receiver_repays` (exact repayment)
+- `flash_loan_overpayment_is_credited_to_pool` (surplus credited to reserves)
+- `flash_loan_dual_overpayment_is_credited_to_pool` (both borrowed tokens)
+- `flash_loan_underpayment_reverts_with_flash_loan_not_repaid` (one stroop short)
+- `flash_loan_failing_callback_reverts_with_flash_callback_failed`
 - Malicious receiver scenarios
 
 ### 8. Oracle TWAP Integrity
@@ -318,6 +328,51 @@ pause state during normal operations.
 
 - `test_create_pair_while_paused`
 - `test_create_pair_after_unpause`
+
+### 11. LP Token Supply Integrity
+
+**Invariant**: The LP token's total supply must remain proportional to the pair's
+reserves at all times. Only the authorized pair contract (the LP token's admin)
+may mint LP tokens, and only in amounts that correspond to proportional increases
+in reserves. Minting is bounded to prevent atomic supply inflation attacks.
+
+**Threat Model**: A compromised pair contract, a malicious admin transfer, or a
+vulnerability in the pair's mint logic could allow unbacked LP tokens to be
+created. These fake LP tokens could then be burned to drain real reserves from
+the pool, stealing liquidity providers' funds.
+
+**Enforcement**:
+
+- **Per-call mint limit**: LP token mints are bounded to `MAX_MINT_PER_CALL`
+  (10^18 tokens) per transaction to prevent atomic supply inflation attacks.
+  
+- **Total supply cap**: LP token total supply cannot exceed `MAX_TOTAL_SUPPLY`
+  (10^27 tokens) to prevent long-term supply inflation.
+
+- **Admin verification**: The LP token verifies its admin is the authorized pair
+  contract before honoring mint requests, preventing unauthorized mints after
+  admin transfer.
+
+- **Reserve proportionality**: The pair contract's `mint()` function computes
+  LP tokens issued using the constant-product formula: for reserves (r_a, r_b)
+  and existing supply S, adding (Δa, Δb) issues `min(Δa/r_a, Δb/r_b) * S` new
+  LP tokens. The LP token contract validates this ratio on every mint.
+
+**Location**:
+
+- `contracts/lp_token/src/lib.rs` - `mint()`, bounds checks
+- `contracts/pair/src/lib.rs` - `mint()` liquidity calculation
+
+**Tests**: `contracts/lp_token/src/test/mod.rs`
+
+- `test_mint_bounded_per_call`
+- `test_mint_at_per_call_limit_succeeds`
+- `test_mint_bounded_total_supply`
+
+**Audit Priority**: **CRITICAL**. This invariant is the foundation of LP token
+security. A bypass allows direct theft of pooled funds.
+
+**Fix**: Issue #349
 
 ---
 

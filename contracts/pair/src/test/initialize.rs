@@ -1,7 +1,21 @@
 use crate::errors::PairError;
 use crate::storage::{get_fee_state, get_oracle_state, get_pair_state, get_reentrancy_guard};
 use crate::{Pair, PairClient};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Env};
+
+#[contract]
+struct MockFactory;
+
+#[contractimpl]
+impl MockFactory {
+    pub fn is_pair(_env: Env, _pair: Address) -> bool {
+        false
+    }
+
+    pub fn is_lp_token(_env: Env, _token: Address) -> bool {
+        true
+    }
+}
 
 fn setup_env() -> (Env, Address, Address, Address, Address, Address) {
     let env = Env::default();
@@ -62,6 +76,19 @@ fn identical_tokens_returns_error() {
 }
 
 #[test]
+fn nested_pool_using_existing_lp_token_returns_error() {
+    let env = Env::default();
+    let contract_id = env.register(Pair, ());
+    let factory_id = env.register(MockFactory, ());
+    let token_b = Address::generate(&env);
+    let lp_token = Address::generate(&env);
+    let client = PairClient::new(&env, &contract_id);
+
+    let result = client.try_initialize(&factory_id, &lp_token, &token_b, &Address::generate(&env));
+    assert_eq!(result, Err(Ok(PairError::InvalidInput)));
+}
+
+#[test]
 fn get_reserves_returns_zeros_after_init() {
     let (env, contract_id, factory, token_a, token_b, lp_token) = setup_env();
     let client = PairClient::new(&env, &contract_id);
@@ -100,8 +127,6 @@ fn pair_state_stores_correct_addresses() {
         assert_eq!(state.token_b, token_b);
         assert_eq!(state.lp_token, lp_token);
         assert_eq!(state.k_last, 0);
-        assert_eq!(state.price_a_cumulative, 0);
-        assert_eq!(state.price_b_cumulative, 0);
     });
 }
 
@@ -116,14 +141,18 @@ fn init_state_is_coherent() {
         let state = get_pair_state(&env).expect("PairStorage missing");
         let fee = get_fee_state(&env).expect("FeeState missing");
 
-        // Reserves, k_last and cumulative prices all start empty together.
+        // Reserves and k_last all start empty together. The cumulative-price
+        // accumulators live on the oracle state, not on PairStorage (issue
+        // #312), and start at zero there.
         assert_eq!(state.reserve_a, 0);
         assert_eq!(state.reserve_b, 0);
         assert_eq!(state.k_last, state.reserve_a * state.reserve_b);
-        assert_eq!(state.price_a_cumulative, 0);
-        assert_eq!(state.price_b_cumulative, 0);
         assert_eq!(state.block_timestamp_last, env.ledger().timestamp());
-        assert_eq!(get_oracle_state(&env).observations.len(), 0);
+
+        let oracle = get_oracle_state(&env);
+        assert_eq!(oracle.price_a_cumulative, 0);
+        assert_eq!(oracle.price_b_cumulative, 0);
+        assert_eq!(oracle.len(), 0);
 
         // Fee state starts with no accumulated volatility and a consistent range.
         assert_eq!(fee.vol_accumulator, 0);

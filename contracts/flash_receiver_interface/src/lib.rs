@@ -6,6 +6,8 @@ use soroban_sdk::{contractclient, Address, Bytes, Env};
 /// Contracts receiving flash loans must implement this trait.
 /// The Pair contract invokes `on_flash_loan` after token transfer.
 /// Receiver MUST repay principal + fee before the callback returns.
+/// Repaying more than required is allowed but the surplus is kept by the pool
+/// (it is credited to the reserves, never refunded).
 #[contractclient(name = "FlashReceiverClient")]
 pub trait FlashReceiver {
     fn on_flash_loan(

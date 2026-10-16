@@ -60,21 +60,63 @@ flowchart TD
 The Factory is the registry and governance hub of the protocol.
 
 - **Pair creation**: Deploys a new Pair contract and its associated LP Token contract using deterministic salts derived from the token addresses. Stores the pair mapping in both directions (`(A,B)` and `(B,A)`).
-- **Governance**: Manages a multisig signer set (1–10 signers, threshold = `ceil(n/2)`). Multisig is required for pause/unpause and upgrade operations.
+- **Governance**: Manages a multisig signer set (1–10 signers, quorum = strict majority `n/2 + 1`). Multisig is required for pause/unpause and upgrade operations.
 - **Protocol fees**: The `fee_to_setter` address can set a protocol-wide fee recipient (`fee_to`) and fee rate (`fee_bps`, max 30 bps). Per-pair fee overrides (max 100 bps) are also supported.
+  - **Disabling fees is explicit.** A *disabled* protocol fee is `fee_to = None`, which may be combined with any `fee_bps`; the pair then charges nothing. `fee_to = Some(addr)` with `fee_bps = 0` is rejected with `FactoryError::FeeDisabled`, because a live recipient collecting zero is indistinguishable from the disabled state in downstream accounting. Clear a fee by clearing `fee_to`, not by setting the rate to zero.
+  - **A pair override of `0` means "no override"**, not "zero fee". `set_pair_fee(pair, 0, None)` removes the entry so the pair falls back to the dynamic/protocol fee; it must never be used to make a pool free, which would silently make every swap a zero-fee trade against the LPs' consent.
+- **Pair configuration relays**: In addition to per-pair fee overrides, the `fee_to_setter` governance role can configure pair-level parameters through factory entry points (`Factory::set_pair_lp_token_paused` and `Factory::set_pair_stale_threshold`). The pair verifies caller authorization against its stored `pair.factory` contract address.
 - **Upgrades**: A timelocked upgrade mechanism (72-hour delay, ~51,840 ledgers) allows the Factory WASM to be replaced via `propose_upgrade` → `execute_upgrade`. Upgrades can be cancelled before execution.
-- **Pause**: The protocol can be paused/unpaused by multisig, which blocks new pair creation.
+- **Pause, Resume & Freezing**: The protocol can be paused or resumed by multisig. Individual pairs can be frozen by the `fee_to_setter` address alone — the incident-response path, deliberately requiring a single address rather than a multisig round trip or pair-level credentials — via `freeze_pair` / `unfreeze_pair`. Dedicated events (`paused`, `unpaused`, `resumed`, `pair_frozen_event`, `pair_unfrozen_event`) and a public heartbeat sync (`sync()`) ensure indexers maintain up-to-date state. See [docs/INDEXER.md](docs/INDEXER.md).
 
 ### Pair
 
-Each Pair contract holds reserves of two tokens and implements the constant-product AMM (`x * y = k`).
+Each Pair contract holds reserves of exactly two distinct tokens and implements
+the constant-product AMM (`x * y = k`). Factory creation and the Pair contract
+ABI are binary-only: a pool cannot contain three or more assets. Multi-asset
+pools are a future design direction, not a capability of the current contracts;
+see [Multi-Asset Pair Design](docs/MULTI_ASSET_PAIRS.md).
 
 - **Swap**: Validates the K invariant after fee deduction. Fees are dynamic — computed from a volatility-tracking EMA with configurable baseline, min, max, ramp-up, and cooldown parameters. A per-pair fee override from the Factory takes precedence when set.
 - **Mint**: Accepts token deposits and mints LP shares proportional to the deposit. On first mint, `MINIMUM_LIQUIDITY` shares are locked to the contract itself.
 - **Burn**: Burns LP tokens and returns pro-rata reserves. Supports standard two-sided burn and single-sided burn (with an internal swap leg).
 - **Flash Loans**: Lends reserve tokens to a receiver contract, requires repayment (principal + fee) in the same transaction.
-- **Oracle**: Tracks cumulative prices for TWAP queries (`consult_twap`).
+- **Oracle**: Tracks cumulative prices for TWAP queries (`consult_twap`). The accumulators live in a self-contained `OracleState` struct owned by the oracle module, rather than being duplicated on `PairStorage`; the pair only hands the oracle its reserves. The price history is a ring buffer capped at `MAX_OBSERVATIONS = 24`, so a pair's on-chain footprint is bounded no matter how often it is synced.
+- **LP token pause relay**: `Pair::set_lp_token_paused` and `Pair::is_lp_token_paused` proxy the pair's LP token. The pair is the LP token's `admin`, and it requires authorization from the factory contract address (`pair.factory.require_auth()`). The factory exposes `Factory::set_pair_lp_token_paused` authorized by the `fee_to_setter` role, which relays the instruction to the pair.
 - **Reentrancy Guard**: All state-mutating swap and burn paths are protected by a storage-based reentrancy lock.
+
+### Pause Layering
+
+Pausing is a two-level mechanism, and the levels are deliberately not equivalent:
+
+| Level | Flag | Effect | Reachable by |
+| --- | --- | --- | --- |
+| LP token operations | `LpToken::is_paused` | Blocks all `transfer` / `transfer_from` / `approve` / `permit` | factory `fee_to_setter` via `Factory::set_pair_lp_token_paused` -> `Pair::set_lp_token_paused` |
+| Liquidity provision | Pair-side pause flag | Blocks `mint` and `mint_with_one_token` and `burn`, but **not** transfers | factory signers via `Factory::freeze_pair` |
+| Trading & value movement | Pair-side `DataKey::Frozen` | Blocks `swap`, `mint`, `mint_with_one_token`, `burn_single_side` and `flash_loan`; a proportional `burn` stays open so LPs can always exit | freeze: factory `fee_to_setter` alone or the factory signers via `Factory::freeze_pair`; unfreeze: factory signers only via `Factory::unfreeze_pair` |
+
+The liquidity-level flag is separate from the token-level one on purpose: freezing a pool's *liquidity* is a governance action, whereas halting *all* LP token movement is an incident-response action. A halted pool can still be unwound by holders who already hold LP tokens.
+
+The freeze level is the third tier and the only one reachable by a single address. It is written twice — once in the factory's registry (`is_pair_frozen`, used by `freeze_pair` itself as an `is_pair` gate) and once in the pair, where enforcement actually happens (`Pair::set_frozen`, which only the factory contract may call). The flag returns `PairError::ContractFrozen` (125) before any funds move, so a refused swap leaves reserves untouched; `FactoryError::PairFreezeFailed` (17) covers a failed cross-contract call into the pair.
+
+Mints and burns that the pause rejects return typed errors — `LpTokenPaused` (122), `LpTokenUnavailable` (123), `LpTokenRejected` (124) — rather than a bare host abort, so indexers and callers can distinguish an intentional pause from a genuine authorization failure.
+
+**Enforcement lives in the LP token; the pair's copy is a hint.** The pair
+refuses mint/burn/swap up front so the caller gets `PairError::LpTokenPaused`
+instead of an opaque error from a nested call. To keep that check off the
+critical path, the pair reads a cached flag it writes itself in
+`set_lp_token_paused` rather than calling `is_paused` across a contract
+boundary — a nested sub-invocation on every `swap` is a measurable fraction of
+its budget, and getting that wrong makes the whole contract exceed the limit
+under a realistic auth tree.
+
+The cache can only go stale if the LP token's admin is transferred off the pair,
+since the pair is otherwise the only address that can pause it. Even then
+nothing unsafe happens: the LP token refuses the nested `mint`/`burn`
+independently, so the pool stays frozen. What degrades is diagnostics — the
+caller sees the token's `#207` instead of the pair's `LpTokenPaused`. A stale
+`true` is impossible, because only the pair writes the key.
+`Pair::is_lp_token_paused` reads through to the token, so the view is never
+stale.
 
 ### LP Token
 
@@ -83,6 +125,13 @@ A SEP-41 compliant fungible token contract.
 - Minted and burned exclusively by the authorized Pair contract (admin).
 - Supports `transfer`, `transfer_from`, `approve`, and `permit` (off-chain signature approval).
 - Admin can `pause`/`unpause` all token operations and transfer the admin role.
+- **Deterministic Pair-Derived Metadata**:
+  - Factory deploys LP tokens with deterministic metadata derived from canonical pair tokens:
+    - **Name**: `CORAL-SWAP-LP-<HEX8>` (e.g., `CORAL-SWAP-LP-3F8B1A2C`, 22 characters, <= 32)
+    - **Symbol**: `CLP-<HEX8>` (e.g., `CLP-3F8B1A2C`, 12 characters, <= 32)
+    - **Decimals**: `7` (matches SAC Stellar-asset precision)
+  - `<HEX8>` is the first 8 uppercase hexadecimal characters of `SHA-256(canonical_token_0 || canonical_token_1)`.
+  - Backward compatibility: custom parameters passed to `LpToken::initialize` are respected if provided. If empty strings are provided, values fall back to defaults.
 
 ### Router
 
@@ -90,7 +139,8 @@ The user-facing contract that simplifies interaction with the protocol.
 
 - **Swap routing**: Finds the best path across 1-hop (direct), 2-hop, and 3-hop routes using configurable hub tokens. Supports both `swap_exact_tokens_for_tokens` and `swap_tokens_for_exact_tokens`.
 - **Liquidity**: `add_liquidity` computes optimal deposit amounts to preserve pool ratios; `remove_liquidity` burns LP tokens and enforces minimum output amounts.
-- **Deadline enforcement**: All user-facing operations accept a deadline timestamp and revert if expired.
+- **Deadline enforcement**: All user-facing router operations accept a deadline timestamp and an optional ledger-sequence deadline (`deadline_ledger: Option<u32>`, `None` = no ledger bound), and revert with `Expired` if either has passed. Both are checked before the first hop.
+- **LP attribution**: `Pair::deposit_lp(from, amount)` stages LP tokens against the depositor and `Pair::burn(to)` redeems only that caller's staged amount (falling back to unattributed raw transfers), so concurrent withdrawals cannot consume each other's LP and the `MINIMUM_LIQUIDITY` seed is never burnable.
 
 ## Soroban Reentrancy Model
 
@@ -269,6 +319,77 @@ When adding new state-mutating functions to the Pair contract:
 
 ---
 
+## Authorization Testing
+
+Soroban tests have a convenient footgun: `Env::mock_all_auths()` authorizes *every* address in *every* invocation tree. A test written that way keeps passing after the contract deletes its `require_auth` call, so it cannot tell you whether a guard exists.
+
+The rules this repository follows:
+
+- **A guard is covered by a scoped tree, not a blanket mock.** Every authorized
+  function in the factory, pair, and LP token has a case in its contract's
+  `auth_matrix` module that installs an exact authorization tree. Any
+  `require_auth` the tree does not describe reverts, which is exactly what
+  happens if the guard is removed.
+- **The matrix asserts the negative, not just the positive.** Each gated
+  function is exercised with the wrong signer, the wrong function name, and the
+  wrong arguments, so a guard that is too loose fails the build. `require_auth()`
+  is argument-bound even though it is not spelled `require_auth_for_args(..)`.
+- **Permissionless functions are pinned too.** `swap`, `sync`, `flash_loan`, and
+  the view functions are run under `allow_nothing()` so that accidentally
+  adding a `require_auth` to a view or to the flash-loan callback is caught.
+- **Blanket mocks are allowed only for arithmetic, and must say so.** Tests
+  whose subject is invariant math, k-value behavior, or deployment wiring keep
+  `mock_all_auths*()` and carry a `// BLANKET MOCK (issue #314)` comment
+  naming the reason. Anything touching authorization belongs in the matrix.
+- **Known limitation.** `Env::mock_auths` installs a mock checker at each
+  authorizer address, replacing any contract already registered there. The pair
+  is its own LP token's `admin`, and a deployed pair is its own governance
+  signer, so those two paths cannot be expressed as a scoped tree. They use
+  `mock_all_auths()` plus an `Env::auths()` assertion on the authorizer,
+  address, and arguments — weaker than a scoped tree, still far stronger than
+  an unasserted blanket mock.
+
+Helpers for all of this live behind the dev-only `test-support` feature of the
+`coralswap-shared` crate (`contracts/shared/src/test_support.rs`): `allow`,
+`allow_with_sub_invocations`, `allow_nothing`, `auth_args!`, and the
+`assert_authorized` / `assert_unauthorized` assertions. The feature is never
+enabled by a normal or `wasm32v1-none` build, so no test code reaches production
+WASM.
+
+---
+
+## Balance-Delta Accounting Rule
+
+Any amount that backs reserves, shares, stakes, rewards, or repayments must be
+**measured, not assumed**. Contracts read the token balance they actually hold
+before and after a transfer and use the delta — never the nominal `amount`
+argument passed to `transfer`.
+
+The pair already works this way: `mint`, `swap`, `sync`, and the flash-loan
+repayment check all derive inputs from `balance - reserve`, and reserves are
+set from post-transfer balances. That is what keeps the pool solvent with
+fee-on-transfer, rebasing, or otherwise non-standard tokens, where the amount
+that arrives can be smaller than the amount sent.
+
+The rule, for every current and future contract (including the incentive and
+governance work in the #232-#237 area):
+
+- **Inbound funds:** credit `balance_after - balance_before` (or
+  `balance - tracked_reserve`), never the requested amount.
+- **Stored totals:** reserve-backed totals (reserves, staked balances, reward
+  pools) are reconciled against real balances, not incremented by nominal
+  amounts.
+- **Outbound funds:** when a payout must be exact, verify the balance change
+  or document why the nominal amount is safe for that token set.
+- **Tests:** any contract that accepts deposits must include a
+  fee-on-transfer (or short-delivery) token test showing the credited amount
+  equals what was actually received.
+
+Nominal-amount accounting is the root of the fee-on-transfer bug class fixed
+in the pair; copying it into a new contract re-introduces that bug.
+
+---
+
 ## V2 Architecture (Planned)
 
 The V2 architecture is expected to introduce:
@@ -278,3 +399,12 @@ The V2 architecture is expected to introduce:
 - Additional pool types beyond constant-product
 
 The current contract structure is designed to support forward evolution through the Factory's timelocked upgrade mechanism and per-pair fee flexibility.
+
+---
+
+## Deployment & Migration Notes
+
+### Pair Storage Migration (#421)
+
+Pairs created prior to PR #421 must be redeployed due to the `PairStorage` layout change introduced in commit `2237859`. The last compatible commit prior to this storage layout change is `5ad9ec0`. Attempting to run newer Pair contract code against storage instances deployed prior to `5ad9ec0` will result in serialization mismatches.
+

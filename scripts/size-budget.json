@@ -1,0 +1,10 @@
+{
+  "note": "Per-contract WASM size budget, enforced by scripts/check-size.sh (CI + `make size-check`). Contract size drives upload/deployment cost and the per-invocation resource budget, so it is gated like build and test. max_bytes is the hard budget: exceeding it fails CI, and a contract above it is no longer deployable on Soroban, whose network limit is 64 KiB (65536 bytes) of WASM. The initial budget for every contract is that protocol ceiling; tighten a contract's max_bytes once a measured baseline leaves comfortable headroom, so growth is caught well before the contract becomes undeployable. Overridable with SIZE_BUDGET=<path> for experiments.",
+  "warn_ratio": 0.8,
+  "contracts": {
+    "factory": { "max_bytes": 65536 },
+    "lp_token": { "max_bytes": 65536 },
+    "pair": { "max_bytes": 65536 },
+    "router": { "max_bytes": 65536 }
+  }
+}

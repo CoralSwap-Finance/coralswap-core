@@ -12,7 +12,8 @@ use crate::{
 };
 
 /// Minimum flash-loan fee in basis points (0.05%).
-/// The effective fee is max(current_dynamic_fee_bps, FLASH_FEE_FLOOR_BPS).
+/// The effective fee is max(current_dynamic_fee_bps, FLASH_FEE_FLOOR_BPS) when
+/// the pool charges fees; a 0-bps pool charges no flash fee at all.
 const FLASH_FEE_FLOOR_BPS: u32 = 5;
 
 /// Maximum allowed byte length for the `data` payload passed to the receiver.
@@ -20,12 +21,17 @@ const MAX_PAYLOAD_SIZE: u32 = 256;
 
 /// Computes the flash-loan fee for `amount` stroops.
 ///
-/// The effective fee rate is the higher of the pool's current dynamic fee and
-/// the hardcoded floor (`FLASH_FEE_FLOOR_BPS = 5`, i.e. 0.05%).  This ensures
-/// flash loans are always revenue-positive for LPs even during low-fee periods.
+/// # Semantics
 ///
-/// A minimum of **1 stroop** is enforced so that zero-fee loans are impossible
-/// regardless of rounding.
+/// * **Fees configured (`current_fee_bps > 0`)** — the effective rate is the
+///   higher of the pool's fee and the hardcoded floor
+///   (`FLASH_FEE_FLOOR_BPS = 5`, i.e. 0.05%), so flash loans stay
+///   revenue-positive for LPs during low-fee periods. A minimum of **1
+///   stroop** is charged so rounding can never turn a fee-bearing loan into a
+///   free one.
+/// * **Fees disabled (`current_fee_bps == 0`)** — the pool is explicitly
+///   configured as zero-fee (e.g. a promotion), so neither the bps floor nor
+///   the 1-stroop minimum applies and the quoted fee is exactly `0`.
 ///
 /// # Arguments
 /// * `amount`          – Loan principal in stroops (must be > 0).
@@ -43,12 +49,17 @@ pub fn compute_flash_fee(
         return Err(crate::errors::PairError::FlashLoanFeeTooHigh);
     }
 
+    // A 0-bps pool is a deliberate zero-fee configuration: no floors apply.
+    if current_fee_bps == 0 {
+        return Ok(0);
+    }
+
     let effective_bps = current_fee_bps.max(FLASH_FEE_FLOOR_BPS) as i128;
     let fee = amount
         .checked_mul(effective_bps)
         .map(|v| v / 10_000_i128)
         .ok_or(crate::errors::PairError::FeeOverflow)?;
-    // At least 1 stroop to prevent zero-cost loans.
+    // Fee-bearing pools charge at least 1 stroop so rounding cannot zero it.
     Ok(fee.max(1))
 }
 
@@ -62,7 +73,9 @@ pub fn compute_flash_fee(
 /// 4. **Callback** — call `receiver.on_flash_loan(...)`.  The receiver MUST
 ///    repay principal + fee before the callback returns.
 /// 5. **Repayment check** — `new_balance >= old_reserve + fee` for each
-///    borrowed token.
+///    borrowed token.  Repaying *more* than required is accepted: the surplus
+///    is not refunded, it stays in the pool (see step 6), while repaying even
+///    one stroop less than the fee aborts with `FlashLoanNotRepaid`.
 /// 6. **Reserve update** — set reserves to post-callback balances.
 /// 7. **k-invariant** — `post_k >= pre_k`; reverts on violation.
 /// 8. **Persist + emit** — write updated state, publish event.
@@ -72,7 +85,7 @@ pub fn compute_flash_fee(
 /// | Error                    | Condition                                          |
 /// |--------------------------|---------------------------------------------------|
 /// | `FlashPayloadTooLarge`   | `data.len() > MAX_PAYLOAD_SIZE` (256 bytes)       |
-/// | `InsufficientInputAmount`| Both amounts are zero, or either is negative      |
+/// | `InsufficientInputAmount`| Either amount is negative                         |
 /// | `NotInitialized`         | Pair storage not yet written by `initialize`       |
 /// | `InsufficientLiquidity`  | Requested amount exceeds current reserves         |
 /// | `Locked`                 | Reentrancy — another flash loan is in progress    |
@@ -95,11 +108,8 @@ pub fn execute_flash_loan(
         return Err(PairError::FlashPayloadTooLarge);
     }
 
-    // At least one token must be borrowed; negative amounts are nonsensical.
+    // Negative amounts are nonsensical.
     if amount_a < 0 || amount_b < 0 {
-        return Err(PairError::InsufficientInputAmount);
-    }
-    if amount_a == 0 && amount_b == 0 {
         return Err(PairError::InsufficientInputAmount);
     }
 
@@ -108,6 +118,12 @@ pub fn execute_flash_loan(
     // -----------------------------------------------------------------------
 
     let mut state = get_pair_state(env).ok_or(PairError::NotInitialized)?;
+
+    // Clean no-op edge: if both amounts are zero, return Ok(()) immediately.
+    // No tokens are transferred, no callback is invoked, and no reentrancy lock is acquired.
+    if amount_a == 0 && amount_b == 0 {
+        return Ok(());
+    }
 
     // Requested amounts must not exceed current reserves.
     if amount_a > state.reserve_a || amount_b > state.reserve_b {
@@ -188,6 +204,11 @@ pub fn execute_flash_loan(
 
     // Each borrowed token's new balance must be >= old_reserve + fee.
     // Net effect: the pool gains exactly `fee` per token (or more).
+    //
+    // This is deliberately a FLOOR check (`>=`), not an equality: if the
+    // receiver returns more than principal + fee, the surplus is accepted
+    // and retained by the pool as a donation (issue #384). A refactor must
+    // not start rejecting overpayments.
     if amount_a > 0 {
         let required_a = state.reserve_a.checked_add(fee_a).ok_or(PairError::Overflow)?;
         if new_balance_a < required_a {
@@ -202,9 +223,18 @@ pub fn execute_flash_loan(
     }
 
     // -----------------------------------------------------------------------
-    // 8. Reserve update
+    // 8. Reserve update (Issue #351: sync to actual balances)
     // -----------------------------------------------------------------------
 
+    // Reserves track the *actual* token balances, so an overpaid surplus is
+    // credited to the pool rather than refunded to the receiver: it raises
+    // `k` below and accrues to LPs.
+    //
+    // This sync handles direct transfers made during the callback: if someone
+    // donates tokens to the pair while the flash loan is in progress, those
+    // tokens are captured in the balances above and become part of the pool's
+    // reserves. This prevents "reserve dilution" — the reserves always match
+    // the actual holdings, so subsequent operations work with correct state.
     state.reserve_a = new_balance_a;
     state.reserve_b = new_balance_b;
 

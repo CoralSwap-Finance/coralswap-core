@@ -22,7 +22,10 @@ Closes #
 - [ ] Code follows project coding standards
 - [ ] `cargo fmt --all -- --check` passes
 - [ ] `cargo clippy --all-targets -- -D warnings` passes
+- [ ] Coverage floor passes (`./scripts/check-coverage.sh`); new exemptions in `coverage.toml` carry a reason and an `# expires:` date
 - [ ] WASM builds successfully (`cargo build --release --target wasm32v1-none`)
 - [ ] Public functions have doc comments
 - [ ] Commit messages follow conventional format
 - [ ] No unrelated changes included
+- [ ] Any new `storage().set` writes are paired with an `extend_ttl` call (see docs/STORAGE_LIFETIMES.md)
+- [ ] Any token amounts that back reserves, stakes, rewards, or repayments are measured from balance deltas, not nominal `transfer` amounts (see ARCHITECTURE.md → Balance-Delta Accounting Rule)
