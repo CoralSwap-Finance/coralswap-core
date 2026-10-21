@@ -10,8 +10,8 @@ mod factory_tests {
     use coralswap_shared::auth_args;
     use coralswap_shared::test_support as auth;
     use soroban_sdk::{
-        symbol_short, testutils::Address as _, testutils::Events, Address, Bytes, BytesN, IntoVal,
-        TryFromVal, Val, Vec,
+        symbol_short, testutils::Address as _, testutils::Events, testutils::Ledger as _, Address,
+        Bytes, BytesN, IntoVal, TryFromVal, Val, Vec,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -1649,5 +1649,126 @@ mod factory_tests {
         let (_env, client, _, _, _, _, _) = setup_env();
 
         assert_eq!(client.try_protocol_version(), Ok(Ok(coralswap_shared::PROTOCOL_VERSION)));
+    }
+
+    // ── Issue #344: timelock enforcement + pending-upgrade view ─────────────
+
+    /// The pending-upgrade view is the human-readable inspection path for a
+    /// queued upgrade: it must surface exactly the hash and proposal ledger
+    /// that `propose_upgrade` stored, and be `None` whenever nothing is
+    /// queued.
+    #[test]
+    fn test_pending_upgrade_view_shows_proposal_and_empty_state() {
+        let (env, client, _, _, _, _, signers) = setup_env();
+
+        assert!(client.pending_upgrade().is_none(), "no upgrade queued after init");
+        assert_eq!(
+            client.upgrade_delay_ledgers(),
+            crate::upgrade::UPGRADE_DELAY_LEDGERS,
+            "delay view must mirror the enforced constant"
+        );
+
+        let new_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+        let quorum = Vec::from_array(&env, [signers.get(0).unwrap(), signers.get(1).unwrap()]);
+        let proposed_at = env.ledger().sequence();
+        client.propose_upgrade(&quorum, &new_hash);
+
+        let pending = client.pending_upgrade().expect("proposal must be visible");
+        assert_eq!(pending.new_wasm_hash, new_hash, "view must show the proposed wasm hash");
+        assert_eq!(
+            pending.proposed_at_ledger, proposed_at,
+            "view must show the ledger the proposal was made at"
+        );
+
+        // Cancelling clears the view again.
+        client.cancel_upgrade(&quorum);
+        assert!(client.pending_upgrade().is_none(), "a cancelled proposal must not be visible");
+    }
+
+    /// Governance's `execute_upgrade` must revert — with the specific timelock
+    /// error, not a generic failure — for every ledger before the deadline,
+    /// and must leave the proposal pending.
+    #[test]
+    fn test_execute_upgrade_reverts_one_ledger_before_min_delay() {
+        let (env, client, _, _, _, _, signers) = setup_env();
+        let new_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+        let quorum = Vec::from_array(&env, [signers.get(0).unwrap(), signers.get(1).unwrap()]);
+        client.propose_upgrade(&quorum, &new_hash);
+        let proposed_at = env.ledger().sequence();
+
+        // Immediately after proposing.
+        assert_eq!(
+            client.try_execute_upgrade(),
+            Err(Ok(FactoryError::UpgradeTimelockNotExpired)),
+            "execute must revert while the timelock is running"
+        );
+
+        // One ledger before the deadline: still enforced.
+        env.ledger().set_sequence_number(proposed_at + crate::upgrade::UPGRADE_DELAY_LEDGERS - 1);
+        assert_eq!(
+            client.try_execute_upgrade(),
+            Err(Ok(FactoryError::UpgradeTimelockNotExpired)),
+            "execute must revert a single ledger before the delay elapses"
+        );
+
+        // A reverted governance call must not have consumed the proposal.
+        let pending = client.pending_upgrade().expect("proposal must survive a rejected execute");
+        assert_eq!(pending.proposed_at_ledger, proposed_at);
+        assert_eq!(pending.new_wasm_hash, new_hash);
+    }
+
+    /// The min-delay test: a proposed upgrade takes effect only once exactly
+    /// `upgrade_delay_ledgers` ledgers have elapsed — and executing clears the
+    /// pending view and bumps the protocol version.
+    ///
+    /// The factory is registered *from its own release WASM* so the in-place
+    /// `update_current_contract_wasm` leaves runnable factory code behind and
+    /// the post-execute assertions can be read back through the same views.
+    #[test]
+    #[allow(deprecated)] // register_contract_wasm: same pattern as tests/integration.rs
+    fn test_execute_upgrade_takes_effect_only_after_min_delay() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let factory_wasm = load_wasm("coralswap_factory.wasm");
+        let factory_bytes = Bytes::from_slice(&env, &factory_wasm);
+        let new_hash = env.deployer().upload_contract_wasm(factory_bytes.clone());
+        let factory_address = env.register_contract_wasm(None, factory_bytes);
+        let client = FactoryClient::new(&env, &factory_address);
+
+        let pair_wasm_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+        let lp_token_wasm_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+        let signers = Vec::from_array(
+            &env,
+            [Address::generate(&env), Address::generate(&env), Address::generate(&env)],
+        );
+        client.initialize(
+            &signers,
+            &pair_wasm_hash,
+            &pair_wasm_hash,
+            &lp_token_wasm_hash,
+            &Address::generate(&env),
+        );
+
+        let version_before = client.protocol_version();
+        let quorum = Vec::from_array(&env, [signers.get(0).unwrap(), signers.get(1).unwrap()]);
+        client.propose_upgrade(&quorum, &new_hash);
+        let proposed_at = env.ledger().sequence();
+
+        // One ledger short of the delay: nothing may happen.
+        env.ledger().set_sequence_number(proposed_at + crate::upgrade::UPGRADE_DELAY_LEDGERS - 1);
+        assert_eq!(client.try_execute_upgrade(), Err(Ok(FactoryError::UpgradeTimelockNotExpired)));
+        assert_eq!(client.protocol_version(), version_before, "a rejected execute must not bump");
+
+        // Exactly at the boundary the timelock has elapsed and the upgrade applies.
+        env.ledger().set_sequence_number(proposed_at + crate::upgrade::UPGRADE_DELAY_LEDGERS);
+        client.execute_upgrade();
+
+        assert!(client.pending_upgrade().is_none(), "execution must clear the pending proposal");
+        assert_eq!(
+            client.protocol_version(),
+            version_before + 1,
+            "an executed upgrade must bump the protocol version"
+        );
     }
 }

@@ -18,6 +18,7 @@ use soroban_sdk::{
     contract, contractclient, contractimpl, Address, Bytes, BytesN, Env, String, Symbol, Vec,
 };
 use storage::FactoryStorage;
+pub use storage::PendingUpgrade;
 
 /// Maximum protocol-wide swap fee, in basis points (0.30%).
 ///
@@ -792,7 +793,36 @@ impl Factory {
         storage::get_factory_storage(&env).map(|s| s.paused).unwrap_or(false)
     }
 
+    /// Returns the pending upgrade proposal, or `None` when no upgrade is
+    /// queued (issue #344).
+    ///
+    /// This is the human-readable inspection path for the timelock: it exposes
+    /// the proposed `new_wasm_hash` and the `proposed_at_ledger` it was
+    /// proposed at, so anyone can verify what code is queued and compute
+    /// `proposed_at_ledger + upgrade_delay_ledgers()` to learn the earliest
+    /// ledger `execute_upgrade` will succeed. Cleared by `execute_upgrade`
+    /// and by `cancel_upgrade`.
+    pub fn pending_upgrade(env: Env) -> Option<PendingUpgrade> {
+        storage::get_pending_upgrade(&env)
+    }
+
+    /// Returns the minimum number of ledgers that must pass between
+    /// `propose_upgrade` and `execute_upgrade` (issue #344).
+    ///
+    /// A read-only mirror of [`upgrade::UPGRADE_DELAY_LEDGERS`] (72 h at a
+    /// ~5 s ledger close time), so tooling does not have to hard-code the
+    /// delay assumption. `execute_upgrade` reverts with
+    /// `UpgradeTimelockNotExpired` before this many ledgers have elapsed.
+    pub fn upgrade_delay_ledgers(_env: Env) -> u32 {
+        upgrade::UPGRADE_DELAY_LEDGERS
+    }
+
     /// Proposes a WASM upgrade. Gated by multisig (strict majority, `> n/2`).
+    ///
+    /// The proposal starts a [`upgrade::UPGRADE_DELAY_LEDGERS`]-ledger
+    /// timelock; it only becomes executable after that delay, and is
+    /// inspectable in the meantime via [`Factory::pending_upgrade`]
+    /// (issue #344).
     pub fn propose_upgrade(
         env: Env,
         signers: Vec<Address>,

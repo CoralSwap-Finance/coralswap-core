@@ -560,3 +560,139 @@ fn test_deposit_lp_rejects_invalid_input() {
     // The pair itself can never be a depositor: that would re-attribute the seed.
     assert_eq!(pair.try_deposit_lp(&pair.address, &1), Err(Ok(PairError::InvalidInput)));
 }
+
+// ── Issue #342: single-sided burn dust — quantified, documented, bounded ──────
+//
+// `burn_single_side` floors both proportional shares and truncates the swap
+// leg that converts the unwanted share into the exit token. When that leg
+// would pay out less than one stroop of the exit token it pays `0`, and the
+// user's whole proportional claim in the unwanted token stays in the pool as
+// an unassignable remainder. These tests pin down exactly how much that is,
+// across reserve ratios and burn sizes, and prove the retained remainder is
+// deferred rather than destroyed (the documented "acceptable dust" decision,
+// see the `burn_single_side` doc comment).
+
+/// Headline dust case (issue #342): an exit into the small side of an
+/// extremely imbalanced pool where the user's preferred share is a single
+/// stroop, so the conversion of the unwanted claim truncates to zero.
+///
+/// The retained remainder is quantified exactly (`share_b` stroops of the
+/// unwanted token), shown to be worth `0` stroops of the exit token, and shown
+/// to be fully paid out by the next proportional burn — no value is lost.
+#[test]
+fn test_burn_single_side_retains_dust_when_claim_is_below_one_unit() {
+    let reserve_a = 1_000_000i128; // exit side (small)
+    let reserve_b = 1_000_000_000_000i128; // untouched side (huge)
+    let (_env, pair_client, token_a, token_b, lp_client, user, token_a_id, _token_b_id) =
+        setup_pair(reserve_a, reserve_b);
+
+    let lp_amount = 1_000i128;
+    let supply_before = lp_client.total_supply();
+    let burnable = supply_before - MINIMUM_LIQUIDITY;
+
+    let share_a = lp_amount * reserve_a / burnable; // == 1 stroop
+    let share_b = lp_amount * reserve_b / burnable; // the claim in the unwanted token
+    assert_eq!(share_a, 1, "test setup: the exit share must be a single stroop");
+    assert_eq!(share_b, 1_000_001, "test setup: quantified claim in the unwanted token");
+
+    let out = pair_client.burn_single_side(&user, &lp_amount, &token_a_id, &1i128);
+
+    let (reserve_a_after, reserve_b_after, _) = pair_client.get_reserves();
+
+    // The conversion of the unwanted claim rounds below one unit → the user is
+    // paid only the preferred share and the entire claim stays in the pool.
+    assert_eq!(out, share_a, "swap leg must truncate to 0; payout is the preferred share only");
+    assert_eq!(token_a.balance(&user), out);
+    assert_eq!(
+        reserve_b_after, reserve_b,
+        "unwanted reserve untouched: the full {}-stroop claim is retained as dust",
+        share_b
+    );
+    assert_eq!(reserve_a - reserve_a_after, out, "exit side pays exactly the payout");
+    assert_eq!(lp_client.total_supply(), supply_before - lp_amount, "LP burned in full");
+
+    // Dust quantification: the retained remainder is worth zero stroops of the
+    // token the user was exiting into — it could not have been credited as a
+    // whole unit without a rounding rule.
+    let dust = reserve_b_after - (reserve_b - share_b);
+    assert_eq!(dust, share_b, "dust == the retained proportional claim");
+    assert_eq!(
+        get_amount_out(dust, reserve_b_after, reserve_a_after, 30),
+        0,
+        "dust must be worth 0 stroops of the exit token (sub-unit)"
+    );
+
+    // Documented decision: the dust is deferred, not destroyed. The next
+    // proportional exit of the remaining LP redeems the whole untouched
+    // reserve, dust included — the holder ends up with 100% of both reserves.
+    lp_client.transfer(&user, &pair_client.address, &lp_client.balance(&user));
+    let (amount_a, amount_b) = pair_client.burn(&user);
+    assert_eq!(amount_a, reserve_a - 1, "final burn redeems the untouched exit-side reserve");
+    assert_eq!(amount_b, reserve_b, "final burn redeems the whole unwanted reserve, dust included");
+    assert_eq!(token_a.balance(&user), reserve_a, "full exit side recovered across both burns");
+    assert_eq!(
+        token_b.balance(&user),
+        reserve_b,
+        "retained dust is fully reclaimable: no value is permanently lost"
+    );
+}
+
+/// Sweeps reserve ratios and burn sizes (issue #342): for every configuration
+/// the payout is exactly `share_preferred + quoted_conversion(share_unwanted)`,
+/// the unwanted reserve never decreases, and any dust retained is bounded by a
+/// value of zero stroops of the exit token.
+#[test]
+fn test_burn_single_side_dust_is_quantified_across_ratios_and_amounts() {
+    // (reserve_a, reserve_b, lp_amount) — the exit side is always token_a.
+    let cases: [(i128, i128, i128); 6] = [
+        (1_000_000, 1_000_000_000_000, 1_000), // 1 : 1e6, minimal burn → dust
+        (1_000_000, 1_000_000_000_000, 5_000), // 1 : 1e6, larger burn → paid
+        (1_000_000, 1_000_000, 10_000),        // 1 : 1
+        (1_000_000, 2_000_000, 5_000),         // 1 : 2
+        (2_000_000, 1_000_000, 5_000),         // 2 : 1
+        (4_000_000_000_000, 1_000_000, 3_000), // 4e6 : 1 (inverse extreme)
+    ];
+
+    let mut dust_cases = 0u32;
+
+    for (reserve_a, reserve_b, lp_amount) in cases {
+        let (_env, pair_client, token_a, _token_b, lp_client, user, token_a_id, _b_id) =
+            setup_pair(reserve_a, reserve_b);
+
+        let supply_before = lp_client.total_supply();
+        let burnable = supply_before - MINIMUM_LIQUIDITY;
+        let share_a = lp_amount * reserve_a / burnable;
+        let share_b = lp_amount * reserve_b / burnable;
+        assert!(share_a > 0 && share_b > 0, "both proportional shares must be non-zero");
+
+        let out = pair_client.burn_single_side(&user, &lp_amount, &token_a_id, &1i128);
+
+        let (reserve_a_after, reserve_b_after, _) = pair_client.get_reserves();
+        let swap_out = get_amount_out(share_b, reserve_b - share_b, reserve_a - share_a, 30);
+
+        // 1. Payout = preferred share + the quoted conversion of the unwanted
+        //    claim, never a stroop more: nothing is minted out of thin air.
+        assert_eq!(out, share_a + swap_out, "payout must be share_preferred + swap_out");
+        assert_eq!(token_a.balance(&user), out, "user receives exactly the payout");
+
+        // 2. The unwanted side never decreases: the burned claim either leaves
+        //    through the swap leg (paid in the exit token) or is retained whole.
+        assert_eq!(reserve_b_after, reserve_b, "unwanted reserve must be untouched");
+        assert_eq!(reserve_a - reserve_a_after, out, "exit side pays exactly the payout");
+        assert_eq!(lp_client.total_supply(), supply_before - lp_amount);
+
+        if swap_out == 0 {
+            // 3. Dust: the retained remainder is exactly `share_b`, and its
+            //    value in exit-token stroops is zero — sub-unit by construction.
+            dust_cases += 1;
+            assert!(share_b > 0, "dust exists only when there is a claim to retain");
+            assert_eq!(
+                get_amount_out(share_b, reserve_b_after, reserve_a_after, 30),
+                0,
+                "retained dust must be convertible into 0 stroops of the exit token"
+            );
+        }
+    }
+
+    assert!(dust_cases >= 1, "the sweep must exercise at least one sub-unit dust case");
+}

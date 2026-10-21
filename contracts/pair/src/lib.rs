@@ -700,6 +700,47 @@ impl Pair {
     // Burn single-side
     // ─────────────────────────────────────────
 
+    /// Burns `lp_amount` LP from `to` and pays out the whole exit value in a
+    /// single token (`preferred_token`), subject to `min_amount_out`.
+    ///
+    /// The LP is redeemed for its proportional share of both reserves; the
+    /// share of the *unwanted* token is swapped into the preferred token
+    /// through the pool's regular quote math, so `total_out = share_preferred
+    /// + swap_out`.
+    ///
+    /// # Dust policy (issue #342): retained, sub-unit, and documented
+    ///
+    /// Both `share_preferred` and `share_unwanted` are floored to whole
+    /// stroops, and the swap leg on the unwanted share truncates the same way
+    /// (a quote that would pay out less than one stroop of the preferred token
+    /// yields `0` — see the `DustAmount` arm below). When that happens the
+    /// user's entire proportional claim in the *unwanted* token stays in the
+    /// pool as an unassignable remainder: the reserve on the unwanted side is
+    /// left untouched while the corresponding LP is burned.
+    ///
+    /// **Decision: the dust is acceptable and is deliberately left in the
+    /// pool**, for three reasons:
+    ///
+    /// 1. It is sub-unit by construction. The remainder only occurs when the
+    ///    claim converts to *zero* stroops of the exit token, i.e. its whole
+    ///    value is worth less than one indivisible unit of what the user is
+    ///    taking. There is no integer amount to credit: paying it out would
+    ///    require inventing a fractional-stroop or rounding rule that itself
+    ///    steals a stroop from one side.
+    /// 2. It is not burned or locked away: it stays in the reserves and is
+    ///    shared pro-rata by every remaining LP (including the `MINIMUM_LIQUIDITY`
+    ///    seed) through the next `burn`/`swap`. Nobody can be singled out and
+    ///    nobody can extract it as an operation — the same quote that made it
+    ///    unrecoverable makes it unextractable.
+    /// 3. Crediting it "to the unliquidated side" would move the accounting
+    ///    out of integer stroops: the pool cannot transfer `share_unwanted`
+    ///    from the preferred side because that amount never exists as a
+    ///    balance on the side the user is exiting into.
+    ///
+    /// The bound is asserted, not assumed: `test_burn_single_side_dust_is_quantified_across_ratios_and_amounts`
+    /// sweeps reserve ratios and burn sizes, pins the retained remainder to
+    /// exactly `share_unwanted`, and proves its convertible value is `0` stroops
+    /// of the exit token whenever dust is retained.
     pub fn burn_single_side(
         env: Env,
         to: Address,
