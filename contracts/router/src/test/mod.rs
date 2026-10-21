@@ -202,6 +202,7 @@ pub trait RouterInterface {
         to: Address,
         deadline: u64,
         deadline_ledger: Option<u32>,
+        max_price_impact_bps: Option<u32>,
     ) -> i128;
     fn swap_exact_tokens_for_tokens(
         env: Env,
@@ -211,6 +212,7 @@ pub trait RouterInterface {
         to: Address,
         deadline: u64,
         deadline_ledger: Option<u32>,
+        max_price_impact_bps: Option<u32>,
     ) -> Vec<i128>;
     fn swap_tokens_for_exact_tokens(
         env: Env,
@@ -260,6 +262,7 @@ pub trait RouterInterface {
 mod add_liquidity_boundary;
 mod deadline;
 mod helpers_test;
+mod price_impact;
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -456,6 +459,7 @@ fn test_swap_multi_hop_expired_deadline() {
             &Address::generate(&env),
             &1, // deadline in the past (ledger timestamp is 2000)
             &None,
+            &None,
         );
     }));
     assert!(result.is_err(), "expired deadline must fail");
@@ -476,6 +480,7 @@ fn test_swap_multi_hop_zero_amount() {
             &1,
             &Address::generate(&env),
             &u64::MAX,
+            &None,
             &None,
         );
     }));
@@ -498,6 +503,7 @@ fn test_swap_multi_hop_invalid_path_too_short() {
             &Address::generate(&env),
             &u64::MAX,
             &None,
+            &None,
         );
     }));
     assert!(result.is_err(), "too-short path must fail");
@@ -518,6 +524,7 @@ fn test_swap_multi_hop_invalid_path_too_long() {
             &1,
             &Address::generate(&env),
             &u64::MAX,
+            &None,
             &None,
         );
     }));
@@ -964,7 +971,7 @@ fn test_hop_check_validates_is_pair() {
 
     let user = Address::generate(&env);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        router.swap_exact_tokens_multi_hop(&path, &1000, &1, &user, &u64::MAX, &None);
+        router.swap_exact_tokens_multi_hop(&path, &1000, &1, &user, &u64::MAX, &None, &None);
     }));
     assert!(result.is_err(), "hop check must fail when is_pair is false");
 
@@ -998,6 +1005,7 @@ fn test_multi_hop_rejects_forged_registered_pair() {
             &1,
             &Address::generate(&env),
             &u64::MAX,
+            &None,
             &None,
         );
     }));
@@ -1036,8 +1044,15 @@ fn test_mid_path_price_crash_reverts() {
     let min_out = 9_000; // Global minimum output
 
     // First, verify normal swap succeeds
-    let out =
-        router.swap_exact_tokens_multi_hop(&path, &amount_in, &min_out, &user, &u64::MAX, &None);
+    let out = router.swap_exact_tokens_multi_hop(
+        &path,
+        &amount_in,
+        &min_out,
+        &user,
+        &u64::MAX,
+        &None,
+        &None,
+    );
     assert!(out >= min_out, "normal swap should meet minimum");
 
     // Now simulate mid-path price crash by draining the hub token reserves
@@ -1051,7 +1066,15 @@ fn test_mid_path_price_crash_reverts() {
     // a terrible deal on the intermediate transfer.
     // With end-to-end protection, this should revert due to first hop failing its minimum.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        router.swap_exact_tokens_multi_hop(&path, &amount_in, &min_out, &user, &u64::MAX, &None);
+        router.swap_exact_tokens_multi_hop(
+            &path,
+            &amount_in,
+            &min_out,
+            &user,
+            &u64::MAX,
+            &None,
+            &None,
+        );
     }));
     assert!(result.is_err(), "mid-path price crash must revert (InsufficientOutputAmount)");
 }
@@ -1082,6 +1105,7 @@ fn test_multi_hop_with_zero_min_out_succeeds() {
     // MockPair::swap moves no tokens, so fund the router with the hub token a
     // real first-hop pair would send it to forward.
     soroban_sdk::token::StellarAssetClient::new(&env, &hub).mint(&router_id, &(10_000));
-    let out = router.swap_exact_tokens_multi_hop(&path, &10_000, &0, &user, &u64::MAX, &None);
+    let out =
+        router.swap_exact_tokens_multi_hop(&path, &10_000, &0, &user, &u64::MAX, &None, &None);
     assert!(out > 0, "a zero minimum must still execute the swap");
 }

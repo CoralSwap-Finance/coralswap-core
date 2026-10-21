@@ -28,4 +28,8 @@ pub enum RouterError {
     InvalidCommitConfig = 317,
     /// Token ordering doesn't match pair's canonical order (issue #357).
     InvalidTokenOrder = 318,
+    /// Exact-in swap moves the price past the caller's cap (issue #345).
+    PriceImpactTooHigh = 319,
+    /// Price-impact cap above 10_000 bps (100%) (issue #345).
+    InvalidPriceImpactCap = 320,
 }

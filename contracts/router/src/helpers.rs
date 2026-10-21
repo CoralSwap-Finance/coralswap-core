@@ -1,5 +1,5 @@
 use crate::errors::RouterError;
-use coralswap_shared::{quote_input_amount, quote_output_amount, QuoteError};
+use coralswap_shared::{quote_input_amount, quote_output_amount, QuoteError, BPS_DENOMINATOR};
 use soroban_sdk::{contractclient, Address, Env, Vec};
 
 #[contractclient(name = "FactoryClient")]
@@ -278,4 +278,52 @@ pub fn get_path_minimums(
         };
     }
     Ok(min_amounts)
+}
+
+/// Price impact of an exact-in swap along `path`, in basis points (issue #345).
+///
+/// Compares `amount_out` (the realized quote) against what `amount_in` would
+/// fetch at every hop's current mid price, net of that hop's fee:
+///
+/// ideal = amount_in * Π (1 - fee_i) * reserve_out_i / reserve_in_i
+/// impact_bps = (ideal - amount_out) * 10_000 / ideal
+///
+/// Fees are excluded so the figure only measures how far the trade moves the
+/// curve; a tiny trade reports ~0 bps whatever the fee tier. Rounding floors
+/// at each step, which can understate impact by at most a fraction of a bp.
+pub fn get_path_price_impact_bps(
+    env: &Env,
+    factory: &Address,
+    path: &Vec<Address>,
+    amount_in: i128,
+    amount_out: i128,
+) -> Result<u32, RouterError> {
+    if path.len() < 2 {
+        return Err(RouterError::InvalidPath);
+    }
+    let mut ideal = amount_in;
+    for i in 0..path.len() - 1 {
+        let pair =
+            get_pair_address(env, factory, &path.get(i).unwrap(), &path.get(i + 1).unwrap())?;
+        let (reserve_in, reserve_out, fee_bps) = get_pair_reserves_and_fee(
+            env,
+            &pair,
+            &path.get(i).unwrap(),
+            &path.get(i + 1).unwrap(),
+        )?;
+        let net_in = ideal
+            .checked_mul(BPS_DENOMINATOR - fee_bps as i128)
+            .ok_or(RouterError::InsufficientLiquidity)?
+            / BPS_DENOMINATOR;
+        ideal =
+            net_in.checked_mul(reserve_out).ok_or(RouterError::InsufficientLiquidity)? / reserve_in;
+    }
+    if ideal <= 0 || amount_out >= ideal {
+        return Ok(0);
+    }
+    let impact = (ideal - amount_out)
+        .checked_mul(BPS_DENOMINATOR)
+        .ok_or(RouterError::InsufficientLiquidity)?
+        / ideal;
+    Ok(impact as u32)
 }

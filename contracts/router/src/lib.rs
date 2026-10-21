@@ -13,8 +13,8 @@ mod test;
 use errors::RouterError;
 use helpers::{
     compute_optimal_amounts, get_amount_in, get_amount_out, get_pair_address,
-    get_pair_reserves_and_fee, get_path_amounts_out, get_path_minimums, sort_tokens, FactoryClient,
-    PairClient,
+    get_pair_reserves_and_fee, get_path_amounts_out, get_path_minimums, get_path_price_impact_bps,
+    sort_tokens, FactoryClient, PairClient,
 };
 use soroban_sdk::{
     contract, contractimpl, token::TokenClient, xdr::ToXdr, Address, Bytes, BytesN, Env, Vec,
@@ -264,6 +264,13 @@ impl Router {
     /// the input token held by the router — e.g. a few stroops stranded by a
     /// previously reverted path, or left by future forwarding changes — is
     /// swept back to `to`, so the router never retains input tokens.
+    ///
+    /// Price-impact cap (issue #345): `max_price_impact_bps` bounds how far the
+    /// swap may move the market, measured against the path's current mid
+    /// price net of fees (see `get_path_price_impact_bps`). It is checked on
+    /// the realized quote before any token moves and reverts with
+    /// `PriceImpactTooHigh` when exceeded. `None` disables the cap; a value
+    /// above 10_000 bps is rejected with `InvalidPriceImpactCap`.
     pub fn swap_exact_tokens_multi_hop(
         env: Env,
         path: Vec<Address>,
@@ -272,10 +279,16 @@ impl Router {
         to: Address,
         deadline: u64,
         deadline_ledger: Option<u32>,
+        max_price_impact_bps: Option<u32>,
     ) -> Result<i128, RouterError> {
         check_deadline(&env, deadline, deadline_ledger)?;
         if amount_in <= 0 {
             return Err(RouterError::ZeroAmount);
+        }
+        if let Some(cap) = max_price_impact_bps {
+            if cap as i128 > coralswap_shared::BPS_DENOMINATOR {
+                return Err(RouterError::InvalidPriceImpactCap);
+            }
         }
         let hops = path.len() - 1;
         if !(1..=3).contains(&hops) {
@@ -300,6 +313,14 @@ impl Router {
             let min_amount = min_amounts.get(i).unwrap();
             if actual_amount < min_amount {
                 return Err(RouterError::InsufficientOutputAmount);
+            }
+        }
+
+        // Price-impact cap (issue #345), enforced before anything is forwarded.
+        if let Some(cap) = max_price_impact_bps {
+            let impact = get_path_price_impact_bps(&env, &factory, &path, amount_in, final_out)?;
+            if impact > cap {
+                return Err(RouterError::PriceImpactTooHigh);
             }
         }
 
@@ -349,6 +370,9 @@ impl Router {
 
     /// Swaps an exact amount of input tokens for a minimum amount of output
     /// tokens along a given path. Supports 1, 2, or 3 hops.
+    ///
+    /// `max_price_impact_bps` is the optional price-impact cap (issue #345);
+    /// see `swap_exact_tokens_multi_hop`.
     pub fn swap_exact_tokens_for_tokens(
         env: Env,
         amount_in: i128,
@@ -357,6 +381,7 @@ impl Router {
         to: Address,
         deadline: u64,
         deadline_ledger: Option<u32>,
+        max_price_impact_bps: Option<u32>,
     ) -> Result<Vec<i128>, RouterError> {
         let final_out = Self::swap_exact_tokens_multi_hop(
             env.clone(),
@@ -366,6 +391,7 @@ impl Router {
             to,
             deadline,
             deadline_ledger,
+            max_price_impact_bps,
         )?;
         let mut amounts = Vec::new(&env);
         amounts.push_back(final_out);
@@ -715,7 +741,16 @@ impl Router {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
 
         let (path, _) = Self::get_best_path(env.clone(), token_in, token_out, amount_in)?;
-        Self::swap_exact_tokens_multi_hop(env, path, amount_in, min_out, sender, u64::MAX, None)
+        Self::swap_exact_tokens_multi_hop(
+            env,
+            path,
+            amount_in,
+            min_out,
+            sender,
+            u64::MAX,
+            None,
+            None,
+        )
     }
 
     /// Removes liquidity from a token pair.
