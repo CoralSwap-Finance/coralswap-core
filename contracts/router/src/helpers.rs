@@ -1,6 +1,33 @@
 use crate::errors::RouterError;
 use coralswap_shared::{quote_input_amount, quote_output_amount, QuoteError};
-use soroban_sdk::{contractclient, Address, Env, Vec};
+use soroban_sdk::{contractclient, contracttype, Address, Env, Vec};
+
+/// Storage key for the per-actor last-swap ledger tracking used to mitigate
+/// same-ledger sandwich attacks.
+#[contracttype]
+#[derive(Clone)]
+pub enum SwapGuardKey {
+    LastSwapLedger(Address),
+}
+
+/// Rejects a swap if the same actor already swapped in the current ledger.
+///
+/// Soroban exposes the current ledger sequence via `env.ledger().sequence()`,
+/// so we can persist the last ledger in which an actor swapped and refuse a
+/// second swap from that actor within the same ledger. This blocks the classic
+/// front-run/back-run pattern where an attacker submits both legs in the same
+/// ledger as the victim.
+pub fn check_and_record_swap_ledger(env: &Env, actor: &Address) -> Result<(), RouterError> {
+    let current_ledger = env.ledger().sequence();
+    let key = SwapGuardKey::LastSwapLedger(actor.clone());
+    if let Some(last_ledger) = env.storage().persistent().get::<_, u32>(&key) {
+        if last_ledger == current_ledger {
+            return Err(RouterError::SlippageExceeded);
+        }
+    }
+    env.storage().persistent().set(&key, &current_ledger);
+    Ok(())
+}
 
 #[contractclient(name = "FactoryClient")]
 #[allow(dead_code)]
@@ -201,6 +228,22 @@ pub fn get_pair_reserves_and_fee(
     } else {
         Ok((reserve_b, reserve_a, fee_bps))
     }
+}
+
+/// Strictly enforces the caller's `amount_out_minimum` against the quoted
+/// output. A zero minimum is rejected so that slippage protection cannot be
+/// silently disabled, and any shortfall reverts with `SlippageExceeded`.
+pub fn enforce_amount_out_minimum(
+    amount_out: i128,
+    amount_out_minimum: i128,
+) -> Result<(), RouterError> {
+    if amount_out_minimum <= 0 {
+        return Err(RouterError::SlippageExceeded);
+    }
+    if amount_out < amount_out_minimum {
+        return Err(RouterError::SlippageExceeded);
+    }
+    Ok(())
 }
 
 /// Computes output amounts for every hop along a multi-hop path.

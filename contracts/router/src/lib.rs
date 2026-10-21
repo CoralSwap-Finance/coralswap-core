@@ -85,6 +85,42 @@ fn check_deadline(
     Ok(())
 }
 
+/// Storage key for the per-actor same-ledger swap guard.
+///
+/// Tracks the last ledger sequence in which `actor` executed a swap through
+/// this router. A second swap from the same actor within the same ledger is
+/// rejected, which mitigates same-ledger sandwich attacks where a searcher
+/// front-runs and back-runs a victim inside a single Soroban ledger.
+fn same_ledger_key(env: &Env, actor: &Address) -> soroban_sdk::Val {
+    let mut data = Bytes::new(env);
+    data.append(&Bytes::from_slice(env, b"last_swap_ledger"));
+    data.append(&actor.to_xdr(env));
+    env.crypto().sha256(&data).to_bytes()
+}
+
+/// Returns the last ledger sequence in which `actor` swapped, if any.
+fn get_last_swap_ledger(env: &Env, actor: &Address) -> Option<u32> {
+    env.storage().persistent().get(&same_ledger_key(env, actor))
+}
+
+/// Records `actor` as having swapped in the current ledger and rejects a
+/// second swap by the same actor within the same ledger.
+fn enforce_same_ledger_guard(env: &Env, actor: &Address) -> Result<(), RouterError> {
+    let now = env.ledger().sequence();
+    if let Some(last) = get_last_swap_ledger(env, actor) {
+        if last == now {
+            return Err(RouterError::SameLedgerSwap);
+        }
+    }
+    env.storage().persistent().set(&same_ledger_key(env, actor), &now);
+    env.storage().persistent().extend_ttl(
+        &same_ledger_key(env, actor),
+        TTL_THRESHOLD,
+        TTL_EXTEND_TO,
+    );
+    Ok(())
+}
+
 #[contract]
 pub struct Router;
 
@@ -277,6 +313,7 @@ impl Router {
         if amount_in <= 0 {
             return Err(RouterError::ZeroAmount);
         }
+        enforce_same_ledger_guard(&env, &to)?;
         let hops = path.len() - 1;
         if !(1..=3).contains(&hops) {
             return Err(RouterError::InvalidPath);
@@ -387,6 +424,7 @@ impl Router {
         if amount_out <= 0 {
             return Err(RouterError::ZeroAmount);
         }
+        enforce_same_ledger_guard(&env, &to)?;
         let hops = path.len() - 1;
         if !(1..=3).contains(&hops) {
             return Err(RouterError::InvalidPath);
@@ -687,6 +725,7 @@ impl Router {
         if now <= entry.ledger {
             return Err(RouterError::CommitRevealTooEarly);
         }
+        enforce_same_ledger_guard(&env, &sender)?;
         // Expiry (issue 389): commits older than ledger + expiry are dead.
         // Free the slot so the global bound does not leak.
         if now > entry.ledger.saturating_add(config.expiry_ledgers) {

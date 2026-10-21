@@ -22,10 +22,15 @@ pub enum RouterError {
     DustAmount = 314,
     /// Commit expired past its reveal window (issue 389).
     CommitExpired = 315,
-    /// Too many live commits (issue 389).
+    /// Too2 many live commits (issue 389).
     TooManyCommits = 316,
     /// Invalid commit-config values (issue 389).
     InvalidCommitConfig = 317,
     /// Token ordering doesn't match pair's canonical order (issue #357).
     InvalidTokenOrder = 318,
+    /// Same-ledger sandwich mitigation: an actor already swapped this
+    /// pool in the current ledger (issue #366).
+    SameLedgerSwap = 319,
+    /// Path exceeds the configured maximum length (issue #360).
+    PathTooLong = 320,
 }
