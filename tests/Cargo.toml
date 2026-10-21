@@ -13,5 +13,9 @@ path = "integration.rs"
 name = "reward_integration"
 path = "reward_integration.rs"
 
+[[test]]
+name = "limit_order_integration"
+path = "limit_order_integration.rs"
+
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
