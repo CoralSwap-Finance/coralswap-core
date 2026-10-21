@@ -70,6 +70,7 @@ mod integration_tests {
             to: Address,
             deadline: u64,
             deadline_ledger: Option<u32>,
+            max_price_impact_bps: Option<u32>,
         ) -> Vec<i128>;
         fn swap_tokens_for_exact_tokens(
             env: Env,
@@ -464,7 +465,7 @@ mod integration_tests {
 
         let deadline = env.ledger().timestamp() + 100;
         let amounts = RouterClient::new(&env, &router)
-            .swap_exact_tokens_for_tokens(&amount_in, &0, &path, &user, &deadline, &None);
+            .swap_exact_tokens_for_tokens(&amount_in, &0, &path, &user, &deadline, &None, &None);
         // swap_exact_tokens_for_tokens returns only the final hop output.
         assert_eq!(amounts.len(), 1, "the wrapper returns only the final amount");
         assert!(amounts.get(0).unwrap() > 0, "final output must be positive");
@@ -532,7 +533,7 @@ mod integration_tests {
 
         let deadline = env.ledger().timestamp() + 100;
         let amounts = RouterClient::new(&env, &router)
-            .swap_exact_tokens_for_tokens(&amount_in, &0, &path, &user, &deadline, &None);
+            .swap_exact_tokens_for_tokens(&amount_in, &0, &path, &user, &deadline, &None, &None);
         // swap_exact_tokens_for_tokens returns only the final hop output.
         assert_eq!(amounts.len(), 1, "the wrapper returns only the final amount");
 
@@ -577,7 +578,7 @@ mod integration_tests {
 
         let deadline = env.ledger().timestamp() + 100;
         let amounts = RouterClient::new(&env, &router)
-            .swap_exact_tokens_for_tokens(&amount_in, &0, &path, &user, &deadline, &None);
+            .swap_exact_tokens_for_tokens(&amount_in, &0, &path, &user, &deadline, &None, &None);
 
         assert_eq!(amounts.len(), 1);
         assert_eq!(

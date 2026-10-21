@@ -54,8 +54,14 @@ fn test_ledger_deadline_expired_rejected_on_every_entry_point() {
     let stale = Some(NOW_LEDGER - 1);
     let ts = u64::MAX;
 
-    assert_eq!(code!(r.try_swap_exact_tokens_multi_hop(&path, &0, &0, &to, &ts, &stale)), EXPIRED);
-    assert_eq!(code!(r.try_swap_exact_tokens_for_tokens(&0, &0, &path, &to, &ts, &stale)), EXPIRED);
+    assert_eq!(
+        code!(r.try_swap_exact_tokens_multi_hop(&path, &0, &0, &to, &ts, &stale, &None)),
+        EXPIRED
+    );
+    assert_eq!(
+        code!(r.try_swap_exact_tokens_for_tokens(&0, &0, &path, &to, &ts, &stale, &None)),
+        EXPIRED
+    );
     assert_eq!(code!(r.try_swap_tokens_for_exact_tokens(&0, &0, &path, &to, &ts, &stale)), EXPIRED);
     assert_eq!(code!(r.try_add_liquidity(&a, &b, &0, &0, &0, &0, &to, &ts, &stale)), EXPIRED);
     assert_eq!(code!(r.try_remove_liquidity(&a, &b, &0, &0, &0, &to, &ts, &stale)), EXPIRED);
@@ -70,11 +76,11 @@ fn test_ledger_deadline_boundary_is_inclusive() {
     let ts = u64::MAX;
 
     assert_eq!(
-        code!(r.try_swap_exact_tokens_multi_hop(&path, &0, &0, &to, &ts, &now)),
+        code!(r.try_swap_exact_tokens_multi_hop(&path, &0, &0, &to, &ts, &now, &None)),
         ZERO_AMOUNT
     );
     assert_eq!(
-        code!(r.try_swap_exact_tokens_for_tokens(&0, &0, &path, &to, &ts, &now)),
+        code!(r.try_swap_exact_tokens_for_tokens(&0, &0, &path, &to, &ts, &now, &None)),
         ZERO_AMOUNT
     );
     assert_eq!(
@@ -94,7 +100,7 @@ fn test_no_ledger_deadline_keeps_previous_behaviour() {
     // Far in the future, and `None`, must behave identically: no bound.
     for none_like in [None, Some(u32::MAX)] {
         assert_eq!(
-            code!(r.try_swap_exact_tokens_multi_hop(&path, &0, &0, &to, &ts, &none_like)),
+            code!(r.try_swap_exact_tokens_multi_hop(&path, &0, &0, &to, &ts, &none_like, &None)),
             ZERO_AMOUNT
         );
         assert_eq!(
@@ -114,14 +120,14 @@ fn test_ledger_deadline_tracks_ledger_advance() {
     let limit = Some(NOW_LEDGER + 5);
 
     assert_eq!(
-        code!(r.try_swap_exact_tokens_multi_hop(&path, &0, &0, &to, &u64::MAX, &limit)),
+        code!(r.try_swap_exact_tokens_multi_hop(&path, &0, &0, &to, &u64::MAX, &limit, &None)),
         ZERO_AMOUNT
     );
 
     // Six ledgers later the same call is stale.
     env.ledger().with_mut(|l| l.sequence_number = NOW_LEDGER + 6);
     assert_eq!(
-        code!(r.try_swap_exact_tokens_multi_hop(&path, &0, &0, &to, &u64::MAX, &limit)),
+        code!(r.try_swap_exact_tokens_multi_hop(&path, &0, &0, &to, &u64::MAX, &limit, &None)),
         EXPIRED
     );
 }
@@ -132,11 +138,19 @@ fn test_timestamp_and_ledger_deadlines_are_independent() {
     let past_ts = env.ledger().timestamp().saturating_sub(1);
     // Stale timestamp is still rejected even with a generous ledger bound.
     assert_eq!(
-        code!(r.try_swap_exact_tokens_multi_hop(&path, &0, &0, &to, &past_ts, &Some(u32::MAX))),
+        code!(r.try_swap_exact_tokens_multi_hop(
+            &path,
+            &0,
+            &0,
+            &to,
+            &past_ts,
+            &Some(u32::MAX),
+            &None
+        )),
         EXPIRED
     );
     assert_eq!(
-        code!(r.try_swap_exact_tokens_multi_hop(&path, &0, &0, &to, &past_ts, &None)),
+        code!(r.try_swap_exact_tokens_multi_hop(&path, &0, &0, &to, &past_ts, &None, &None)),
         EXPIRED
     );
 }
