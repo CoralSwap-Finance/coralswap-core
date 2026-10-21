@@ -1293,16 +1293,14 @@ impl Pair {
     /// Existing pools remain unaffected until this function is explicitly called.
     /// Default behavior uses `DEFAULT_STALE_LEDGER_THRESHOLD` (100 ledgers).
     pub fn set_stale_threshold(env: Env, new_threshold: u32) -> Result<(), PairError> {
-        // Authorize against the factory's admin signers via cross-contract call.
-        // We retrieve the factory address from pair state, then delegate auth check
-        // to the factory (which implements governance::verify_multisig internally).
         let pair = get_pair_state(&env).ok_or(PairError::NotInitialized)?;
         let mut fee_state = get_fee_state(&env).ok_or(PairError::NotInitialized)?;
 
-        // Require authorization from the factory.
-        // The factory contract is responsible for managing its signers and
-        // enforcing multisig checks. Here we simply require auth from the factory address.
-        pair.factory.require_auth();
+        // Delegate authorization to the factory's governance module: the factory
+        // runs `governance::verify_multisig`, which requires a valid signature
+        // set from the factory's registered multisig signers. A single signer
+        // (or any non-signer) cannot satisfy it.
+        FactoryClient::new(&env, &pair.factory).verify_multisig();
 
         // Validate the new threshold is in the safe range [1, 100_000].
         if new_threshold == 0 || new_threshold > 100_000 {
@@ -1320,6 +1318,16 @@ impl Pair {
         Ok(())
     }
 
+    /// Returns the current EMA staleness decay threshold (in ledgers).
+    ///
+    /// This is the value used by the dynamic fee engine to decide when to begin
+    /// decaying the volatility accumulator for an idle pool. Exposed so
+    /// indexers and clients can observe the governed parameter.
+    pub fn get_stale_threshold(env: Env) -> Result<u32, PairError> {
+        let fee_state = get_fee_state(&env).ok_or(PairError::NotInitialized)?;
+        Ok(fee_state.stale_threshold)
+    }
+
     /// Pauses or unpauses this pair's LP token (issue #313).
     ///
     /// # Why this entry point exists
@@ -1332,10 +1340,9 @@ impl Pair {
     /// only place the flag can be honoured.
     ///
     /// # Authorization
-    /// The factory address (same channel as `set_stale_threshold`). Note this is
-    /// the pair's own factory-auth gate, not the factory's multisig: callers
-    /// should reach it through a factory-governed flow, and the factory is the
-    /// address that signs.
+    /// The factory address. Note this is the pair's own factory-auth gate, not
+    /// the factory's multisig: callers should reach it through a factory-governed
+    /// flow, and the factory is the address that signs.
     ///
     /// # Effect
     /// While paused, `mint`, `mint_with_one_token`, `burn` and
@@ -1399,10 +1406,10 @@ impl Pair {
     /// the pair-side half of that relay.
     ///
     /// # Authorization
-    /// The factory address (same channel as `set_stale_threshold` and
-    /// `set_lp_token_paused`). The factory is the direct invoker when it calls
-    /// through `Factory::freeze_pair`, so invoker-contract authorization
-    /// satisfies the guard without an off-chain signature.
+    /// The factory address (same channel as `set_lp_token_paused`). The factory
+    /// is the direct invoker when it calls through `Factory::freeze_pair`, so
+    /// invoker-contract authorization satisfies the guard without an off-chain
+    /// signature.
     ///
     /// # Effect
     /// While frozen, `swap`, `mint`, `mint_with_one_token`, `burn_single_side`

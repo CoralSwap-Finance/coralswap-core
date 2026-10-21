@@ -1,5 +1,5 @@
 use crate::errors::FactoryError;
-use soroban_sdk::{Address, Env, Vec};
+use soroban_env::{Address, Env, Vec};
 
 /// Minimum number of distinct registered signers needed to act on a governance
 /// function when `signer_count` signers are registered.
