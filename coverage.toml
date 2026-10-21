@@ -36,6 +36,7 @@ exclude = [
 # lp-token was re-baselined when the gate landed on 2026-10-07: LP-token code
 # merged since the first measurement brought it to 77.03%. Raise the floor as
 # that code gains tests.
+coralswap-concentrated-pair = 90.0
 coralswap-factory = 91.0
 coralswap-lp-token = 76.0
 coralswap-malicious-flash-receiver = 99.0
