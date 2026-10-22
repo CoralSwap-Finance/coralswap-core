@@ -22,6 +22,9 @@ use proptest::prelude::*;
 // (contracts/pair/src/math), not a hand-rolled reimplementation. See issue #276.
 use coralswap_pair::math;
 
+// Adversarial decimal / reserve-shape profiles (issue #330).
+mod adversarial;
+
 // ── Constants (from the real contract math module) ───────────────────────────
 
 const MINIMUM_LIQUIDITY: i128 = math::MINIMUM_LIQUIDITY;

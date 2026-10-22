@@ -12,3 +12,6 @@ proptest = { version = "=1.11.0", optional = true }
 # Depend on the real pair contract so the fuzz suite exercises the shipped
 # AMM math (contracts/pair/src/math) instead of a hand-rolled reimplementation.
 coralswap-pair = { path = "../../contracts/pair" }
+# `K` comparisons in tests/fuzz/src/adversarial.rs are done in 256 bits so the
+# assertion itself cannot overflow at the i128 / 1e18-reserve boundaries.
+ethnum = { workspace = true }

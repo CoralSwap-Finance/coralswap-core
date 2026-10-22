@@ -60,7 +60,9 @@ pub fn sqrt(value: i128) -> i128 {
         return 0;
     }
     let mut x = value;
-    let mut y = (x + 1) / 2;
+    // `(x + 1) / 2` overflows for x == i128::MAX; this is the same seed
+    // (round up) without the intermediate overflow.
+    let mut y = x / 2 + x % 2;
     while y < x {
         x = y;
         y = (x + value / x) / 2;
