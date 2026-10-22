@@ -63,6 +63,15 @@ pub trait LpTokenInterface {
 #[contract]
 pub struct Factory;
 
+fn ensure_fee_to_setter_is_registered(
+    storage: &storage::FactoryStorage,
+) -> Result<(), FactoryError> {
+    if !storage.signers.contains(&storage.fee_to_setter) {
+        return Err(FactoryError::Unauthorized);
+    }
+    Ok(())
+}
+
 #[contractimpl]
 impl Factory {
     pub fn initialize(
@@ -82,6 +91,10 @@ impl Factory {
         let signer_count = signers.len();
         if !(1..=10).contains(&signer_count) {
             return Err(FactoryError::InvalidSignerCount);
+        }
+
+        if !signers.contains(&fee_to_setter) {
+            return Err(FactoryError::Unauthorized);
         }
 
         let factory_storage = FactoryStorage {
@@ -382,6 +395,8 @@ impl Factory {
     /// | `PairFreezeFailed`  | the pair rejected or could not be frozen        |
     pub fn freeze_pair(env: Env, signers: Vec<Address>, pair: Address) -> Result<(), FactoryError> {
         let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+        ensure_fee_to_setter_is_registered(&storage)?;
+
         let by = if signers.len() == 1 && signers.get(0) == Some(storage.fee_to_setter.clone()) {
             storage.fee_to_setter.require_auth();
             storage.fee_to_setter.clone()
@@ -504,6 +519,7 @@ impl Factory {
         let mut storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
 
         setter.require_auth();
+        ensure_fee_to_setter_is_registered(&storage)?;
 
         if setter != storage.fee_to_setter {
             return Err(FactoryError::Unauthorized);
@@ -542,8 +558,13 @@ impl Factory {
         let mut storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
 
         setter.require_auth();
+        ensure_fee_to_setter_is_registered(&storage)?;
 
         if setter != storage.fee_to_setter {
+            return Err(FactoryError::Unauthorized);
+        }
+
+        if !storage.signers.contains(&new_setter) {
             return Err(FactoryError::Unauthorized);
         }
 
@@ -589,6 +610,7 @@ impl Factory {
         let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
 
         setter.require_auth();
+        ensure_fee_to_setter_is_registered(&storage)?;
 
         if setter != storage.fee_to_setter {
             return Err(FactoryError::Unauthorized);
@@ -652,6 +674,7 @@ impl Factory {
         let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
 
         setter.require_auth();
+        ensure_fee_to_setter_is_registered(&storage)?;
 
         if setter != storage.fee_to_setter {
             return Err(FactoryError::Unauthorized);
@@ -686,6 +709,7 @@ impl Factory {
         let storage = storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
 
         setter.require_auth();
+        ensure_fee_to_setter_is_registered(&storage)?;
 
         if setter != storage.fee_to_setter {
             return Err(FactoryError::Unauthorized);
