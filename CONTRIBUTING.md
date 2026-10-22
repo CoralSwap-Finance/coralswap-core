@@ -96,6 +96,10 @@ nominal amount passed to `transfer` (see
 
 ## Testing
 
+- Follow [Test-contract symbols and WASM isolation](docs/TEST_CONTRACT_SYMBOLS.md)
+  when adding mocks, malicious receivers or callback stubs. Rust module names
+  do not namespace exported Soroban method symbols.
+
 - Unit tests go in `contracts/<name>/src/test/`
 - Integration tests go in `tests/`
 - Use `soroban_sdk::testutils` for test environments

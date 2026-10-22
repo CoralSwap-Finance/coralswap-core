@@ -373,7 +373,6 @@ name = "coralswap-mock-flash-receiver"
 version = "0.1.0"
 dependencies = [
  "coralswap-flash-receiver-interface",
- "coralswap-pair",
  "soroban-sdk",
 ]
 

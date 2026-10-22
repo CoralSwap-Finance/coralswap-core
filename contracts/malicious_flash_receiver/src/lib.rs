@@ -1,4 +1,5 @@
 #![no_std]
+#![cfg(not(target_family = "wasm"))]
 
 use coralswap_flash_receiver_interface::FlashReceiver;
 use coralswap_pair::PairClient;
@@ -17,10 +18,10 @@ pub enum ReceiverError {
 /// - `b"attack_fail"` — revert inside the callback without borrowing anything
 ///
 /// Only ever registered natively (`env.register`) in unit tests,
-/// never deployed as a real wasm contract — this crate has no `cdylib`
-/// target, so it can't collide with `MockFlashReceiver`'s exported
-/// `on_flash_loan` symbol at the wasm level even if both ended up in the
-/// same build graph.
+/// never deployed as a real wasm contract. The crate-level target gate
+/// excludes its exported implementation from WASM even if this rlib is
+/// accidentally linked into a downstream cdylib. See
+/// `docs/TEST_CONTRACT_SYMBOLS.md` for the test-double namespace convention.
 #[contract]
 pub struct MaliciousFlashReceiver;
 

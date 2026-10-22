@@ -1,0 +1,40 @@
+name: Contract Symbol Stress
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contract-symbol-stress-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract-build-stress:
+    name: Contract symbol stress build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+          targets: wasm32v1-none
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: contract-build-stress
+      - name: Test stress-build discovery and rebuild behavior
+        run: python3 -m unittest discover -s scripts -p 'test_stress_contract_builds.py'
+      - name: Relink every contract twice in randomized order
+        run: python3 scripts/stress_contract_builds.py
+      - name: Build WASM fixtures for native tests
+        run: cargo build --locked --workspace --exclude coralswap-fuzz --exclude coralswap-integration-tests --release --target wasm32v1-none
+      - name: Preserve honest and adversarial callback coverage
+        run: cargo test --locked -p coralswap-pair --lib test::flash_loan
