@@ -793,6 +793,41 @@ mod factory_tests {
         assert_eq!(client.fee_to_setter(), Some(new_setter));
     }
 
+    #[test]
+    fn test_initialize_rejects_fee_to_setter_not_in_signers() {
+        let env = Env::default();
+        let factory_address = env.register(Factory, ());
+        let client = FactoryClient::new(&env, &factory_address);
+
+        let signer_1 = Address::generate(&env);
+        let signer_2 = Address::generate(&env);
+        let fee_to_setter = Address::generate(&env);
+
+        let pair_wasm_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+        let lp_token_wasm_hash = env.deployer().upload_contract_wasm(Bytes::new(&env));
+
+        let result = client.try_initialize(
+            &Vec::from_array(&env, [signer_1, signer_2]),
+            &pair_wasm_hash,
+            &pair_wasm_hash,
+            &lp_token_wasm_hash,
+            &fee_to_setter,
+        );
+
+        assert!(result.is_err(), "fee_to_setter must be registered among the factory signers");
+    }
+
+    #[test]
+    fn test_set_fee_to_setter_rejects_address_not_in_signers() {
+        let (env, client, _, _, _, fee_to_setter, signers) = setup_env();
+        let outside = Address::generate(&env);
+
+        assert!(!signers.contains(&outside), "test address should be outside the signer set");
+        let result = client.try_set_fee_to_setter(&fee_to_setter, &outside);
+
+        assert!(result.is_err(), "changing the setter to a non-signer must be rejected");
+    }
+
     // ── Pause / Unpause auth checks (issue #86) ─────────────────────────────
 
     #[test]
