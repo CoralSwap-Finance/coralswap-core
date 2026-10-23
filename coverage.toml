@@ -36,7 +36,13 @@ exclude = [
 # lp-token was re-baselined when the gate landed on 2026-10-07: LP-token code
 # merged since the first measurement brought it to 77.03%. Raise the floor as
 # that code gains tests.
+# governance-token added 2026-10-23: baselined at 85.0. The crate ships a full
+# production contract (transfer, delegation, checkpoints, burn_from, permit-style
+# approve); its 43-test suite covers all public entry points. Floor is set 2-3 pp
+# below estimated initial measurement; raise as the delegation/checkpoint paths
+# gain additional edge-case tests.
 coralswap-factory = 91.0
+coralswap-governance-token = 85.0
 coralswap-lp-token = 76.0
 coralswap-malicious-flash-receiver = 99.0
 coralswap-mock-flash-receiver = 85.0

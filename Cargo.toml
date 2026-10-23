@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "contracts/factory",
+    "contracts/governance_token",
     "contracts/pair",
     "contracts/lp_token",
     "contracts/router",
@@ -17,6 +18,7 @@ members = [
 # unscoped `cargo build --target wasm32*` across the workspace fails on it.
 default-members = [
     "contracts/factory",
+    "contracts/governance_token",
     "contracts/pair",
     "contracts/lp_token",
     "contracts/router",
