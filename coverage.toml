@@ -36,6 +36,8 @@ exclude = [
 # lp-token was re-baselined when the gate landed on 2026-10-07: LP-token code
 # merged since the first measurement brought it to 77.03%. Raise the floor as
 # that code gains tests.
+# staking was baselined at launch (2026-10-23): all production entry points
+# are covered by unit + auth-matrix tests shipped in the same PR.
 coralswap-factory = 91.0
 coralswap-lp-token = 76.0
 coralswap-malicious-flash-receiver = 99.0
@@ -43,6 +45,7 @@ coralswap-mock-flash-receiver = 85.0
 coralswap-pair = 89.0
 coralswap-router = 61.0
 coralswap-shared = 92.0
+coralswap-staking = 90.0
 
 # Workspace members without a production-source floor. Each entry needs a
 # `reason`; the gate rejects members that are in neither table.

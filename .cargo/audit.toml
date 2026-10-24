@@ -1,0 +1,27 @@
+# cargo-audit configuration
+# Located at .cargo/audit.toml (project-root config per cargo-audit docs).
+# https://github.com/rustsec/rustsec/blob/main/cargo-audit/audit.toml.example
+#
+# Advisories listed here are transitive dependencies that cannot be resolved
+# by bumping workspace crates directly. Each entry documents why it is safe
+# to ignore and when it should be re-evaluated.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2026-0387: timing side-channels in crypto-bigint v0.5.5
+    #
+    # Dependency path:
+    #   soroban-sdk → soroban-env-host v27.0.1 → k256/elliptic-curve → crypto-bigint v0.5.5
+    #
+    # Resolution: requires soroban-sdk to ship a new soroban-env-host that
+    # depends on crypto-bigint >= 0.7.6. No direct workspace upgrade is possible.
+    #
+    # Risk: the affected constant-time operations (Montgomery mul, subtraction,
+    # inversion) live inside k256's ECDSA implementation which is used only by
+    # the Soroban host for signature verification. CoralSwap's on-chain WASM
+    # never calls into elliptic-curve arithmetic directly.
+    #
+    # Re-evaluate: when soroban-sdk releases a version that bumps soroban-env-host
+    # past this advisory, remove this entry and run `cargo audit` clean.
+    "RUSTSEC-2026-0387",
+]

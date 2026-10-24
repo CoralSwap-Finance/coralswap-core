@@ -13,8 +13,16 @@ unmaintained = "workspace"
 yanked = "deny"
 # Ignore specific advisories
 ignore = [
-    # Add advisory IDs to ignore here if needed
-    # "RUSTSEC-0000-0000",
+    # RUSTSEC-2026-0387: timing side-channels in crypto-bigint v0.5.5.
+    # This is a transitive dependency pulled in by soroban-env-host v27.0.1
+    # via k256/elliptic-curve; it cannot be resolved by bumping our own
+    # dependencies. The fix (crypto-bigint >= 0.7.6) must come from a future
+    # soroban-sdk release. CoralSwap contracts do not call any of the affected
+    # operations (subtraction, Montgomery mul, inversion) directly — the
+    # exposure is limited to the host's ed25519/k256 signature verification
+    # which is not part of our production code paths.
+    # Re-evaluate when soroban-sdk bumps soroban-env-host past this advisory.
+    "RUSTSEC-2026-0387",
 ]
 
 [licenses]
