@@ -32,13 +32,30 @@ mod errors;
 mod storage;
 
 use errors::GovTokenError;
-use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
-use storage::{AllowanceEntry, Checkpoint, GovTokenKey, TokenMetadata};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
+use storage::{
+    AllowanceEntry, Checkpoint, ExecutionPayload, GovTokenKey, GovernanceParams, Proposal,
+    ProposalState, TokenMetadata, VoteReceipt,
+};
 
 // Shared persistent-entry TTL policy.  See coralswap-shared for cadence math.
 use coralswap_shared::{
     LP_PERSISTENT_EXTEND_TO as TTL_EXTEND_TO, LP_PERSISTENT_THRESHOLD as TTL_THRESHOLD,
 };
+
+// ─────────────────────────────────────────────────────────────────────────
+// Default governance parameters (issue #161).
+//
+// Used by `get_governance_params` when no admin configuration has been stored,
+// so the contract is usable immediately after `initialize`. The admin can
+// override these at any time via `set_governance_params`.
+// ─────────────────────────────────────────────────────────────────────────
+/// Default voting delay: 1 ledger between proposal creation and voting start.
+const DEFAULT_VOTING_DELAY: u32 = 1;
+/// Default voting period: 10 ledgers during which voting is open.
+const DEFAULT_VOTING_PERIOD: u32 = 10;
+/// Default minimum voting power required to create a proposal.
+const DEFAULT_PROPOSAL_THRESHOLD: i128 = 1_000;
 
 #[contract]
 pub struct GovernanceToken;
@@ -359,6 +376,181 @@ impl GovernanceToken {
             env.storage().persistent().get(&key).unwrap_or(Vec::new(&env));
         Ok(Self::lookup_checkpoint(&checkpoints, ledger))
     }
+    // ── Governance proposals (issue #161) ──────────────────────────────
+    //
+    // A token-weighted governor layered on the checkpoint voting-power system
+    // above. Anyone holding at least the proposal threshold may create a
+    // proposal; holders cast votes weighted by the voting power they held at
+    // the proposal's snapshot ledger, so power acquired after a proposal is
+    // created cannot swing the vote.
+    //
+    // State machine (current = `env.ledger().sequence()`):
+    //   Pending   ─ current < start_ledger
+    //   Active    ─ start_ledger <= current <= end_ledger
+    //   Defeated  ─ current > end_ledger and for_votes <= against_votes
+    //   Succeeded ─ current > end_ledger and for_votes >  against_votes
+    //
+    // where:
+    //   snapshot_ledger = ledger at which `propose` ran (vote-power source)
+    //   start_ledger    = snapshot_ledger + voting_delay
+    //   end_ledger      = start_ledger + voting_period
+
+    /// Set the configurable governance parameters. Admin only.
+    ///
+    /// Rejects a `voting_period` of zero (which would leave no voting window)
+    /// or a negative `proposal_threshold`.
+    pub fn set_governance_params(
+        env: Env,
+        voting_delay: u32,
+        voting_period: u32,
+        proposal_threshold: i128,
+    ) -> Result<(), GovTokenError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&GovTokenKey::Admin)
+            .ok_or(GovTokenError::NotInitialized)?;
+        admin.require_auth();
+        if voting_period == 0 || proposal_threshold < 0 {
+            return Err(GovTokenError::InvalidGovernanceParams);
+        }
+        let params = GovernanceParams { voting_delay, voting_period, proposal_threshold };
+        env.storage().instance().set(&GovTokenKey::GovernanceParams, &params);
+        env.events().publish(
+            (soroban_sdk::symbol_short!("setparams"), admin),
+            (voting_delay, voting_period, proposal_threshold),
+        );
+        Ok(())
+    }
+
+    /// Returns the effective governance parameters.
+    ///
+    /// Falls back to compile-time defaults when no admin configuration has been
+    /// stored, so the contract is usable immediately after `initialize`.
+    pub fn governance_params(env: Env) -> GovernanceParams {
+        Self::get_governance_params(&env)
+    }
+
+    /// Create a new proposal.
+    ///
+    /// `proposer` must currently hold at least `proposal_threshold` voting
+    /// power (checked via the checkpoint system). The proposal's voting-power
+    /// snapshot is the current ledger; voting opens after `voting_delay`
+    /// ledgers and stays open for `voting_period` ledgers.
+    ///
+    /// Requires authorization from `proposer`. Returns the new proposal id.
+    pub fn propose(
+        env: Env,
+        proposer: Address,
+        description_hash: BytesN<32>,
+        payload: ExecutionPayload,
+    ) -> Result<u32, GovTokenError> {
+        proposer.require_auth();
+        if !env.storage().instance().has(&GovTokenKey::Admin) {
+            return Err(GovTokenError::NotInitialized);
+        }
+        let params = Self::get_governance_params(&env);
+        let current = env.ledger().sequence();
+        let proposer_power = Self::votes_at_ledger(&env, &proposer, current);
+        if proposer_power < params.proposal_threshold {
+            return Err(GovTokenError::BelowProposalThreshold);
+        }
+        let snapshot_ledger = current;
+        let start_ledger =
+            snapshot_ledger.checked_add(params.voting_delay).ok_or(GovTokenError::Overflow)?;
+        let end_ledger =
+            start_ledger.checked_add(params.voting_period).ok_or(GovTokenError::Overflow)?;
+        let id = Self::next_proposal_id(&env)?;
+        let proposal = Proposal {
+            id,
+            proposer: proposer.clone(),
+            description_hash: description_hash.clone(),
+            payload,
+            snapshot_ledger,
+            start_ledger,
+            end_ledger,
+            for_votes: 0,
+            against_votes: 0,
+        };
+        Self::set_proposal(&env, &proposal);
+        env.events().publish(
+            (soroban_sdk::symbol_short!("propose"), proposer.clone(), id),
+            (snapshot_ledger, start_ledger, end_ledger),
+        );
+        Ok(id)
+    }
+
+    /// Cast a vote on a proposal.
+    ///
+    /// `support` is `true` for an in-favour vote and `false` for an against
+    /// vote. The vote is weighted by the voter's voting power at the proposal's
+    /// `snapshot_ledger`, read from the checkpoint system, so a holder can only
+    /// vote with the power they held when the proposal was created.
+    ///
+    /// Requires authorization from `voter`. Fails if the proposal does not
+    /// exist, voting is not currently active, the voter has already voted, or
+    /// the voter had no voting power at the snapshot.
+    pub fn vote(
+        env: Env,
+        voter: Address,
+        proposal_id: u32,
+        support: bool,
+    ) -> Result<(), GovTokenError> {
+        voter.require_auth();
+        let mut proposal = Self::get_proposal_internal(&env, &proposal_id)?;
+        let current = env.ledger().sequence();
+        if current < proposal.start_ledger || current > proposal.end_ledger {
+            return Err(GovTokenError::VotingNotActive);
+        }
+        if Self::has_voted_internal(&env, &proposal_id, &voter) {
+            return Err(GovTokenError::AlreadyVoted);
+        }
+        let weight = Self::votes_at_ledger(&env, &voter, proposal.snapshot_ledger);
+        if weight <= 0 {
+            return Err(GovTokenError::NoVotingPower);
+        }
+        if support {
+            proposal.for_votes =
+                proposal.for_votes.checked_add(weight).ok_or(GovTokenError::Overflow)?;
+        } else {
+            proposal.against_votes =
+                proposal.against_votes.checked_add(weight).ok_or(GovTokenError::Overflow)?;
+        }
+        Self::set_proposal(&env, &proposal);
+        Self::record_vote(&env, &proposal_id, &voter, &VoteReceipt { support, weight });
+        env.events().publish(
+            (soroban_sdk::symbol_short!("vote"), voter.clone(), proposal_id),
+            (support, weight),
+        );
+        Ok(())
+    }
+
+    /// Returns the lifecycle state of a proposal.
+    pub fn proposal_state(env: Env, proposal_id: u32) -> Result<ProposalState, GovTokenError> {
+        let proposal = Self::get_proposal_internal(&env, &proposal_id)?;
+        Ok(Self::compute_state(&env, &proposal))
+    }
+
+    /// Returns the stored proposal, including its execution payload.
+    pub fn get_proposal(env: Env, proposal_id: u32) -> Result<Proposal, GovTokenError> {
+        Self::get_proposal_internal(&env, &proposal_id)
+    }
+
+    /// Returns `true` if `voter` has already cast a vote on `proposal_id`.
+    pub fn has_voted(env: Env, proposal_id: u32, voter: Address) -> bool {
+        Self::has_voted_internal(&env, &proposal_id, &voter)
+    }
+
+    /// Returns the vote receipt for `voter` on `proposal_id`, or `None` if
+    /// they have not voted. Errors if the proposal does not exist.
+    pub fn get_vote_receipt(
+        env: Env,
+        proposal_id: u32,
+        voter: Address,
+    ) -> Result<Option<VoteReceipt>, GovTokenError> {
+        Self::get_proposal_internal(&env, &proposal_id)?;
+        Ok(env.storage().persistent().get(&GovTokenKey::VoteCast(proposal_id, voter)))
+    }
 
     // ── Internal helpers ────────────────────────────────────────────────
 
@@ -564,6 +756,73 @@ impl GovernanceToken {
         }
         checkpoints.get_unchecked(lo - 1).value
     }
+
+    // ── Governance-proposal helpers (issue #161) ────────────────────────
+
+    /// Effective governance parameters: stored config, or compile-time
+    /// defaults when no admin configuration has been written yet.
+    fn get_governance_params(env: &Env) -> GovernanceParams {
+        env.storage().instance().get(&GovTokenKey::GovernanceParams).unwrap_or(GovernanceParams {
+            voting_delay: DEFAULT_VOTING_DELAY,
+            voting_period: DEFAULT_VOTING_PERIOD,
+            proposal_threshold: DEFAULT_PROPOSAL_THRESHOLD,
+        })
+    }
+
+    /// Allocates and returns the next proposal id, persisting the new counter.
+    fn next_proposal_id(env: &Env) -> Result<u32, GovTokenError> {
+        let count: u32 = env.storage().instance().get(&GovTokenKey::ProposalCount).unwrap_or(0);
+        let next = count.checked_add(1).ok_or(GovTokenError::Overflow)?;
+        env.storage().instance().set(&GovTokenKey::ProposalCount, &next);
+        Ok(count)
+    }
+
+    fn set_proposal(env: &Env, proposal: &Proposal) {
+        let key = GovTokenKey::Proposal(proposal.id);
+        env.storage().persistent().set(&key, proposal);
+        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    fn get_proposal_internal(env: &Env, id: &u32) -> Result<Proposal, GovTokenError> {
+        env.storage()
+            .persistent()
+            .get(&GovTokenKey::Proposal(*id))
+            .ok_or(GovTokenError::ProposalNotFound)
+    }
+
+    /// Voting power of `addr` as of the end of `ledger`, read from the
+    /// checkpoint list. Callers guarantee `ledger <= current_ledger`.
+    fn votes_at_ledger(env: &Env, addr: &Address, ledger: u32) -> i128 {
+        let key = GovTokenKey::Checkpoints(addr.clone());
+        let checkpoints: Vec<Checkpoint> =
+            env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
+        Self::lookup_checkpoint(&checkpoints, ledger)
+    }
+
+    fn has_voted_internal(env: &Env, proposal_id: &u32, voter: &Address) -> bool {
+        env.storage().persistent().has(&GovTokenKey::VoteCast(*proposal_id, voter.clone()))
+    }
+
+    fn record_vote(env: &Env, proposal_id: &u32, voter: &Address, receipt: &VoteReceipt) {
+        let key = GovTokenKey::VoteCast(*proposal_id, voter.clone());
+        env.storage().persistent().set(&key, receipt);
+        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Computes the on-chain proposal state from the current ledger and the
+    /// recorded tally (see the state-machine comment on `propose`).
+    fn compute_state(env: &Env, proposal: &Proposal) -> ProposalState {
+        let current = env.ledger().sequence();
+        if current < proposal.start_ledger {
+            ProposalState::Pending
+        } else if current <= proposal.end_ledger {
+            ProposalState::Active
+        } else if proposal.for_votes > proposal.against_votes {
+            ProposalState::Succeeded
+        } else {
+            ProposalState::Defeated
+        }
+    }
 }
 
 #[cfg(test)]
@@ -600,3 +859,6 @@ const _: () = assert!(is_convention_symbol("mint"));
 const _: () = assert!(is_convention_symbol("burn"));
 const _: () = assert!(is_convention_symbol("transfer"));
 const _: () = assert!(is_convention_symbol("delegate"));
+const _: () = assert!(is_convention_symbol("propose"));
+const _: () = assert!(is_convention_symbol("vote"));
+const _: () = assert!(is_convention_symbol("setparams"));

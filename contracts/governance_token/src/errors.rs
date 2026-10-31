@@ -19,4 +19,18 @@ pub enum GovTokenError {
     TotalSupplyExceeded = 209,
     /// Requested ledger is in the future; historical queries only cover past ledgers.
     FutureLedger = 210,
+    // ── Governance proposals (issue #161) ───────────────────────────────
+    /// Proposer's voting power is below the proposal threshold.
+    BelowProposalThreshold = 211,
+    /// No proposal exists with the given id.
+    ProposalNotFound = 212,
+    /// A vote was cast outside the active voting window.
+    VotingNotActive = 213,
+    /// An address has already voted on this proposal.
+    AlreadyVoted = 214,
+    /// The voter had zero voting power at the proposal's snapshot ledger.
+    NoVotingPower = 215,
+    /// `set_governance_params` rejected an invalid combination (e.g. a
+    /// voting period of zero, which would leave no voting window).
+    InvalidGovernanceParams = 216,
 }

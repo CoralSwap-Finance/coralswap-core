@@ -13,14 +13,19 @@
 //! | `transfer`         | `(from, to, amount)`                       | `from`          |
 //! | `transfer_from`    | `(spender, from, to, amount)`              | `spender`       |
 //! | `delegate`         | `(from, to)`                               | `from`          |
+//! | `propose`          | `(proposer, description_hash, payload)`   | `proposer`      |
+//! | `vote`             | `(voter, proposal_id, support)`           | `voter`         |
+//! | `set_governance_params` | `(delay, period, threshold)`        | `admin`         |
 
 #![cfg(test)]
 
 use coralswap_shared::auth_args;
 use coralswap_shared::test_support as auth;
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{Address, Env, String};
+use soroban_sdk::testutils::Ledger as _;
+use soroban_sdk::{Address, Bytes, BytesN, Env, String, Symbol, Vec};
 
+use crate::storage::ExecutionPayload;
 use crate::{GovernanceToken, GovernanceTokenClient};
 
 struct Ctx {
@@ -73,6 +78,28 @@ impl Ctx {
 
     fn future_ledger(&self) -> u32 {
         self.env.ledger().sequence() + 1_000
+    }
+
+    /// A deterministic description hash from a label string.
+    fn desc_hash(&self, label: &str) -> BytesN<32> {
+        self.env.crypto().sha256(&Bytes::from_slice(&self.env, label.as_bytes())).into()
+    }
+
+    /// A minimal execution payload targeting `target`.
+    fn payload(&self, target: &Address) -> ExecutionPayload {
+        ExecutionPayload {
+            target: target.clone(),
+            function: Symbol::new(&self.env, "noop"),
+            args: Vec::new(&self.env),
+        }
+    }
+
+    fn ledger(&self) -> u32 {
+        self.env.ledger().sequence()
+    }
+
+    fn advance(&self, by: u32) {
+        self.env.ledger().set_sequence_number(self.ledger() + by);
     }
 }
 
@@ -249,6 +276,95 @@ fn delegate_is_authorized_by_the_delegator() {
     assert_eq!(c.gov.get_votes(&c.delegate_target), 1_000i128);
 }
 
+#[test]
+fn propose_is_authorized_by_the_proposer() {
+    let c = Ctx::new();
+    let target = Address::generate(&c.env);
+    let desc = c.desc_hash("p1");
+    let payload = c.payload(&target);
+    auth::allow(
+        &c.env,
+        &c.holder,
+        &c.gov_id,
+        "propose",
+        auth_args!(&c.env, c.holder.clone(), desc.clone(), payload.clone()),
+    );
+    let id = c.gov.propose(&c.holder, &desc, &payload);
+    auth::assert_authorized(
+        &c.env,
+        &c.holder,
+        &c.gov_id,
+        "propose",
+        auth_args!(&c.env, c.holder.clone(), desc.clone(), payload.clone()),
+    );
+    assert_eq!(id, 0);
+    let proposal = c.gov.get_proposal(&id);
+    assert_eq!(proposal.proposer, c.holder);
+}
+
+#[test]
+fn vote_is_authorized_by_the_voter() {
+    let c = Ctx::new();
+    // Give the recipient voting power before the proposal's snapshot ledger.
+    c.mint(&c.recipient, 500i128);
+    // holder creates the proposal.
+    let target = Address::generate(&c.env);
+    let desc = c.desc_hash("p1");
+    let payload = c.payload(&target);
+    auth::allow(
+        &c.env,
+        &c.holder,
+        &c.gov_id,
+        "propose",
+        auth_args!(&c.env, c.holder.clone(), desc.clone(), payload.clone()),
+    );
+    let id = c.gov.propose(&c.holder, &desc, &payload);
+    c.advance(1); // to the active voting window
+                  // recipient casts a vote.
+    auth::allow(
+        &c.env,
+        &c.recipient,
+        &c.gov_id,
+        "vote",
+        auth_args!(&c.env, c.recipient.clone(), id, true),
+    );
+    c.gov.vote(&c.recipient, &id, &true);
+    auth::assert_authorized(
+        &c.env,
+        &c.recipient,
+        &c.gov_id,
+        "vote",
+        auth_args!(&c.env, c.recipient.clone(), id, true),
+    );
+    assert!(c.gov.has_voted(&id, &c.recipient));
+    let proposal = c.gov.get_proposal(&id);
+    assert_eq!(proposal.for_votes, 500i128);
+}
+
+#[test]
+fn set_governance_params_is_authorized_by_the_admin() {
+    let c = Ctx::new();
+    auth::allow(
+        &c.env,
+        &c.admin,
+        &c.gov_id,
+        "set_governance_params",
+        auth_args!(&c.env, 2u32, 20u32, 5_000i128),
+    );
+    c.gov.set_governance_params(&2u32, &20u32, &5_000i128);
+    auth::assert_authorized(
+        &c.env,
+        &c.admin,
+        &c.gov_id,
+        "set_governance_params",
+        auth_args!(&c.env, 2u32, 20u32, 5_000i128),
+    );
+    let params = c.gov.governance_params();
+    assert_eq!(params.voting_delay, 2);
+    assert_eq!(params.voting_period, 20);
+    assert_eq!(params.proposal_threshold, 5_000);
+}
+
 // ─────────────────────────────────────────────
 // Negative: the matrix
 // ─────────────────────────────────────────────
@@ -354,6 +470,108 @@ fn delegate_rejects_a_stranger() {
 }
 
 #[test]
+fn propose_rejects_a_stranger() {
+    let c = Ctx::new();
+    let target = Address::generate(&c.env);
+    let desc = c.desc_hash("p1");
+    let payload = c.payload(&target);
+    // Authorize a stranger — `propose` requires the proposer's own auth, which
+    // the stranger's tree does not supply. The holder meets the threshold, so
+    // this fails only if the auth guard is present.
+    auth::allow(
+        &c.env,
+        &c.stranger,
+        &c.gov_id,
+        "propose",
+        auth_args!(&c.env, c.holder.clone(), desc.clone(), payload.clone()),
+    );
+    assert!(
+        c.gov.try_propose(&c.holder, &desc, &payload).is_err(),
+        "a stranger must not create a proposal in the holder's name"
+    );
+    assert!(c.gov.try_get_proposal(&0u32).is_err(), "no proposal must be created");
+}
+
+#[test]
+fn vote_rejects_a_stranger() {
+    let c = Ctx::new();
+    c.mint(&c.recipient, 500i128);
+    let target = Address::generate(&c.env);
+    let desc = c.desc_hash("p1");
+    let payload = c.payload(&target);
+    auth::allow(
+        &c.env,
+        &c.holder,
+        &c.gov_id,
+        "propose",
+        auth_args!(&c.env, c.holder.clone(), desc.clone(), payload.clone()),
+    );
+    let id = c.gov.propose(&c.holder, &desc, &payload);
+    c.advance(1); // active
+                  // Authorize a stranger — `vote` requires the voter's own auth.
+    auth::allow(
+        &c.env,
+        &c.stranger,
+        &c.gov_id,
+        "vote",
+        auth_args!(&c.env, c.recipient.clone(), id, true),
+    );
+    assert!(
+        c.gov.try_vote(&c.recipient, &id, &true).is_err(),
+        "a stranger must not cast a vote in the recipient's name"
+    );
+    assert!(!c.gov.has_voted(&id, &c.recipient));
+}
+
+#[test]
+fn set_governance_params_rejects_a_stranger() {
+    let c = Ctx::new();
+    auth::allow(
+        &c.env,
+        &c.stranger,
+        &c.gov_id,
+        "set_governance_params",
+        auth_args!(&c.env, 2u32, 20u32, 5_000i128),
+    );
+    assert!(
+        c.gov.try_set_governance_params(&2u32, &20u32, &5_000i128).is_err(),
+        "a stranger must not configure governance parameters"
+    );
+    assert_eq!(c.gov.governance_params().voting_period, 10, "defaults must be unchanged");
+}
+
+#[test]
+fn a_vote_authorization_for_a_different_support_value_is_rejected() {
+    let c = Ctx::new();
+    c.mint(&c.recipient, 500i128);
+    let target = Address::generate(&c.env);
+    let desc = c.desc_hash("p1");
+    let payload = c.payload(&target);
+    auth::allow(
+        &c.env,
+        &c.holder,
+        &c.gov_id,
+        "propose",
+        auth_args!(&c.env, c.holder.clone(), desc.clone(), payload.clone()),
+    );
+    let id = c.gov.propose(&c.holder, &desc, &payload);
+    c.advance(1); // active
+                  // Authorize a "for" vote, then attempt an "against" vote.
+    auth::allow(
+        &c.env,
+        &c.recipient,
+        &c.gov_id,
+        "vote",
+        auth_args!(&c.env, c.recipient.clone(), id, true),
+    );
+    assert!(
+        c.gov.try_vote(&c.recipient, &id, &false).is_err(),
+        "an authorization to vote 'for' must not authorize a vote 'against'"
+    );
+    assert!(!c.gov.has_voted(&id, &c.recipient));
+}
+
+#[test]
 fn every_gated_entry_point_fails_with_no_authorization_at_all() {
     let c = Ctx::new();
     let expiry = c.future_ledger();
@@ -367,12 +585,20 @@ fn every_gated_entry_point_fails_with_no_authorization_at_all() {
     assert!(c.gov.try_transfer(&c.holder, &c.recipient, &1).is_err());
     assert!(c.gov.try_transfer_from(&c.spender, &c.holder, &c.recipient, &1).is_err());
     assert!(c.gov.try_delegate(&c.holder, &c.delegate_target).is_err());
+    let target = Address::generate(&c.env);
+    let desc = c.desc_hash("p1");
+    let payload = c.payload(&target);
+    assert!(c.gov.try_propose(&c.holder, &desc, &payload).is_err());
+    assert!(c.gov.try_vote(&c.holder, &0u32, &true).is_err());
+    assert!(c.gov.try_set_governance_params(&1u32, &10u32, &1_000i128).is_err());
 
     assert_eq!(c.gov.admin(), c.admin);
     assert_eq!(c.gov.total_supply(), 1_000i128);
     assert_eq!(c.gov.balance(&c.holder), 1_000i128);
     assert_eq!(c.gov.delegates(&c.holder), c.holder);
     assert_eq!(c.gov.get_votes(&c.holder), 1_000i128);
+    assert!(c.gov.try_get_proposal(&0u32).is_err(), "no proposal must exist");
+    assert_eq!(c.gov.governance_params().voting_period, 10, "defaults must be unchanged");
 }
 
 /// An authorization bound to the wrong *arguments* must not satisfy the call.
@@ -416,6 +642,12 @@ fn a_view_call_needs_no_authorization() {
     let _ = c.gov.get_past_votes(&c.holder, &c.env.ledger().sequence());
     let _ = c.gov.get_past_total_supply(&c.env.ledger().sequence());
     let _ = c.gov.admin();
+    // Governance views (issue #161) are also permissionless.
+    let _ = c.gov.governance_params();
+    let _ = c.gov.try_get_proposal(&0u32);
+    let _ = c.gov.try_proposal_state(&0u32);
+    let _ = c.gov.has_voted(&0u32, &c.holder);
+    let _ = c.gov.try_get_vote_receipt(&0u32, &c.holder);
 
     auth::assert_unauthorized(&c.env);
 }

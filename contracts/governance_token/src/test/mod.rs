@@ -1,4 +1,5 @@
 mod auth_matrix;
+mod governance;
 
 use crate::errors::GovTokenError;
 use crate::storage::GovTokenKey;
