@@ -2,7 +2,6 @@
 
 This document describes the event shapes, emission semantics, and indexing recommendations for off-chain indexers, analytics services, and client applications interacting with CoralSwap.
 
----
 
 ## 1. Overview
 

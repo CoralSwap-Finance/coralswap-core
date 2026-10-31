@@ -126,6 +126,26 @@ impl FactoryEvents {
             (old_fee_bps, new_fee_bps, ledger),
         );
     }
+
+    /// Emitted when a successful proposal is placed into the timelock queue.
+    ///
+    /// Topic: `("prop_queued",)`
+    /// Data: `(id: u32, target: Address, queued_at_ledger: u32)`
+    pub fn proposal_queued(env: &Env, id: u32, target: &Address, queued_at_ledger: u32) {
+        env.events().publish(
+            (soroban_sdk::symbol_short!("prop_qued"),),
+            (id, target.clone(), queued_at_ledger),
+        );
+    }
+
+    /// Emitted when a queued proposal is successfully executed after the timelock.
+    ///
+    /// Topic: `("prop_exec",)`
+    /// Data: `(id: u32, target: Address, ledger: u32)`
+    pub fn proposal_executed(env: &Env, id: u32, target: &Address, ledger: u32) {
+        env.events()
+            .publish((soroban_sdk::symbol_short!("prop_exec"),), (id, target.clone(), ledger));
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -166,6 +186,8 @@ const _: () = assert!(is_convention_symbol("setter"));
 const _: () = assert!(is_convention_symbol("fee_upd"));
 const _: () = assert!(is_convention_symbol("pair_fee"));
 const _: () = assert!(is_convention_symbol("protocol_fee_collected"));
+const _: () = assert!(is_convention_symbol("prop_qued"));
+const _: () = assert!(is_convention_symbol("prop_exec"));
 // `#[contractevent]` derives the topic symbol from the struct name (snake
 // cased) rather than from a literal, so it cannot be caught by the emitters'
 // literals above — mirror the derived names here instead.

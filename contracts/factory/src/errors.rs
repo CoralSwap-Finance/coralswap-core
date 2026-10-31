@@ -29,4 +29,16 @@ pub enum FactoryError {
     /// `freeze_pair` / `unfreeze_pair` targeted an address this factory did
     /// not create.
     PairNotFound = 19,
+    /// The requested proposal_id does not exist in storage.
+    ProposalNotFound = 20,
+    /// `queue_proposal` was called on a proposal that has already been queued.
+    ProposalAlreadyQueued = 21,
+    /// `execute_proposal` was called before the timelock delay has elapsed.
+    ProposalTimelockNotExpired = 22,
+    /// `execute_proposal` was called on a proposal that has already been executed.
+    ProposalAlreadyExecuted = 23,
+    /// The proposal is not in the `Succeeded` state and therefore cannot be queued.
+    ProposalNotSucceeded = 24,
+    /// The cross-contract execution of a queued proposal's payload failed.
+    ProposalExecutionFailed = 25,
 }

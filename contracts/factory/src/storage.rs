@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, BytesN, Env, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Env, Symbol, Val, Vec};
 
 // Shared factory TTL policy (issue #390). See coralswap-shared for cadence math.
 use coralswap_shared::{
@@ -41,6 +41,10 @@ pub enum DataKey {
     IsPair(Address),
     /// Fast boolean lookup for LP-token membership.
     IsLpToken(Address),
+    /// Per-proposal storage keyed by monotonic `u32` ID (issue #162).
+    Proposal(u32),
+    /// Monotonic proposal counter; the next ID to assign equals the current value.
+    ProposalCount,
 }
 
 pub fn is_pair_frozen(env: &Env, pair: &Address) -> bool {
@@ -188,4 +192,74 @@ pub fn remove_pair_fee_override(env: &Env, pair: &Address) {
 /// Extend instance storage TTL to keep contract alive.
 pub fn extend_instance_ttl(env: &Env) {
     env.storage().instance().extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+}
+
+// ---------------------------------------------------------------------------
+// Governance proposal storage (issue #162)
+// ---------------------------------------------------------------------------
+
+/// Lifecycle state for a governance proposal.
+///
+/// The valid transitions are:
+///   `Succeeded` → (queue_proposal) → `Queued` → (execute_proposal) → `Executed`
+///
+/// `Succeeded` is the initial state when a proposal is created: the multisig
+/// quorum verified the proposal in the same transaction it was created, so it
+/// starts as already-approved and waiting to be queued into the timelock.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProposalStatus {
+    /// Quorum was met at creation; the proposal may now be queued.
+    Succeeded,
+    /// The proposal has been placed in the timelock queue.
+    Queued,
+    /// The proposal has been executed; no further action is possible.
+    Executed,
+}
+
+/// A governance proposal that targets a cross-contract call.
+///
+/// # Storage
+/// Stored in instance storage under `DataKey::Proposal(id)`.
+/// For proposals with large `args` payloads, callers should be aware of
+/// instance-storage size limits; modest calldata (a handful of scalar values)
+/// fits comfortably.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct GovernanceProposal {
+    /// Monotonic proposal identifier, assigned by `create_proposal`.
+    pub id: u32,
+    /// The contract to be called when the proposal is executed.
+    pub target: Address,
+    /// The function name to invoke on `target`.
+    pub function: Symbol,
+    /// The arguments to pass to `function`.
+    pub args: Vec<Val>,
+    /// The ledger sequence at which the proposal was created (and quorum met).
+    pub proposed_at_ledger: u32,
+    /// The ledger sequence at which the proposal was queued into the timelock,
+    /// or `None` if not yet queued.
+    pub queued_at_ledger: Option<u32>,
+    /// Current lifecycle state.
+    pub status: ProposalStatus,
+}
+
+/// Returns the current proposal counter (i.e. the *next* ID to assign).
+pub fn get_proposal_count(env: &Env) -> u32 {
+    env.storage().instance().get(&DataKey::ProposalCount).unwrap_or(0u32)
+}
+
+/// Persists the proposal counter.
+pub fn set_proposal_count(env: &Env, count: u32) {
+    env.storage().instance().set(&DataKey::ProposalCount, &count);
+}
+
+/// Loads a proposal by ID, returning `None` if it does not exist.
+pub fn get_proposal(env: &Env, id: u32) -> Option<GovernanceProposal> {
+    env.storage().instance().get(&DataKey::Proposal(id))
+}
+
+/// Persists a proposal.
+pub fn set_proposal(env: &Env, proposal: &GovernanceProposal) {
+    env.storage().instance().set(&DataKey::Proposal(proposal.id), proposal);
 }
