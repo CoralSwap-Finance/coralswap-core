@@ -345,6 +345,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "coralswap-governance-token"
+version = "0.1.0"
+dependencies = [
+ "coralswap-shared",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "coralswap-integration-tests"
 version = "0.1.0"
 dependencies = [
