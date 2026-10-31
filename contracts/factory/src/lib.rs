@@ -6,6 +6,7 @@ extern crate std;
 mod errors;
 mod events;
 mod governance;
+mod proposal;
 mod storage;
 mod upgrade;
 
@@ -15,7 +16,7 @@ mod test;
 use errors::FactoryError;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    contract, contractclient, contractimpl, Address, Bytes, BytesN, Env, String, Symbol, Vec,
+    contract, contractclient, contractimpl, Address, Bytes, BytesN, Env, String, Symbol, Val, Vec,
 };
 use storage::FactoryStorage;
 
@@ -819,6 +820,91 @@ impl Factory {
             storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
         governance::verify_multisig(&env, &factory_storage.signers, &signers)?;
         upgrade::cancel_upgrade(&env)?;
+        storage::extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Governance proposals with timelock enforcement (issue #162)
+    // -----------------------------------------------------------------------
+
+    /// Creates a new governance proposal targeting a cross-contract call.
+    ///
+    /// The multisig quorum is verified in the same transaction, so the proposal
+    /// is immediately in the `Succeeded` state and ready to be queued.
+    ///
+    /// # Parameters
+    /// * `signers`  — the multisig quorum authorising this proposal
+    /// * `target`   — the contract address to invoke when the proposal executes
+    /// * `function` — the function name to call on `target`
+    /// * `args`     — the arguments to pass to `function`
+    ///
+    /// # Returns
+    /// The newly assigned `proposal_id` (`u32`), which must be supplied to
+    /// `queue_proposal` and `execute_proposal`.
+    ///
+    /// # Errors
+    /// Propagates all multisig errors (`Unauthorized`, `DuplicateSigner`,
+    /// `InsufficientSignatures`) and `NotInitialized`.
+    pub fn create_proposal(
+        env: Env,
+        signers: Vec<Address>,
+        target: Address,
+        function: Symbol,
+        args: Vec<Val>,
+    ) -> Result<u32, FactoryError> {
+        let factory_storage =
+            storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+        governance::verify_multisig(&env, &factory_storage.signers, &signers)?;
+        let id = proposal::create_proposal(&env, target, function, args)?;
+        storage::extend_instance_ttl(&env);
+        Ok(id)
+    }
+
+    /// Moves a `Succeeded` proposal into the timelock queue.
+    ///
+    /// The proposal must already exist (created via `create_proposal`) and be
+    /// in the `Succeeded` state.  Once queued, the timelock delay
+    /// (`PROPOSAL_DELAY_LEDGERS` ≈ 72 hours) must pass before execution.
+    ///
+    /// No multisig check is required here: the quorum was already met when the
+    /// proposal was created, and queueing is a permissionless step that any
+    /// account may trigger — matching common DAO patterns (e.g. Compound
+    /// Governor Bravo) where any holder can push a successful proposal into the
+    /// queue.
+    ///
+    /// # Errors
+    /// * `NotInitialized`          — factory storage absent
+    /// * `ProposalNotFound`        — `proposal_id` does not exist
+    /// * `ProposalNotSucceeded`    — proposal is not in the `Succeeded` state
+    /// * `ProposalAlreadyQueued`   — already in the queue
+    /// * `ProposalAlreadyExecuted` — already executed
+    pub fn queue_proposal(env: Env, proposal_id: u32) -> Result<(), FactoryError> {
+        storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+        proposal::queue_proposal(&env, proposal_id)?;
+        storage::extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Executes a `Queued` proposal after the timelock delay has passed.
+    ///
+    /// Calls the target contract specified in the proposal payload using
+    /// `env.invoke_contract`.  The proposal is marked `Executed` before the
+    /// cross-contract call to prevent re-entrancy.
+    ///
+    /// No multisig check is required: the delay is the only guard here —
+    /// execution is permissionless once the timelock expires.
+    ///
+    /// # Errors
+    /// * `NotInitialized`              — factory storage absent
+    /// * `ProposalNotFound`            — `proposal_id` does not exist
+    /// * `ProposalNotSucceeded`        — proposal was never queued
+    /// * `ProposalTimelockNotExpired`  — timelock has not yet elapsed
+    /// * `ProposalAlreadyExecuted`     — already executed
+    /// * `ProposalExecutionFailed`     — the cross-contract call panicked
+    pub fn execute_proposal(env: Env, proposal_id: u32) -> Result<(), FactoryError> {
+        storage::get_factory_storage(&env).ok_or(FactoryError::NotInitialized)?;
+        proposal::execute_proposal(&env, proposal_id)?;
         storage::extend_instance_ttl(&env);
         Ok(())
     }
