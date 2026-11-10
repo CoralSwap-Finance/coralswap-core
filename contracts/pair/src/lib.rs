@@ -232,6 +232,11 @@ impl Pair {
     // Mint
     // ─────────────────────────────────────────
 
+    /// Mints LP tokens to `to` based on deposited token amounts exceeding current reserves.
+    ///
+    /// # Authorization & Recipient Model
+    /// Enforces `to.require_auth()` to ensure LP tokens are only minted to an authorized recipient,
+    /// preventing unauthorized third-party minting and securing the depositor flow (issue #346).
     pub fn mint(env: Env, to: Address) -> Result<i128, PairError> {
         to.require_auth();
 
