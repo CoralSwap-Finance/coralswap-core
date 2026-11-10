@@ -40,6 +40,7 @@ pub trait PairInterface {
     fn lp_token(env: Env) -> Address;
     fn set_lp_token_paused(env: Env, paused: bool);
     fn set_stale_threshold(env: Env, new_threshold: u32);
+    fn get_stale_threshold(env: Env) -> u32;
     fn is_lp_token_paused(env: Env) -> bool;
     /// Pair-side half of the factory freeze relay. Only the pair's own factory
     /// may call it (`pair.factory.require_auth()` inside the pair).
@@ -695,6 +696,11 @@ impl Factory {
         storage::extend_instance_ttl(&env);
 
         Ok(())
+    }
+
+    /// Returns the stale threshold configured on `pair`.
+    pub fn get_pair_stale_threshold(env: Env, pair: Address) -> u32 {
+        PairClient::new(&env, &pair).get_stale_threshold()
     }
 
     /// Records protocol fees collected by a pair.
