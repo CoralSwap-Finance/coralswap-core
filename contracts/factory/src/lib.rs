@@ -110,6 +110,13 @@ impl Factory {
         token_a: Address,
         token_b: Address,
     ) -> Result<Address, FactoryError> {
+        // Zero-address tokens must revert before deploying pair or LP (issue #321)
+        if coralswap_shared::is_zero_address(&env, &token_a)
+            || coralswap_shared::is_zero_address(&env, &token_b)
+        {
+            return Err(FactoryError::ZeroAddress);
+        }
+
         if token_a == token_b {
             return Err(FactoryError::IdenticalTokens);
         }
