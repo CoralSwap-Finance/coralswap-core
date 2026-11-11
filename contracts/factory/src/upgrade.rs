@@ -1,10 +1,7 @@
 use crate::errors::FactoryError;
 use crate::storage::{self, PendingUpgrade};
+use coralswap_shared::UPGRADE_DELAY_LEDGERS;
 use soroban_sdk::{BytesN, Env};
-
-/// 72 hours expressed in ledgers, assuming a ~5-second ledger close time.
-/// 72 * 3600 / 5 = 51_840 ledgers.
-const UPGRADE_DELAY_LEDGERS: u32 = 51_840;
 
 /// Proposes a WASM upgrade. Stores the hash and the current ledger sequence.
 /// Rejects if a proposal is already pending.

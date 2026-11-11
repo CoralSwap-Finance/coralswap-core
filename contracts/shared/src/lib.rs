@@ -9,6 +9,15 @@
 //!
 //! # Cadence math (Stellar ~5s/ledger close time)
 //!
+//! Ledger-based durations assume an average Stellar ledger close time of
+//! approximately 5 seconds:
+//!
+//! `ledgers = duration_seconds / 5`
+//!
+//! These values guarantee ledger counts, not exact wall-clock durations. If
+//! the network cadence changes, their effective wall-clock durations change
+//! proportionally.
+//!
 //! - 1 hour      ~= 720 ledgers
 //! - 1 day       ~= 17_280 ledgers
 //! - 3.5 days    ~= 60_480 ledgers (half of [`INSTANCE_TTL_EXTEND_TO`])
@@ -211,6 +220,46 @@ pub const MAX_COMMITS_HARD_CAP: u32 = 1_000;
 pub const COMMIT_EXPIRY_HARD_CAP: u32 = 518_400;
 
 // ─────────────────────────────────────────────
+// Protocol limits and ledger-cadence policies (issue #371)
+// ─────────────────────────────────────────────
+
+/// Assumed Stellar ledger close time in seconds (standard consensus cadence).
+pub const LEDGER_CLOSE_TIME_SECONDS: u32 = 5;
+
+/// Mandatory delay between proposing and executing a Factory upgrade in hours.
+pub const UPGRADE_TIMELOCK_HOURS: u32 = 72;
+
+/// Mandatory delay between proposing and executing a Factory upgrade in ledgers.
+///
+/// Derived from a 72-hour delay using an assumed average Stellar ledger close
+/// time of approximately 5 seconds:
+///
+/// `72 hours * 60 minutes * 60 seconds / 5 seconds = 51_840 ledgers`.
+///
+/// This is a ledger-count guarantee, not a wall-clock guarantee. If the
+/// network's average ledger-close cadence changes, the elapsed wall-clock time
+/// represented by this value changes proportionally.
+pub const UPGRADE_DELAY_LEDGERS: u32 = (UPGRADE_TIMELOCK_HOURS * 3600) / LEDGER_CLOSE_TIME_SECONDS;
+
+/// Minimum flash-loan fee for fee-enabled pools, in basis points.
+///
+/// `5 / 10_000 = 0.0005`, or `0.05%`.
+///
+/// A configured fee of zero continues to mean that flash-loan fees are
+/// disabled; otherwise this floor prevents non-zero fee configurations from
+/// rounding down to an effectively negligible rate.
+pub const FLASH_FEE_FLOOR_BPS: u32 = 5;
+
+/// Maximum flash-loan callback payload size, in bytes.
+///
+/// Bounding callback data limits the amount of caller-controlled data copied
+/// and forwarded during a flash loan, keeping resource use predictable.
+pub const MAX_PAYLOAD_SIZE: u32 = 256;
+
+/// Explicit alias for [`MAX_PAYLOAD_SIZE`] describing flash-loan callback payload limit.
+pub const MAX_FLASH_LOAN_PAYLOAD_SIZE: u32 = MAX_PAYLOAD_SIZE;
+
+// ─────────────────────────────────────────────
 // Constant-product quote math (router + pair)
 // ─────────────────────────────────────────────
 //
@@ -394,5 +443,25 @@ mod quote_input_amount_tests {
             quote_input_amount(i128::MAX - 1, i128::MAX, i128::MAX, 0),
             Err(QuoteError::Overflow)
         );
+    }
+}
+
+#[cfg(test)]
+mod network_cadence_tests {
+    use super::*;
+
+    #[test]
+    fn test_upgrade_timelock_cadence() {
+        assert_eq!(UPGRADE_TIMELOCK_HOURS, 72);
+        assert_eq!(LEDGER_CLOSE_TIME_SECONDS, 5);
+        assert_eq!(UPGRADE_DELAY_LEDGERS, 51_840);
+        assert_eq!(UPGRADE_DELAY_LEDGERS, (72 * 3600) / LEDGER_CLOSE_TIME_SECONDS);
+    }
+
+    #[test]
+    fn test_flash_loan_constants() {
+        assert_eq!(FLASH_FEE_FLOOR_BPS, 5);
+        assert_eq!(MAX_PAYLOAD_SIZE, 256);
+        assert_eq!(MAX_FLASH_LOAN_PAYLOAD_SIZE, 256);
     }
 }
