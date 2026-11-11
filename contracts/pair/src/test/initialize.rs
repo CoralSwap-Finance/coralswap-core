@@ -76,6 +76,72 @@ fn identical_tokens_returns_error() {
 }
 
 #[test]
+fn zero_contract_token_returns_zero_address_error() {
+    let (env, contract_id, factory, _token_a, token_b, lp_token) = setup_env();
+    let client = PairClient::new(&env, &contract_id);
+
+    let zero_token = Address::from_string(&soroban_sdk::String::from_str(
+        &env,
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+    ));
+
+    // token_a is zero
+    let result_a = client.try_initialize(&factory, &zero_token, &token_b, &lp_token);
+    assert_eq!(result_a, Err(Ok(PairError::ZeroAddress)));
+
+    // token_b is zero
+    let result_b = client.try_initialize(&factory, &token_b, &zero_token, &lp_token);
+    assert_eq!(result_b, Err(Ok(PairError::ZeroAddress)));
+
+    // Ensure zero storage state left behind on rejected init (issue #321)
+    env.as_contract(&contract_id, || {
+        assert!(get_pair_state(&env).is_none());
+        assert!(get_fee_state(&env).is_none());
+    });
+}
+
+#[test]
+fn zero_account_token_returns_zero_address_error() {
+    let (env, contract_id, factory, _token_a, token_b, lp_token) = setup_env();
+    let client = PairClient::new(&env, &contract_id);
+
+    let zero_account = Address::from_string(&soroban_sdk::String::from_str(
+        &env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    ));
+
+    let result = client.try_initialize(&factory, &zero_account, &token_b, &lp_token);
+    assert_eq!(result, Err(Ok(PairError::ZeroAddress)));
+
+    env.as_contract(&contract_id, || {
+        assert!(get_pair_state(&env).is_none());
+    });
+}
+
+#[test]
+fn zero_factory_or_lp_token_returns_zero_address_error() {
+    let (env, contract_id, factory, token_a, token_b, lp_token) = setup_env();
+    let client = PairClient::new(&env, &contract_id);
+
+    let zero_c = Address::from_string(&soroban_sdk::String::from_str(
+        &env,
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+    ));
+
+    // Zero factory
+    let res_factory = client.try_initialize(&zero_c, &token_a, &token_b, &lp_token);
+    assert_eq!(res_factory, Err(Ok(PairError::ZeroAddress)));
+
+    // Zero LP token
+    let res_lp = client.try_initialize(&factory, &token_a, &token_b, &zero_c);
+    assert_eq!(res_lp, Err(Ok(PairError::ZeroAddress)));
+
+    env.as_contract(&contract_id, || {
+        assert!(get_pair_state(&env).is_none());
+    });
+}
+
+#[test]
 fn nested_pool_using_existing_lp_token_returns_error() {
     let env = Env::default();
     let contract_id = env.register(Pair, ());

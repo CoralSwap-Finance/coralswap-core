@@ -29,4 +29,6 @@ pub enum FactoryError {
     /// `freeze_pair` / `unfreeze_pair` targeted an address this factory did
     /// not create.
     PairNotFound = 19,
+    /// A token address provided was zero (issue #321).
+    ZeroAddress = 20,
 }
