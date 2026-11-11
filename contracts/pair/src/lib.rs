@@ -158,7 +158,16 @@ impl Pair {
             return Err(PairError::AlreadyInitialized);
         }
 
-        // 2. Identical-token guard
+        // 2. Zero-address guard (issue #321)
+        if coralswap_shared::is_zero_address(&env, &token_a)
+            || coralswap_shared::is_zero_address(&env, &token_b)
+            || coralswap_shared::is_zero_address(&env, &factory)
+            || coralswap_shared::is_zero_address(&env, &lp_token)
+        {
+            return Err(PairError::ZeroAddress);
+        }
+
+        // 3. Identical-token guard
         if token_a == token_b {
             return Err(PairError::InvalidInput);
         }
