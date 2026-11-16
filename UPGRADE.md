@@ -34,9 +34,46 @@ propose_upgrade() ──→ 72-hour timelock ──→ execute_upgrade()
 | Parameter | Value |
 |---|---|
 | Delay | 72 hours |
-| Delay in ledgers | ~51,840 (assuming 5-second ledger close) |
+| Delay in ledgers | 51,840 (assuming 5-second ledger close) |
 | Multisig threshold | strict majority: `n / 2 + 1` (i.e. `> n / 2`) where `n` = number of registered signers, counting distinct registered signers only |
 | Max signers | 10 |
+
+### Ledger Cadence Assumptions
+
+CoralSwap expresses upgrade timing in Stellar ledger sequences rather than
+wall-clock seconds. The conversion used by the Factory assumes an average
+ledger close time of approximately 5 seconds:
+
+```text
+ledgers = duration_seconds / 5
+```
+
+Therefore, the 72-hour Factory upgrade delay is calculated as:
+
+```text
+72 hours × 60 minutes × 60 seconds / 5 seconds
+= 259,200 seconds / 5 seconds
+= 51,840 ledgers
+```
+
+The implementation source of truth is
+`coralswap_shared::UPGRADE_DELAY_LEDGERS`.
+
+This value guarantees a delay measured in ledger closes, not an exact
+wall-clock duration. If the network's average ledger-close cadence changes,
+the effective wall-clock duration changes proportionally. For example, faster
+ledger closes shorten the elapsed wall-clock delay, while slower closes extend
+it.
+
+Any intentional change to this assumption must update the shared constant,
+this document, and the deployed Factory contract through the normal contract
+upgrade process.
+
+| Intended duration | Ledgers at approximately 5 seconds each |
+|---|---:|
+| 1 hour | 720 |
+| 1 day | 17,280 |
+| 72 hours | 51,840 |
 
 ## Step-by-Step Upgrade Process
 
