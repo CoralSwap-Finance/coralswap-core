@@ -104,6 +104,36 @@ pub fn extend_instance_ttl(env: &Env) {
 }
 
 // ─────────────────────────────────────────────
+// Zero-address validation (issue #321)
+// ─────────────────────────────────────────────
+
+/// Checks if an address payload (contract hash or account public key) is all zeros.
+///
+/// In Soroban, an address may wrap either a 32-byte Ed25519 public key (G...)
+/// or a 32-byte contract ID hash (C...). This function inspects the underlying
+/// XDR payload bytes to determine whether the 32-byte identity consists entirely
+/// of zero bytes without causing panics or string parsing overhead.
+pub fn is_zero_address(env: &Env, address: &Address) -> bool {
+    let xdr = address.clone().to_xdr(env);
+    if xdr.len() < 40 {
+        return false;
+    }
+    // Inspect the ScAddress discriminant at byte 7:
+    // 0 = Account (payload at 12..44)
+    // 1 = Contract (payload at 8..40)
+    let payload_bytes = if xdr.len() >= 44 && xdr.get(7).unwrap_or(1) == 0 {
+        xdr.slice(12..44)
+    } else if xdr.len() >= 40 && xdr.get(7).unwrap_or(0) == 1 {
+        xdr.slice(8..40)
+    } else {
+        return false;
+    };
+
+    let zero_32 = Bytes::from_slice(env, &[0u8; 32]);
+    payload_bytes == zero_32
+}
+
+// ─────────────────────────────────────────────
 // Reentrancy-guard TTL (pair)
 // ─────────────────────────────────────────────
 
@@ -365,6 +395,40 @@ mod tests {
 
         assert_ne!(name_ab, name_ac);
         assert_ne!(symbol_ab, symbol_ac);
+    }
+
+    #[test]
+    fn test_is_zero_address() {
+        use soroban_sdk::xdr::FromXdr;
+
+        let env = Env::default();
+        let regular = Address::generate(&env);
+        assert!(!is_zero_address(&env, &regular));
+
+        // Zero contract address via canonical XDR (ScVal::Address + ScAddress::Contract + 32 zero bytes)
+        let mut xdr_contract = Bytes::from_slice(&env, &[0, 0, 0, 18, 0, 0, 0, 1]);
+        xdr_contract.append(&Bytes::from_slice(&env, &[0u8; 32]));
+        let zero_contract = Address::from_xdr(&env, &xdr_contract).unwrap();
+        assert!(is_zero_address(&env, &zero_contract));
+
+        // Zero account address via canonical XDR (ScVal::Address + ScAddress::Account + PublicKeyEd25519 + 32 zero bytes)
+        let mut xdr_account = Bytes::from_slice(&env, &[0, 0, 0, 18, 0, 0, 0, 0, 0, 0, 0, 0]);
+        xdr_account.append(&Bytes::from_slice(&env, &[0u8; 32]));
+        let zero_account = Address::from_xdr(&env, &xdr_account).unwrap();
+        assert!(is_zero_address(&env, &zero_account));
+
+        // Verify via StrKey (Contract and Account zero identities)
+        let zero_strkey_c = Address::from_string(&soroban_sdk::String::from_str(
+            &env,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        ));
+        assert!(is_zero_address(&env, &zero_strkey_c));
+
+        let zero_strkey_g = Address::from_string(&soroban_sdk::String::from_str(
+            &env,
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        ));
+        assert!(is_zero_address(&env, &zero_strkey_g));
     }
 }
 

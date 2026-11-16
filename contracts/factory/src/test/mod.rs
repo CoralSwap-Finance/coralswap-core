@@ -431,6 +431,42 @@ mod factory_tests {
     }
 
     #[test]
+    fn test_create_pair_zero_address_token_fails_before_deploy() {
+        let (env, client, token_a, token_b, _, _, _) = setup_env();
+
+        let zero_contract = Address::from_string(&soroban_sdk::String::from_str(
+            &env,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        ));
+        let zero_account = Address::from_string(&soroban_sdk::String::from_str(
+            &env,
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        ));
+
+        let pair_count_before = client.get_pair_count();
+        let total_pairs_before = client.total_pairs();
+
+        // 1. Zero contract as token_a
+        let res_a = client.try_create_pair(&zero_contract, &token_b);
+        assert_eq!(res_a, Err(Ok(FactoryError::ZeroAddress)));
+
+        // 2. Zero contract as token_b
+        let res_b = client.try_create_pair(&token_a, &zero_contract);
+        assert_eq!(res_b, Err(Ok(FactoryError::ZeroAddress)));
+
+        // 3. Zero account as token_a
+        let res_acc = client.try_create_pair(&zero_account, &token_b);
+        assert_eq!(res_acc, Err(Ok(FactoryError::ZeroAddress)));
+
+        // Verify zero storage garbage left behind (acceptance criteria issue #321)
+        assert_eq!(client.get_pair_count(), pair_count_before);
+        assert_eq!(client.total_pairs(), total_pairs_before);
+        assert_eq!(client.get_pair(&zero_contract, &token_b), None);
+        assert_eq!(client.get_pair(&token_b, &zero_contract), None);
+        assert!(client.get_all_pairs(&0, &10).is_empty());
+    }
+
+    #[test]
     fn test_create_pair_duplicate_returns_error() {
         let (_env, client, token_a, token_b, _, _, _) = setup_env();
 
