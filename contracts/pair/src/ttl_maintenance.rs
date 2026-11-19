@@ -4,13 +4,25 @@
 
 use soroban_sdk::Env;
 
-/// TTL extension duration (30 days in ledgers, ~5s per ledger)
-const TTL_EXTENSION_LEDGERS: u32 = 518_400; // 30 days * 24h * 60m * 60s / 5s
+/// Centralized constants for TTL handling.
+mod constants {
+    /// TTL extension duration (30 days in ledgers, ~5 s per ledger).
+    ///
+    /// This value assumes the network closes a ledger approximately every 5 seconds.
+    /// If the ledger cadence changes, adjust this constant accordingly.
+    pub const TTL_EXTENSION_LEDGERS: u32 = 518_400; // 30 days * 24 h * 60 m * 60 s / 5 s
+
+    /// Warning threshold (7 days in ledgers).
+    ///
+    /// When a stored entry's remaining TTL drops below this value, the system
+    /// treats it as approaching expiration.
+    pub const WARNING_THRESHOLD_LEDGERS: u32 = 120_960; // 7 days
+}
 
 /// Storage keys that need TTL maintenance
 const STATE_KEYS: &[&str] = &[
     "FeeState",
-    "OracleState", 
+    "OracleState",
     "GuardState",
     "Reserve0",
     "Reserve1",
@@ -38,11 +50,11 @@ fn extend_key_ttl(env: &Env, key: &str) {
     if env.storage().persistent().has(key) {
         env.storage()
             .persistent()
-            .extend_ttl(key, TTL_EXTENSION_LEDGERS, TTL_EXTENSION_LEDGERS);
+            .extend_ttl(key, constants::TTL_EXTENSION_LEDGERS, constants::TTL_EXTENSION_LEDGERS);
     }
 }
 
-/// Extend TTL on view operations (read-only)
+/// Extend TTL on view operations (read‑only)
 ///
 /// Called by:
 /// - get_reserves()
@@ -79,12 +91,10 @@ pub fn extend_ttl_on_governance(env: &Env) {
 ///
 /// Returns true if any entry expires in < 7 days
 pub fn is_state_approaching_expiration(env: &Env) -> bool {
-    const WARNING_THRESHOLD_LEDGERS: u32 = 120_960; // 7 days
-
     for key in STATE_KEYS {
         if env.storage().persistent().has(key) {
             let ttl = env.storage().persistent().get_ttl(key);
-            if ttl < WARNING_THRESHOLD_LEDGERS {
+            if ttl < constants::WARNING_THRESHOLD_LEDGERS {
                 return true;
             }
         }
@@ -100,7 +110,7 @@ mod tests {
     #[test]
     fn test_ttl_extension() {
         let env = Env::default();
-        
+
         // Setup state
         env.storage().persistent().set(&"FeeState", &123);
         env.storage().persistent().set(&"Reserve0", &1000);
@@ -110,30 +120,32 @@ mod tests {
 
         // Verify TTL was extended
         let ttl = env.storage().persistent().get_ttl(&"FeeState");
-        assert!(ttl >= TTL_EXTENSION_LEDGERS);
+        assert!(ttl >= constants::TTL_EXTENSION_LEDGERS);
     }
 
     #[test]
     fn test_view_extends_ttl() {
         let env = Env::default();
-        
+
         env.storage().persistent().set(&"Reserve0", &1000);
-        
+
         // Simulate view call
         extend_ttl_on_view(&env);
 
         // Verify TTL extended
         let ttl = env.storage().persistent().get_ttl(&"Reserve0");
-        assert!(ttl >= TTL_EXTENSION_LEDGERS);
+        assert!(ttl >= constants::TTL_EXTENSION_LEDGERS);
     }
 
     #[test]
     fn test_expiration_warning() {
         let env = Env::default();
-        
+
         // Set state with short TTL
         env.storage().persistent().set(&"FeeState", &123);
-        env.storage().persistent().extend_ttl(&"FeeState", 100_000, 100_000); // < 7 days
+        env.storage()
+            .persistent()
+            .extend_ttl(&"FeeState", 100_000, 100_000); // < 7 days
 
         // Should trigger warning
         assert!(is_state_approaching_expiration(&env));
@@ -142,15 +154,15 @@ mod tests {
     #[test]
     fn test_read_only_path_maintenance() {
         let env = Env::default();
-        
+
         // Setup state
         env.storage().persistent().set(&"OracleState", &456);
-        
+
         // Simulate read-only governance view
         extend_ttl_on_governance(&env);
 
         // Verify TTL extended even on read-only path
         let ttl = env.storage().persistent().get_ttl(&"OracleState");
-        assert!(ttl >= TTL_EXTENSION_LEDGERS);
+        assert!(ttl >= constants::TTL_EXTENSION_LEDGERS);
     }
-}
+}
