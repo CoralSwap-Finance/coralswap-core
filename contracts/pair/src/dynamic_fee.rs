@@ -3,6 +3,35 @@ use crate::fee_decay::apply_time_decay;
 use crate::storage::FeeState;
 use soroban_sdk::Env;
 
+//! # Dynamic fee ramp / cooldown semantics
+//!
+//! The pair charges a volatility-scaled fee in basis points:
+//! ```text
+//! fee = clamp(baseline_fee_bps + vol_accumulator * ramp_up_multiplier / SCALE_PER_BPS,
+//!             min_fee_bps, max_fee_bps)
+//! ```
+//! where `SCALE_PER_BPS = SCALE / 10_000` and `vol_accumulator` is a
+//! size-weighted EMA of recent price observations (see [`update_volatility`]).
+//!
+//! ## Ramp-up
+//! Every trade updates `vol_accumulator` toward the latest size-weighted price
+//! observation. Sustained volume pushes the accumulator up, which ramps the fee
+//! toward `max_fee_bps`. The accumulator is capped at the level that produces
+//! `max_fee_bps` (see the cap in [`update_volatility`]), so a griefing spike
+//! cannot pin the fee at maximum forever.
+//!
+//! ## Cooldown / time decay
+//! When the pool is idle (no trades), [`decay_stale_ema`] applies exponential
+//! decay: each `decay_threshold_blocks` of quiet ledgers divides
+//! `vol_accumulator` by `cooldown_divisor`. Repeated quiet periods compound,
+//! driving the accumulator — and hence the fee — back toward
+//! `baseline_fee_bps`.
+//!
+//! ## Boundaries
+//! `compute_fee_bps` always clamps to `[min_fee_bps, max_fee_bps]`, so the fee
+//! can never fall below `min_fee_bps` or exceed `max_fee_bps`. Zero volatility
+//! yields `baseline_fee_bps` (clamped to bounds).
+
 /// Fixed-point scale factor (1e14) — must match `math::SCALE`.
 const SCALE: i128 = 100_000_000_000_000;
 
@@ -403,6 +432,73 @@ mod tests {
         assert_eq!(
             state.vol_accumulator, 100,
             "alpha=SCALE should fully replace old accumulator with new observation"
+        );
+    }
+
+    // ------ compute_fee_bps boundaries -----
+
+    #[test]
+    fn compute_fee_bps_clamped_to_min_when_below() {
+        let mut state = default_fee_state(SCALE / 10);
+        state.vol_accumulator = 0;
+        state.baseline_fee_bps = 1; // below min_fee_bps (5)
+        let fee = compute_fee_bps(&state);
+        assert_eq!(
+            fee,
+            state.min_fee_bps,
+            "fee below min must clamp up to min"
+        );
+    }
+
+    #[test]
+    fn compute_fee_bps_clamped_to_max_when_above() {
+        let mut state = default_fee_state(SCALE / 10);
+        state.vol_accumulator = i128::MAX; // huge → far above max_fee_bps
+        let fee = compute_fee_bps(&state);
+        assert_eq!(
+            fee,
+            state.max_fee_bps,
+            "fee above max must clamp down to max"
+        );
+    }
+
+    // ------ Scenario: ramp then decay (issue #319) -----
+
+    #[test]
+    fn fee_ramps_to_max_then_decays_to_baseline_over_quiet_ledgers() {
+        let env = Env::default();
+        let alpha = SCALE / 10;
+        let mut state = default_fee_state(alpha);
+        state.decay_threshold_blocks = 1;
+        state.cooldown_divisor = 2;
+        state.stale_threshold = 1;
+        state.last_fee_update = 0;
+
+        // Sustained volume ramps the fee to max (timestamp stays 0).
+        for _ in 0..50 {
+            update_volatility(&env, &mut state, 10_000, 1_000_000, 1_000_000)
+                .unwrap();
+        }
+        assert_eq!(
+            compute_fee_bps(&state),
+            state.max_fee_bps,
+            "sustained volume must ramp fee to max"
+        );
+
+        // Quiet ledgers: decay repeatedly as the sequence advances until the
+        // fee returns to baseline.
+        let mut fee = compute_fee_bps(&state);
+        for ledger in 1..=200 {
+            decay_stale_ema(&env, &mut state, ledger);
+            fee = compute_fee_bps(&state);
+            if fee <= state.baseline_fee_bps {
+                break;
+            }
+        }
+        assert!(
+            fee <= state.baseline_fee_bps + 1,
+            "quiet ledgers must decay fee back to baseline, got {}",
+            fee
         );
     }
 }

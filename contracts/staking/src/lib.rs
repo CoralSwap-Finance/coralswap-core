@@ -157,6 +157,10 @@ impl Staking {
             return Err(StakingError::InsufficientStake);
         }
 
+        // Settle rewards earned by the stake being reduced before the balance
+        // changes (issue #234).
+        storage::accrue_rewards(&env);
+
         // Update balances before the transfer (checks-effects-interactions).
         let new_user = current - amount;
         storage::set_user_stake(&env, &user, new_user);
@@ -221,6 +225,71 @@ impl Staking {
         events::StakingEvents::reward_config_updated(&env, &new_reward_token, new_reward_rate);
 
         Ok(())
+    }
+
+    /// Claims `user`'s accrued staking rewards (issue #234).
+    ///
+    /// Calculates the pending reward for every active reward token (the
+    /// configured `reward_token`), transfers it to `user`, and resets their
+    /// reward debt so the same rewards are not paid out twice.
+    ///
+    /// # Authorization
+    /// `user` must authorize the call.
+    ///
+    /// # Errors
+    /// | Error           | Condition                                  |
+    /// |-----------------|--------------------------------------------|
+    /// | `NotInitialized`| `initialize` has not been called           |
+    ///
+    /// # Notes
+    /// If the contract's reward-token balance is insufficient to cover the
+    /// full pending amount, the transfer is skipped rather than reverted, so
+    /// an empty reward balance never blocks a caller (they can claim later
+    /// once funds are deposited). The user's staked LP balance is never
+    /// modified by this function.
+    pub fn claim_rewards(env: Env, user: Address) -> Result<i128, StakingError> {
+        let config = storage::get_config(&env).ok_or(StakingError::NotInitialized)?;
+        user.require_auth();
+
+        // Settle rewards up to the current ledger before computing what is due.
+        storage::accrue_rewards(&env);
+
+        let user_stake = storage::get_user_stake(&env, &user);
+        let reward_debt = storage::get_reward_debt(&env, &user);
+        let reward_per_share = storage::get_reward_per_share(&env);
+
+        let pending = user_stake.checked_mul(reward_per_share.saturating_sub(reward_debt));
+
+        let pending = match pending {
+            Some(p) if p > 0 => p,
+            _ => return Ok(0),
+        };
+
+        // Only pay out what the contract actually holds; never fail on an
+        // empty reward-token balance (skip rather than revert).
+        let contract_balance =
+            token::Client::new(&env, &config.reward_token).balance(&env.current_contract_address());
+        let payable = pending.min(contract_balance);
+
+        if payable > 0 {
+            token::Client::new(&env, &config.reward_token).transfer(
+                &env.current_contract_address(),
+                &user,
+                &payable,
+            );
+            // Record the paid-out per-share amount so it is not reclaimed.
+            if user_stake > 0 {
+                let paid_per_share = payable / user_stake;
+                let new_debt = reward_debt.saturating_add(paid_per_share);
+                storage::set_reward_debt(&env, &user, new_debt);
+            }
+        }
+
+        storage::extend_instance_ttl(&env);
+
+        events::StakingEvents::reward_claimed(&env, &user, payable);
+
+        Ok(payable)
     }
 
     // -----------------------------------------------------------------------

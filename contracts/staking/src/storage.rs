@@ -19,6 +19,13 @@ pub enum DataKey {
     TotalStaked,
     /// `i128` — per-user staked LP token balance, keyed by staker address.
     UserStake(Address),
+    /// `i128` — cumulative rewards paid out per unit staked (reward-per-share).
+    RewardPerShare,
+    /// `u64` — ledger sequence at which rewards were last accrued.
+    LastRewardLedger,
+    /// `i128` — per-user `reward_per_share` value at last interaction, used to
+    /// compute unclaimed pending rewards without double-paying.
+    RewardDebt(Address),
 }
 
 // ---------------------------------------------------------------------------
@@ -86,4 +93,84 @@ pub fn set_user_stake(env: &Env, user: &Address, amount: i128) {
 /// the contract stays alive across idle periods.
 pub fn extend_instance_ttl(env: &Env) {
     env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+}
+
+// ---------------------------------------------------------------------------
+// Reward accrual state (issue #234)
+// ---------------------------------------------------------------------------
+
+/// Cumulative rewards paid out per unit staked, in smallest reward units.
+///
+/// Grows by `reward_rate * elapsed_ledgers / total_staked` each time rewards
+/// are accrued, so every staker earns in proportion to their stake and how
+/// long they held it.
+pub fn get_reward_per_share(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::RewardPerShare)
+        .unwrap_or(0)
+}
+
+pub fn set_reward_per_share(env: &Env, value: i128) {
+    env.storage().instance().set(&DataKey::RewardPerShare, &value);
+}
+
+/// Ledger sequence at which [`get_reward_per_share`] was last advanced.
+pub fn get_last_reward_ledger(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::LastRewardLedger)
+        .unwrap_or(0)
+}
+
+pub fn set_last_reward_ledger(env: &Env, value: u64) {
+    env.storage().instance().set(&DataKey::LastRewardLedger, &value);
+}
+
+/// `reward_per_share` value observed at `user`'s last staking interaction.
+///
+/// `user_stake * (reward_per_share - reward_debt[user])` is the user's pending
+/// (not yet paid out) rewards.
+pub fn get_reward_debt(env: &Env, user: &Address) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::RewardDebt(user.clone()))
+        .unwrap_or(0)
+}
+
+pub fn set_reward_debt(env: &Env, user: &Address, value: i128) {
+    env.storage()
+        .instance()
+        .set(&DataKey::RewardDebt(user.clone()), &value);
+}
+
+/// Accrue rewards earned since the last accrual and advance `last_reward_ledger`.
+///
+/// Rewards accrue only while `total_staked > 0`; an idle contract with no
+/// stakers does not accumulate unclaimable rewards.
+pub fn accrue_rewards(env: &Env) {
+    let config = match get_config(env) {
+        Some(c) => c,
+        None => return,
+    };
+
+    let total = get_total_staked(env);
+    let current = env.ledger().sequence();
+    let last = get_last_reward_ledger(env);
+    let elapsed = current.saturating_sub(last);
+
+    if elapsed == 0 || total == 0 || config.reward_rate == 0 {
+        set_last_reward_ledger(env, current);
+        return;
+    }
+
+    let emitted = (config.reward_rate as i128)
+        .checked_mul(elapsed as i128)
+        .unwrap_or(i128::MAX);
+    let per_share_increment = emitted / total;
+
+    let mut rps = get_reward_per_share(env);
+    rps = rps.saturating_add(per_share_increment);
+    set_reward_per_share(env, rps);
+    set_last_reward_ledger(env, current);
 }

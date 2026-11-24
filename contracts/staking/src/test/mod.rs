@@ -351,6 +351,108 @@ fn test_unstake_returns_tokens_to_user() {
 }
 
 // ===========================================================================
+// Reward claiming tests
+// ===========================================================================
+
+#[test]
+fn test_claim_rewards_pays_accrued_rewards() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let lp_token = make_token(&env, &admin, &user, 10_000);
+    let reward_token = make_token(&env, &admin, &admin, 0);
+    let staking_id = env.register(Staking, ());
+    let client = StakingClient::new(&env, &staking_id);
+    client.initialize(&admin, &lp_token, &reward_token, &100u64);
+
+    // Fund the staking contract with reward tokens it can pay out.
+    let reward_client = StellarAssetClient::new(&env, &reward_token);
+    reward_client.mint(&staking_id, &100_000i128);
+
+    client.stake(&user, &5_000i128);
+
+    // Advance the ledger so rewards accrue (100 ledgers @ 100/ledger).
+    env.ledger().set_sequence(100);
+
+    let reward_before = reward_client.balance(&user);
+    let paid = client.claim_rewards(&user);
+
+    // 5_000 stake * (100 rate * 100 ledgers / 5_000 total) = 10_000 rewards.
+    assert_eq!(paid, 10_000i128);
+    assert_eq!(reward_client.balance(&user), reward_before + 10_000i128);
+
+    // Claiming does not modify the user's staked LP balance.
+    assert_eq!(client.get_stake(&user), 5_000i128);
+}
+
+#[test]
+fn test_claim_rewards_twice_pays_only_once() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let lp_token = make_token(&env, &admin, &user, 10_000);
+    let reward_token = make_token(&env, &admin, &admin, 0);
+    let staking_id = env.register(Staking, ());
+    let client = StakingClient::new(&env, &staking_id);
+    client.initialize(&admin, &lp_token, &reward_token, &100u64);
+
+    let reward_client = StellarAssetClient::new(&env, &reward_token);
+    reward_client.mint(&staking_id, &100_000i128);
+
+    client.stake(&user, &5_000i128);
+    env.ledger().set_sequence(100);
+
+    let paid_first = client.claim_rewards(&user);
+    assert_eq!(paid_first, 10_000i128);
+
+    // Reward debt was reset, so a second claim with no new accrual pays nothing.
+    let paid_second = client.claim_rewards(&user);
+    assert_eq!(paid_second, 0i128);
+
+    // User's LP stake is unchanged throughout.
+    assert_eq!(client.get_stake(&user), 5_000i128);
+}
+
+#[test]
+fn test_claim_rewards_skips_when_contract_has_no_reward_balance() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let lp_token = make_token(&env, &admin, &user, 10_000);
+    let reward_token = make_token(&env, &admin, &admin, 0);
+    let staking_id = env.register(Staking, ());
+    let client = StakingClient::new(&env, &staking_id);
+    client.initialize(&admin, &lp_token, &reward_token, &100u64);
+
+    // No reward tokens funded into the contract — empty balance must not revert.
+    client.stake(&user, &5_000i128);
+    env.ledger().set_sequence(100);
+
+    let paid = client.claim_rewards(&user);
+    assert_eq!(paid, 0i128);
+    assert_eq!(client.get_stake(&user), 5_000i128);
+}
+
+#[test]
+fn test_claim_rewards_fails_before_initialize() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let user = Address::generate(&env);
+    let staking_id = env.register(Staking, ());
+    let client = StakingClient::new(&env, &staking_id);
+
+    let result = client.try_claim_rewards(&user);
+    assert_eq!(result, Err(Ok(StakingError::NotInitialized)));
+}
+
+// ===========================================================================
 // Admin: set_reward_config
 // ===========================================================================
 
