@@ -39,6 +39,7 @@ exclude = [
 # staking was baselined at launch (2026-10-23): all production entry points
 # are covered by unit + auth-matrix tests shipped in the same PR.
 coralswap-factory = 91.0
+coralswap-governance-token = 85.0
 coralswap-lp-token = 76.0
 coralswap-malicious-flash-receiver = 99.0
 coralswap-mock-flash-receiver = 85.0
