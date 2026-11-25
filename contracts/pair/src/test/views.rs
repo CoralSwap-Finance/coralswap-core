@@ -203,3 +203,24 @@ fn test_version_returns_protocol_constant() {
     // state (issue #383) — clients can verify it without any other view.
     assert_eq!(pair_client.version(), coralswap_shared::PROTOCOL_VERSION);
 }
+
+#[test]
+fn test_get_ttl_returns_remaining_ledgers() {
+    use coralswap_shared::INSTANCE_TTL_EXTEND_TO;
+
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(Pair, ());
+    let pair_client = PairClient::new(&env, &contract_id);
+
+    pair_client.initialize(
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &Address::generate(&env),
+    );
+
+    // `initialize` bumps instance TTL to INSTANCE_TTL_EXTEND_TO (issue #214).
+    assert_eq!(pair_client.get_ttl(), INSTANCE_TTL_EXTEND_TO);
+}

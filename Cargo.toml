@@ -9,6 +9,7 @@ members = [
     "contracts/flash_receiver_interface",
     "contracts/mock_flash_receiver",
     "contracts/malicious_flash_receiver",
+    "contracts/concentrated_pair",
     "tests/fuzz",
     "tests"
 ]
@@ -26,6 +27,7 @@ default-members = [
     "contracts/flash_receiver_interface",
     "contracts/mock_flash_receiver",
     "contracts/malicious_flash_receiver",
+    "contracts/concentrated_pair",
     "tests",
 ]
 resolver = "2"

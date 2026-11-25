@@ -980,6 +980,17 @@ impl Pair {
         })
     }
 
+    /// Returns the remaining ledger sequences before this pair's instance
+    /// storage expires (issue #214).
+    ///
+    /// Queries the Soroban host's instance-storage TTL directly, so the value
+    /// reflects the actual rent expiry of this contract's state rather than a
+    /// cached copy. Returns `0` when instance storage has not been written to
+    /// yet (e.g. before `initialize`) or when the host does not report a TTL.
+    pub fn get_ttl(env: Env) -> u32 {
+        env.storage().instance().ttl().unwrap_or(0)
+    }
+
     /// Returns the cumulative protocol fee collected by this pair as
     /// `(token_a_amount, token_b_amount)`.
     ///
