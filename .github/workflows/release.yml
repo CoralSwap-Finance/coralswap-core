@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build tagged release artifacts
+        run: bash scripts/build-release-container.sh
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            release/release-manifest.json \
+            release/manifests/*.json \
+            release/wasm/*.wasm \
+            --title "$TAG" \
+            --generate-notes
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: |
+            release/release-manifest.json
+            release/manifests/*.json
+            release/wasm/*.wasm
+
+  verify:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download attached release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p release-assets
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir release-assets \
+            --pattern "release-manifest.json" \
+            --pattern "*.json" \
+            --pattern "*.wasm" \
+            --clobber
+      - name: Rebuild release from tag
+        run: bash scripts/build-release-container.sh
+      - name: Verify attached assets match release build
+        run: python3 scripts/verify-release-assets.py --release-dir release-assets --manifest release/release-manifest.json

@@ -1,4 +1,5 @@
 target/
+release*/
 *.wasm
 benchmark-results.json
 base-benchmark.json

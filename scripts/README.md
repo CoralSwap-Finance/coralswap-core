@@ -50,19 +50,54 @@ The script checks for existing deployments in `deployments.json` and skips alrea
 
 ## assert-wasm-hashes.sh
 
-Asserts that compiled release WASM artifact hashes match recorded deployment metadata in `deployments.json` and `soroban-deploy.toml`.
+Verifies that each pinned deployment hash in `deployments.json` matches a release rebuild of the commit recorded for that deployment. The gate checks out each recorded commit in a temporary worktree, runs the pinned release build, and compares the resulting manifest hash. PR changes to contract code do not affect old deployment entries.
 
 ### Usage
 
 ```bash
-# Verify built artifacts against deployment metadata
-./scripts/assert-wasm-hashes.sh
+bash scripts/assert-wasm-hashes.sh
 
-# Or specify a custom WASM directory or deployments file
-WASM_DIR="target/wasm32v1-none/release" DEPLOYMENTS_FILE="deployments.json" ./scripts/assert-wasm-hashes.sh
+DEPLOYMENTS_FILE=deployments.json bash scripts/assert-wasm-hashes.sh
+
+RELEASE_MANIFEST=release/release-manifest.json DEPLOYMENTS_FILE=deployments.json \
+  bash scripts/assert-wasm-hashes.sh
 ```
 
-If no pinned WASM hashes are present in `deployments.json`, the check skips cleanly. When entries with hashes exist, the script calculates SHA-256 hashes of compiled artifacts and fails if code drift is detected.
+`RELEASE_MANIFEST` and `RELEASE_MANIFEST_DIR` are test/release-asset overrides; normal runs rebuild each recorded commit. Entries with a hash but no recorded commit fail the gate. Entries without hashes are skipped.
+
+## build-release.sh and build-release-container.sh
+
+Defines the single release build: pinned Rust toolchain, `cargo build --locked --release`, and pinned `stellar contract optimize`. `build-release.sh` runs on the host; `build-release-container.sh` builds the pinned `Dockerfile.release` image and runs the same script in it.
+
+### Usage
+
+```bash
+bash scripts/build-release.sh
+bash scripts/build-release-container.sh
+
+OUTPUT_DIR=release-b TARGET_DIR=release-b/target CLEAN_TARGET=1 \
+  bash scripts/build-release-container.sh
+```
+
+Both write `release/release-manifest.json`, per-contract manifests under `release/manifests/`, and optimized WASMs under `release/wasm/`. Every contract manifest records `sha256`, `size_bytes`, `commit`, `toolchain`, `cli_version`, `target`, and `profile`.
+
+## benchmark.sh and check-size.sh
+
+`benchmark.sh` runs the pinned release build and writes optimized contract sizes to `benchmark-results.json`. `check-size.sh` enforces the tightened budgets in `scripts/size-budget.json` and is available as `make size-check`.
+
+```bash
+make benchmark
+make size-check
+bash scripts/check-size.sh custom-results.json custom-budget.json
+```
+
+## test-scripts.sh
+
+Runs fixture-based tests for the size gate, deployment hash gate, and manifest comparison.
+
+```bash
+make test-scripts
+```
 
 ## check-coverage.sh
 
