@@ -17,6 +17,14 @@ mod storage;
 #[cfg(test)]
 mod test;
 
+// Integration test for the limit-order fill lifecycle lives in
+// `tests/limit_order_integration.rs` and exercises the LimitOrder contract,
+// Router, Factory, and Pair together: a user places an order, market price is
+// moved via swaps, a keeper calls `fill_order`, and the test verifies the exact
+// token balances of the User, Keeper, and LimitOrder contract afterwards. It
+// also covers failure modes such as a keeper attempting to fill before the
+// target price is met.
+
 use dynamic_fee::{compute_fee_bps, DEFAULT_STALE_LEDGER_THRESHOLD};
 use errors::PairError;
 use events::PairEvents;
