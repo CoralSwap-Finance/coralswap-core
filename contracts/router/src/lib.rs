@@ -10,6 +10,9 @@ mod storage;
 #[cfg(test)]
 mod test;
 
+#[cfg(test)]
+mod limit_order_integration;
+
 use errors::RouterError;
 use helpers::{
     compute_optimal_amounts, get_amount_in, get_amount_out, get_pair_address,
