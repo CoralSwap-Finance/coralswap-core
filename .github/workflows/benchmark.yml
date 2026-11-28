@@ -16,12 +16,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: 1.94.1
-          target: wasm32v1-none
-
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -34,23 +28,46 @@ jobs:
           path: ~/.cargo/git
           key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Cache target directory
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install bc and jq
+        run: sudo apt-get update && sudo apt-get install -y bc jq
 
-      - name: Install bc for calculations
-        run: sudo apt-get update && sudo apt-get install -y bc
+      - name: Create benchmark worktrees
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          rm -rf "$RUNNER_TEMP/benchmark-base" "$RUNNER_TEMP/benchmark-pr"
+          git worktree add --detach "$RUNNER_TEMP/benchmark-base" "origin/${{ github.base_ref }}"
+          git worktree add --detach "$RUNNER_TEMP/benchmark-pr" "$GITHUB_SHA"
 
       - name: Run benchmark
-        run: ./scripts/benchmark.sh
+        if: github.event_name != 'pull_request'
+        run: bash scripts/benchmark.sh
+
+      - name: Run PR benchmark
+        if: github.event_name == 'pull_request'
+        working-directory: ${{ runner.temp }}/benchmark-pr
+        env:
+          OUTPUT_FILE: ${{ github.workspace }}/benchmark-results.json
+        run: bash scripts/benchmark.sh
+
+      - name: Run base benchmark
+        if: github.event_name == 'pull_request'
+        working-directory: ${{ runner.temp }}/benchmark-base
+        env:
+          OUTPUT_FILE: ${{ github.workspace }}/base-benchmark.json
+        run: bash scripts/benchmark.sh
+
+      - name: Enforce size budgets
+        run: make size-check
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-results
-          path: benchmark-results.json
+          path: |
+            benchmark-results.json
+            base-benchmark.json
+          if-no-files-found: warn
 
       - name: Compare with base branch
         if: github.event_name == 'pull_request'
@@ -60,59 +77,50 @@ jobs:
           echo "| Contract | Current Size | Change |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|--------------|--------|" >> $GITHUB_STEP_SUMMARY
 
-          # Checkout base branch
-          git fetch origin ${{ github.base_ref }}
-          git checkout origin/${{ github.base_ref }}
-
-          # Run benchmark on base
-          ./scripts/benchmark.sh
-          mv benchmark-results.json base-benchmark.json
-
-          # Checkout PR branch
-          git checkout ${{ github.sha }}
-          ./scripts/benchmark.sh
-          mv benchmark-results.json pr-benchmark.json
-
-          # Compare results
-          for contract in factory lp_token pair router; do
+          for contract in factory lp_token pair router staking; do
             BASE_SIZE=$(jq -r ".contracts.$contract.size_bytes // 0" base-benchmark.json)
-            PR_SIZE=$(jq -r ".contracts.$contract.size_bytes // 0" pr-benchmark.json)
-            
+            PR_SIZE=$(jq -r ".contracts.$contract.size_bytes // 0" benchmark-results.json)
+
             if [ "$BASE_SIZE" != "0" ] && [ "$PR_SIZE" != "0" ]; then
               DIFF=$((PR_SIZE - BASE_SIZE))
               PERCENT=$(echo "scale=2; ($DIFF * 100) / $BASE_SIZE" | bc)
-              
+
               if [ "$DIFF" -gt 0 ]; then
                 CHANGE="+$DIFF bytes (+${PERCENT}%)"
                 if (( $(echo "$PERCENT > 5.0" | bc -l) )); then
-                  CHANGE="⚠️ $CHANGE"
+                  CHANGE="WARNING: $CHANGE"
                 fi
               elif [ "$DIFF" -lt 0 ]; then
                 CHANGE="$DIFF bytes (${PERCENT}%)"
               else
                 CHANGE="No change"
               fi
-              
+
               PR_SIZE_KB=$(echo "scale=2; $PR_SIZE / 1024" | bc)
               echo "| $contract | ${PR_SIZE_KB} KB | $CHANGE |" >> $GITHUB_STEP_SUMMARY
             fi
           done
+
+          if jq -e '.contracts | to_entries | map(select(.value.size_bytes == 0)) | length > 0' benchmark-results.json >/dev/null; then
+            echo "error: benchmark results contain zero-sized contracts" >&2
+            exit 1
+          fi
 
       - name: Check for size regressions
         if: github.event_name == 'pull_request'
         run: |
           WARNING_FOUND=false
 
-          for contract in factory lp_token pair router; do
+          for contract in factory lp_token pair router staking; do
             BASE_SIZE=$(jq -r ".contracts.$contract.size_bytes // 0" base-benchmark.json)
-            PR_SIZE=$(jq -r ".contracts.$contract.size_bytes // 0" pr-benchmark.json)
-            
+            PR_SIZE=$(jq -r ".contracts.$contract.size_bytes // 0" benchmark-results.json)
+
             if [ "$BASE_SIZE" != "0" ] && [ "$PR_SIZE" != "0" ]; then
               DIFF=$((PR_SIZE - BASE_SIZE))
               PERCENT=$(echo "scale=2; ($DIFF * 100) / $BASE_SIZE" | bc)
-              
+
               if (( $(echo "$PERCENT > 5.0" | bc -l) )); then
-                echo "⚠️ Warning: $contract size increased by ${PERCENT}%"
+                echo "WARNING: $contract size increased by ${PERCENT}%"
                 WARNING_FOUND=true
               fi
             fi

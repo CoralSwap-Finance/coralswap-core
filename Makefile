@@ -1,4 +1,4 @@
-.PHONY: build build-optimized test coverage lint fmt clean deploy-testnet
+.PHONY: build build-optimized release-build release-container benchmark size-check test-scripts test coverage lint fmt clean deploy-testnet
 
 # Build all contracts (debug profile)
 build:
@@ -9,6 +9,21 @@ build:
 # on-chain upload.
 build-optimized:
 	cargo build --release --target wasm32v1-none
+
+release-build:
+	bash scripts/build-release.sh
+
+release-container:
+	bash scripts/build-release-container.sh
+
+benchmark:
+	bash scripts/benchmark.sh
+
+size-check:
+	bash scripts/check-size.sh
+
+test-scripts:
+	bash scripts/test-scripts.sh
 
 # Run the full workspace test suite
 test:

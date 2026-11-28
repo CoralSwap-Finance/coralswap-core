@@ -27,23 +27,66 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: Build
-        run: cargo build --workspace --exclude coralswap-fuzz --exclude coralswap-integration-tests --release --target wasm32v1-none
+        run: cargo build --locked --workspace --exclude coralswap-fuzz --exclude coralswap-integration-tests --release --target wasm32v1-none
       - name: Test
         run: cargo test
       - name: Fuzz tests
         run: cargo test -p coralswap-fuzz --features fuzz
+
+  script-tests:
+    name: Script tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run gate fixture tests
+        run: bash scripts/test-scripts.sh
+
+  release-reproducibility:
+    name: Release reproducibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create clean release worktrees
+        run: |
+          rm -rf "$RUNNER_TEMP/release-a" "$RUNNER_TEMP/release-b"
+          git worktree add --detach "$RUNNER_TEMP/release-a" "$GITHUB_SHA"
+          git worktree add --detach "$RUNNER_TEMP/release-b" "$GITHUB_SHA"
+      - name: Build release from first path
+        working-directory: ${{ runner.temp }}/release-a
+        run: bash scripts/build-release-container.sh
+      - name: Build release from second path
+        working-directory: ${{ runner.temp }}/release-b
+        run: bash scripts/build-release-container.sh
+      - name: Compare release manifests
+        run: bash scripts/compare-release-manifests.sh "$RUNNER_TEMP/release-a/release/release-manifest.json" "$RUNNER_TEMP/release-b/release/release-manifest.json"
+      - name: Upload first release
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-a
+          path: |
+            ${{ runner.temp }}/release-a/release/release-manifest.json
+            ${{ runner.temp }}/release-a/release/wasm/*.wasm
+      - name: Upload second release
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-b
+          path: |
+            ${{ runner.temp }}/release-b/release/release-manifest.json
+            ${{ runner.temp }}/release-b/release/wasm/*.wasm
 
   wasm-hash-assertion:
     name: Assert WASM Hashes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.94.1
-          targets: wasm32v1-none
-      - uses: Swatinem/rust-cache@v2
-      - name: Build release WASM artifacts
-        run: cargo build --workspace --exclude coralswap-fuzz --exclude coralswap-integration-tests --release --target wasm32v1-none
-      - name: Assert WASM hashes against deployments metadata
+          fetch-depth: 0
+      - name: Fetch all recorded commits
+        run: git fetch --all --tags
+      - name: Assert WASM hashes against recorded commits
         run: bash scripts/assert-wasm-hashes.sh
