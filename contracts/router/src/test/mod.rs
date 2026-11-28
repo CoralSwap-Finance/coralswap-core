@@ -1,8 +1,9 @@
 use soroban_sdk::{
     contract, contractclient, contractimpl, contracttype,
-    testutils::{Address as _, Ledger as _},
+    symbol_short,
+    testutils::{Address as _, Events as _, Ledger as _},
     xdr::ToXdr,
-    Address, Bytes, BytesN, Env, Vec,
+    Address, Bytes, BytesN, Env, IntoVal, Val, Vec,
 };
 
 // ---------------------------------------------------------------------------
@@ -905,6 +906,13 @@ fn test_sweep_drains_stuck_balance_to_recipient() {
     let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
     assert_eq!(token_client.balance(&recipient), 500);
     assert_eq!(token_client.balance(&router_id), 0);
+
+    let mut topics: Vec<Val> = Vec::new(&env);
+    topics.push_back(symbol_short!("sweep").into_val(&env));
+    topics.push_back(token.clone().into_val(&env));
+    let mut expected = Vec::new(&env);
+    expected.push_back((router_id, topics, (recipient, 500_i128).into_val(&env)));
+    assert_eq!(env.events().all(), expected);
 }
 
 #[test]

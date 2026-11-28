@@ -4,6 +4,7 @@
 extern crate std;
 
 mod errors;
+mod events;
 mod helpers;
 mod storage;
 
@@ -11,6 +12,7 @@ mod storage;
 mod test;
 
 use errors::RouterError;
+use events::RouterEvents;
 use helpers::{
     compute_optimal_amounts, get_amount_in, get_amount_out, get_pair_address,
     get_pair_reserves_and_fee, get_path_amounts_out, get_path_minimums, sort_tokens, FactoryClient,
@@ -120,6 +122,7 @@ impl Router {
             return Err(RouterError::ZeroAmount);
         }
         token_client.transfer(&router, &recipient, &amount);
+        RouterEvents::sweep(&env, &token, &recipient, amount);
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(amount)
     }
